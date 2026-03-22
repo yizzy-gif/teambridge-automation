@@ -1,0 +1,2097 @@
+/* ═══════════════════════════════════════════════════════════════════════════════
+   BuilderPage — Automation Builder UI
+   Full-screen: TopBar / [ LeftPanel | Canvas ]
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+/* ─── Page shell ──────────────────────────────────────────────────────────────── */
+
+.page {
+  position: relative;
+  height: 100dvh;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* Canvas fills the whole viewport — top bar + left panel float on top */
+.body {
+  position: absolute;
+  inset: 0;
+  display: flex; /* FlowCanvas (flex:1) expands to fill */
+}
+
+/* ─── Top bar — floating, transparent ────────────────────────────────────────── */
+
+.topBar {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--space-4);
+  /* no background, no border — floats over canvas */
+  z-index: var(--z-sticky);
+  pointer-events: none; /* pass clicks through to canvas */
+  gap: var(--space-3);
+}
+
+/* Re-enable pointer events for all direct children (buttons) */
+.topBar > * { pointer-events: auto; }
+
+/* Left group: back button + divider + workflow name */
+.topBarLeft {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  pointer-events: auto;
+}
+
+/* Subtle vertical separator between back button and name */
+.topBarDivider {
+  width: 1px;
+  height: 16px;
+  background: var(--color-border-opaque);
+  flex-shrink: 0;
+}
+
+/* Inline-editable workflow name — contenteditable span.
+   The element IS the text, so its border-bottom is always exactly
+   as wide as the visible characters. No measurement tricks needed. */
+.topBarName {
+  display: inline-block;
+  min-width: 48px;
+  max-width: 320px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: text;
+  border-bottom: 1.5px dotted transparent;
+  outline: none;
+  padding-bottom: 2px;
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-primary);
+  letter-spacing: var(--tracking-tight);
+  line-height: var(--line-height-normal);
+  transition: border-color var(--duration-fast);
+  user-select: text;
+  vertical-align: middle;
+}
+
+/* Placeholder — shown when span is empty */
+.topBarName:empty::before {
+  content: attr(data-placeholder);
+  color: var(--color-content-tertiary);
+  pointer-events: none;
+}
+
+.topBarName:hover        { border-bottom-color: var(--color-content-tertiary); }
+.topBarName:focus-visible,
+.topBarName:focus {
+  border-bottom-color: var(--color-brand);
+  border-bottom-style: solid;
+  outline: none;
+}
+
+.topBarActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Auto-save indicator — appears left of the buttons, fades in/out */
+.autoSaveText {
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-regular);
+  color: var(--color-content-tertiary);
+  letter-spacing: var(--tracking-normal);
+  white-space: nowrap;
+  padding-right: var(--space-1);
+  animation: fadeInText var(--duration-base) var(--ease-out);
+}
+
+@keyframes fadeInText {
+  from { opacity: 0; transform: translateY(2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ─── Left panel — floating overlay on canvas ──────────────────────────────── */
+
+.leftPanel {
+  position: absolute;
+  top: calc(48px + 16px); /* header height + gap */
+  left: 0;
+  bottom: 0;
+  width: 360px;
+  z-index: var(--z-raised);
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.leftPanelInner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: 0 var(--space-4) var(--space-4);
+  height: 100%;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* Each card re-enables pointer events */
+.infoCard,
+.paletteCard,
+.aiComposer {
+  pointer-events: auto;
+}
+
+/* ── Info card ── */
+
+.infoCard {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-lg);
+  padding: var(--space-3);
+  box-shadow: var(--shadow-below-md);
+}
+
+/* ── Info card meta group — status tag, name, description; 4px inner gaps ── */
+.infoCardMeta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1); /* 4px between each meta item */
+}
+
+/* Invisible <select> overlaid on StatusTag for native picker */
+.statusTagWrap {
+  position: relative;
+  display: inline-flex;
+  align-self: flex-start; /* left-align within the meta column */
+  cursor: pointer;
+}
+
+.statusSelect {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+  width: 100%;
+  height: 100%;
+  font-size: var(--text-sm); /* prevents iOS zoom */
+}
+
+/* Workflow name — full width, dotted underline appears only on hover */
+.workflowName {
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-bottom: 1.5px dotted transparent; /* invisible until hover */
+  outline: none;
+  padding-bottom: 2px;
+  font-family: var(--font-sans);
+  font-size: var(--text-xl);
+  font-weight: var(--font-weight-regular);
+  color: var(--color-content-primary);
+  letter-spacing: var(--tracking-tight);
+  line-height: var(--line-height-normal);
+  transition: border-color var(--duration-fast);
+}
+.workflowName::placeholder { color: var(--color-content-tertiary); }
+/* Show dotted underline on hover */
+.workflowName:hover { border-bottom-color: var(--color-content-tertiary); }
+/* Switch to solid brand underline on focus */
+.workflowName:focus {
+  border-bottom-color: var(--color-brand);
+  border-bottom-style: solid;
+}
+
+.descriptionTextarea {
+  width: 100%;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-regular);
+  color: var(--color-content-secondary);
+  line-height: var(--line-height-snug);
+  resize: none;
+  min-height: 40px;
+}
+.descriptionTextarea::placeholder { color: var(--color-content-tertiary); }
+
+.infoDivider {
+  height: 1px;
+  background: var(--color-border-opaque);
+  margin: 0 calc(-1 * var(--space-3));
+  width: calc(100% + 2 * var(--space-3));
+}
+
+/* ── Node settings ── */
+
+/* Flex-grows to fill remaining card height */
+.nodeSettingsArea {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Empty state — vertically + horizontally centred within the area */
+.nodeSettingsEmpty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  text-align: center;
+  padding: var(--space-4);
+}
+
+.nodeSettingsEmptyIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  color: var(--color-content-tertiary);
+  flex-shrink: 0;
+  margin-bottom: var(--space-1);
+}
+
+.nodeSettingsEmptyTitle {
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-primary);
+  line-height: var(--line-height-normal);
+}
+
+.nodeSettingsEmptyDesc {
+  font-size: var(--text-xs);
+  color: var(--color-content-tertiary);
+  line-height: var(--line-height-relaxed);
+}
+
+.nodeSettingsContent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.nodeSettingsHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.nodeSettingsHeaderIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-md);
+  flex-shrink: 0;
+}
+
+.nodeSettingsHeaderTitle {
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-content-primary);
+}
+
+/* ── AI Composer ── */
+
+/* Outer: overflow:visible so the tooltip can escape above the card */
+.aiComposer {
+  position: relative;
+  overflow: visible;
+}
+
+/* Inner card: bg, border, shadow, radius, clips children to radius */
+.aiComposerCard {
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: var(--shadow-below-md);
+  transition: background var(--duration-fast), box-shadow var(--duration-fast);
+}
+/* Gradient border via background-clip — border-color can't be a gradient directly */
+.aiComposerCard:focus-within {
+  border-color: transparent;
+  background:
+    linear-gradient(var(--color-bg-primary), var(--color-bg-primary)) padding-box,
+    linear-gradient(90deg, #8c4fe2 0%, #446cff 100%) border-box;
+  box-shadow: var(--shadow-below-md), 0 0 0 3px rgba(140, 79, 226, 0.12);
+}
+
+/* Tooltip — absolutely positioned above the card, shown via React state */
+.aiComposerTooltip {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--color-bg-inverse-primary);
+  color: var(--color-content-inverse-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-regular);
+  white-space: nowrap;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  pointer-events: none;
+  z-index: 200;
+}
+
+.aiComposerTextarea {
+  width: 100%;
+  min-height: 48px;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-regular);
+  color: var(--color-content-primary);
+  line-height: 1.43; /* 20/14px — paragraph-md */
+  resize: none;
+}
+.aiComposerTextarea::placeholder { color: var(--color-content-tertiary); }
+
+.aiComposerActionBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-2);
+}
+
+.aiComposerLeft {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.aiComposerRight {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* Attach (+) button — 24×24 icon-only */
+.aiComposerPlusBtn {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--color-border-opaque);
+  border-radius: 6px;
+  color: var(--color-content-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0;
+  transition: background var(--duration-fast), color var(--duration-fast);
+}
+.aiComposerPlusBtn:hover {
+  background: var(--color-bg-secondary);
+  color: var(--color-content-primary);
+}
+
+/* Edit node button — icon + label, 24px tall */
+.aiComposerEditBtn {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  gap: 4px;
+  padding: 0 var(--space-2) 0 var(--space-1);
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: 6px;
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-normal);
+  letter-spacing: var(--tracking-wide);
+  color: var(--color-content-primary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--duration-fast), border-color var(--duration-fast),
+    color var(--duration-fast), opacity var(--duration-fast);
+}
+.aiComposerEditBtn:hover:not(.aiComposerEditBtnActive) {
+  background: var(--color-bg-secondary);
+}
+
+/* AI active state — gradient fill, white text, no border */
+.aiComposerEditBtnActive {
+  background: linear-gradient(90deg, #8c4fe2 0%, #446cff 100%);
+  border: none;
+  color: #ffffff;
+}
+.aiComposerEditBtnActive:hover { opacity: 0.88; }
+
+/* Send button — disabled: muted; enabled: dark fill + white icon */
+.aiComposerSendBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border-opaque);
+  color: var(--color-content-tertiary);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--duration-fast), color var(--duration-fast),
+    border-color var(--duration-fast), opacity var(--duration-fast);
+}
+.aiComposerSendBtn:not(:disabled) {
+  background: var(--color-bg-inverse-primary);
+  border-color: var(--color-bg-inverse-primary);
+  color: var(--color-content-inverse-primary);
+}
+.aiComposerSendBtn:not(:disabled):hover { opacity: 0.82; }
+.aiComposerSendBtn:disabled { cursor: not-allowed; }
+
+/* ─── Node Palette Card ────────────────────────────────────────────────────────── */
+
+.paletteCard {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-below-md);
+  overflow: hidden;
+}
+
+.paletteHeader {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-3) var(--space-2);
+  border-bottom: 1px solid var(--color-border-opaque);
+  flex-shrink: 0;
+}
+
+/* SearchField wrapper — remove its default outer margin */
+.paletteSearch {
+  width: 100%;
+}
+
+/* Instructional hint below search */
+.paletteHint {
+  font-size: var(--text-xs);
+  color: var(--color-content-tertiary);
+  line-height: var(--line-height-normal);
+}
+
+/* Filter chips row — scrollable, no visible scrollbar */
+.paletteFilters {
+  display: flex;
+  gap: var(--space-1);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.paletteFilters::-webkit-scrollbar { display: none; }
+
+.paletteFilterChip {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 var(--space-2);
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-full);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background var(--duration-fast),
+    border-color var(--duration-fast),
+    color var(--duration-fast);
+}
+.paletteFilterChip:hover:not(.paletteFilterChipActive) {
+  background: var(--color-bg-secondary);
+  color: var(--color-content-primary);
+}
+.paletteFilterChipActive {
+  background: var(--color-bg-tertiary);
+  border-color: var(--color-border-selected);
+  color: var(--color-content-primary);
+}
+
+/* Empty search/filter state */
+.paletteEmpty {
+  padding: var(--space-4) var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--color-content-tertiary);
+  text-align: center;
+  line-height: var(--line-height-normal);
+}
+
+.paletteList {
+  flex: 1;
+  min-height: 0;
+}
+
+.paletteListInner {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-3);
+}
+
+.paletteItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-2);
+  border-radius: var(--radius-md);
+  cursor: grab;
+  border: 1px solid transparent;
+  transition:
+    background var(--duration-fast),
+    border-color var(--duration-fast);
+  user-select: none;
+}
+
+.paletteItem:hover {
+  background: var(--color-bg-secondary);
+  border-color: var(--color-border-opaque);
+}
+
+.paletteItem:active {
+  cursor: grabbing;
+  background: color-mix(in srgb, var(--color-brand) 5%, var(--color-bg-primary));
+  border-color: color-mix(in srgb, var(--color-brand) 30%, var(--color-border-opaque));
+}
+
+.paletteItemContent {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  gap: 1px;
+}
+
+.paletteItemLabel {
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: var(--line-height-snug);
+}
+
+.paletteItemCategory {
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-regular);
+  color: var(--color-content-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-transform: capitalize;
+  line-height: var(--line-height-snug);
+}
+
+.paletteItemIcon {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.paletteItemType {
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-disabled);
+  flex-shrink: 0;
+}
+
+.paletteShowMore {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  background: transparent;
+  border: none;
+  border-top: 1px solid var(--color-border-opaque);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-secondary);
+  cursor: pointer;
+  transition: background var(--duration-fast), color var(--duration-fast);
+}
+.paletteShowMore:hover {
+  background: var(--color-bg-secondary);
+  color: var(--color-content-primary);
+}
+
+/* ─── Drop Zone Slots ──────────────────────────────────────────────────────────── */
+
+.dropSlot {
+  width: 200px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+  z-index: 10;
+}
+
+.dropSlotLine {
+  width: 2px;
+  height: 20px;
+  border-radius: var(--radius-full);
+  background: var(--color-border-opaque);
+  transition: background var(--duration-fast), height var(--duration-fast);
+}
+
+.dropSlotValid .dropSlotLine {
+  background: color-mix(in srgb, var(--color-brand) 40%, var(--color-border-opaque));
+}
+
+.dropSlotValid:hover .dropSlotLine,
+.dropSlotActive .dropSlotLine {
+  background: var(--color-brand);
+  height: 24px;
+}
+
+.dropSlotGhost {
+  width: 200px;
+  min-height: 62px;
+  background: color-mix(in srgb, var(--color-brand) 5%, var(--color-bg-primary));
+  border: 1.5px dashed color-mix(in srgb, var(--color-brand) 50%, var(--color-border-opaque));
+  border-radius: var(--radius-lg);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  margin: 4px 0;
+  animation: ghostIn var(--duration-fast) var(--ease-out);
+}
+
+@keyframes ghostIn {
+  from { opacity: 0; transform: scaleY(0.7); }
+  to   { opacity: 1; transform: scaleY(1); }
+}
+
+.dropSlotGhostTrigger {
+  border-color: color-mix(in srgb, var(--tag-trigger-color) 60%, transparent);
+  background: color-mix(in srgb, var(--tag-trigger-color) 6%, var(--color-bg-primary));
+}
+.dropSlotGhostCondition {
+  border-color: color-mix(in srgb, var(--tag-condition-color) 60%, transparent);
+  background: color-mix(in srgb, var(--tag-condition-color) 6%, var(--color-bg-primary));
+}
+.dropSlotGhostAction {
+  border-color: color-mix(in srgb, var(--tag-action-color) 60%, transparent);
+  background: color-mix(in srgb, var(--tag-action-color) 6%, var(--color-bg-primary));
+}
+.dropSlotGhostAi {
+  border-color: color-mix(in srgb, var(--tag-ai-color) 60%, transparent);
+  background: color-mix(in srgb, var(--tag-ai-color) 6%, var(--color-bg-primary));
+}
+
+.dropSlotGhostLabel {
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-secondary);
+}
+
+/* Ghost and lines are visual only — pass drag events through to the slot container */
+.dropSlotGhost,
+.dropSlotLine {
+  pointer-events: none;
+}
+
+.dropSlotInvalid {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+/* ─── Canvas ───────────────────────────────────────────────────────────────────── */
+
+.canvas {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  position: relative;
+  background-color: var(--canvas-bg);
+  background-image: radial-gradient(circle, var(--canvas-dot-color) 1px, transparent 1px);
+  background-size: 24px 24px;
+  overflow: hidden;
+  cursor: default;
+  user-select: none;
+}
+
+.canvas[data-panning="true"] { cursor: grabbing; }
+
+/* While drawing an edge (arrow drag), freeze pointer-events on all node cards
+   so :hover/:active/:focus can't trigger the blue-fill highlight on hovered cards.
+   Position tracking still works — it's coordinate-based (mousemove on canvas). */
+.canvas[data-drawing] .nodeWrapper { pointer-events: none; }
+.canvas[data-drawing] { cursor: crosshair; }
+
+/* Tidy-up animation — nodes slide smoothly to their computed positions.
+   Only active for the duration of the transition, never during normal drag. */
+.canvas[data-tidying] .nodeWrapper {
+  transition: left 320ms var(--ease-out), top 320ms var(--ease-out);
+}
+
+.canvasViewport {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+/* ─── Graph canvas ───────────────────────────────────────────────────────────── */
+
+.graphContent {
+  position: absolute;
+  left: 50%;
+  will-change: transform;
+}
+
+/* ─── Node wrapper (absolute shell for each node + its ports) ─────────────────── */
+
+.nodeWrapper {
+  position: absolute;
+  width: 200px; /* NODE_W — matches layout constant */
+  overflow: visible; /* anchors peek out beyond card edges */
+  cursor: grab;
+}
+
+/* Node being freely dragged — elevate above other nodes, change cursor */
+.nodeWrapperDragging {
+  z-index: 10;
+  cursor: grabbing;
+}
+
+/* ─── Output ports ────────────────────────────────────────────────────────────── */
+
+.nodeOutputPorts {
+  position: absolute;
+  top: 80px; /* NODE_H */
+  left: 0;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  gap: var(--space-4);
+}
+
+.outputPortWrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+}
+
+.outputPortLine {
+  width: 1.5px;
+  height: 20px;
+  background: var(--color-border-opaque);
+}
+
+.outputPortLabel {
+  font-size: var(--text-xs);
+  font-family: var(--font-sans);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-tertiary);
+  margin-top: var(--space-1);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* ─── Add workflow button ─────────────────────────────────────────────────────── */
+
+.addWorkflowBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 28px;
+  padding: 0 var(--space-3);
+  background: var(--color-bg-primary);
+  border: 1px dashed var(--color-border-opaque);
+  border-radius: var(--radius-full);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-tertiary);
+  cursor: pointer;
+  transition: border-color var(--duration-fast), color var(--duration-fast), background var(--duration-fast);
+}
+
+.addWorkflowBtn:hover {
+  border-color: var(--color-content-primary);
+  color: var(--color-content-primary);
+  background: var(--color-bg-secondary);
+  border-style: solid;
+}
+
+/* ─── Connector ──────────────────────────────────────────────────────────────── */
+
+/* Kept for EndConnector */
+.connectorSvg {
+  display: block;
+  flex-shrink: 0;
+}
+
+/* Straight-line connector between nodes */
+.connector {
+  width: 200px;
+  height: 44px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Unbroken vertical line */
+.connectorLine {
+  position: absolute;
+  top: 0;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 1.5px;
+  background: var(--color-border-opaque);
+  pointer-events: none;
+}
+
+/* Chevron arrowhead */
+.connectorArrow {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  display: block;
+  pointer-events: none;
+}
+
+/* Centered + button */
+.connectorPlusArea {
+  position: relative;
+  z-index: 1;
+}
+
+.connectorPlusBtn {
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-inverse-primary);
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--color-content-inverse-primary);
+  opacity: 0;
+}
+
+.connector:hover .connectorPlusBtn,
+.nodeWrapper:hover .connectorPlusBtn,
+.connectorPlusBtnOpen {
+  opacity: 1;
+}
+
+.connectorPlusBtn:hover {
+  background: color-mix(in srgb, var(--color-content-primary) 80%, transparent);
+}
+
+/* Insert panel — portaled to body, outside canvas transform */
+.connectorInsertPopover {
+  width: 228px;
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-below-md);
+  overflow: hidden;
+}
+
+.connectorInsertSearch {
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--color-border-opaque);
+}
+
+.connectorInsertList {
+  max-height: 220px;
+}
+
+.connectorInsertListInner {
+  padding: var(--space-1);
+}
+
+.connectorInsertItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-primary);
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--duration-fast);
+}
+.connectorInsertItem:hover { background: var(--color-bg-secondary); }
+
+.connectorInsertEmpty {
+  font-size: var(--text-xs);
+  color: var(--color-content-tertiary);
+  padding: var(--space-3) var(--space-2);
+  text-align: center;
+  margin: 0;
+}
+
+/* ─── Flow node ──────────────────────────────────────────────────────────────── */
+
+.flowNodeOuter {
+  position: relative; /* anchors absolutely-placed nodeDotsDropdown */
+  width: 200px;
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition: opacity var(--duration-fast) var(--ease-default);
+}
+
+.flowNodeOuterDragging {
+  opacity: 0.38;
+  cursor: grabbing;
+}
+
+.flowNode {
+  background: var(--color-bg-primary);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  width: 100%;
+  /* Default: thin 1px ring + bottom depth accent — both inset to avoid layout shift */
+  box-shadow:
+    inset 0 0 0 1px var(--color-border-opaque),
+    inset 0 -3px 5px color-mix(in srgb, var(--color-bg-always-dark) 6%, transparent);
+  transition: box-shadow var(--duration-fast) var(--ease-default);
+}
+
+/* Hover — 2px slate ring */
+.flowNodeOuter:hover:not(.flowNodeOuterSelected):not(.flowNodeOuterDragOver) .flowNode {
+  box-shadow:
+    inset 0 0 0 2px var(--color-content-placeholder),
+    inset 0 -3px 5px color-mix(in srgb, var(--color-bg-always-dark) 6%, transparent);
+}
+
+/* Selected — 2px near-black ring + below-md elevation */
+.flowNodeOuterSelected .flowNode {
+  box-shadow:
+    inset 0 0 0 2px var(--color-content-primary),
+    inset 0 -3px 5px color-mix(in srgb, var(--color-bg-always-dark) 6%, transparent),
+    var(--shadow-below-md);
+}
+
+/* Drag-over — 2px brand ring */
+.flowNodeOuterDragOver .flowNode {
+  box-shadow:
+    inset 0 0 0 2px var(--color-brand),
+    inset 0 -3px 5px color-mix(in srgb, var(--color-bg-always-dark) 6%, transparent);
+}
+
+/* Edit-selected — 2px AI purple ring */
+.flowNodeOuterEditSelected .flowNode {
+  box-shadow:
+    inset 0 0 0 2px #8c4fe2,
+    inset 0 -3px 5px color-mix(in srgb, var(--color-bg-always-dark) 6%, transparent);
+}
+
+/* ─── Drop placeholder — ghost node shown while dragging from palette ─────── */
+.dropPlaceholder {
+  position: absolute;
+  border-radius: var(--radius-lg);
+  border: 2px dashed;
+  pointer-events: none;
+  animation: placeholderFadeIn var(--duration-base) var(--ease-out) both;
+  will-change: transform, opacity;
+}
+
+.dropPlaceholderTrigger {
+  border-color: var(--step-trigger-fg);
+  background: color-mix(in srgb, var(--step-trigger-fg) 7%, transparent);
+}
+.dropPlaceholderCondition {
+  border-color: var(--step-condition-fg);
+  background: color-mix(in srgb, var(--step-condition-fg) 7%, transparent);
+}
+.dropPlaceholderAction {
+  border-color: var(--step-action-fg);
+  background: color-mix(in srgb, var(--step-action-fg) 7%, transparent);
+}
+.dropPlaceholderAi {
+  border-color: var(--step-ai-fg);
+  background: color-mix(in srgb, var(--step-ai-fg) 7%, transparent);
+}
+
+@keyframes placeholderFadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.nodeHeading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 32px;
+  padding: var(--space-2);
+}
+
+.nodeHeadingLeft {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* Drag-to-reorder grip handle — floats left of the card */
+.nodeDragHandle {
+  position: absolute;
+  left: -24px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-xs);
+  color: var(--color-content-tertiary);
+  opacity: 0;
+  cursor: grab;
+  transition:
+    color var(--duration-fast),
+    background var(--duration-fast);
+}
+
+.flowNodeOuter:hover .nodeDragHandle,
+.flowNodeOuterSelected .nodeDragHandle {
+  opacity: 1;
+}
+
+.nodeDragHandle:hover {
+  background: color-mix(in srgb, var(--color-content-primary) 7%, transparent);
+  color: var(--color-content-secondary);
+}
+
+.flowNodeOuterDragging .nodeDragHandle {
+  cursor: grabbing;
+  opacity: 1;
+}
+
+/* Badge — 24×24 icon square, mirrors dots button size */
+.nodeTypeBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+}
+
+/* ··· dots action button — trigger for Alloy DropdownMenu */
+.nodeDotsBtn {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  color: var(--color-content-tertiary);
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0;
+  transition: background var(--duration-fast), color var(--duration-fast);
+}
+.nodeDotsBtn:hover {
+  background: color-mix(in srgb, var(--color-content-primary) 7%, transparent);
+  color: var(--color-content-primary);
+}
+
+/* Wrapper that lifts the DropdownMenu out of flowNode's overflow:hidden */
+.nodeDotsDropdown {
+  position: absolute;
+  top: var(--space-2);   /* aligns with nodeHeading padding */
+  right: var(--space-2);
+  z-index: 1;
+}
+
+.nodeIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-md);
+  flex-shrink: 0;
+}
+
+.iconTrigger   { background: var(--step-trigger-bg);   color: var(--step-trigger-fg); }
+.iconCondition { background: var(--step-condition-bg);  color: var(--step-condition-fg); }
+.iconAction    { background: var(--step-action-bg);     color: var(--step-action-fg); }
+.iconAi        { background: var(--step-ai-bg);         color: var(--step-ai-fg); }
+
+.nodeBody {
+  padding: 0 var(--space-2) var(--space-2);
+}
+
+/* Grey box — always visible, mirrors secondary Button appearance but grows in height */
+.nodeSelectBox {
+  width: 100%;
+  min-height: 32px;
+  padding: var(--space-2);
+  background: var(--color-bg-secondary);
+  border: 1px solid transparent;
+  border-radius: var(--radius-button);
+  display: flex;
+  align-items: flex-start;
+}
+
+/* Placeholder text — label-md: 14px / medium / relaxed / wide tracking */
+.nodeSelectPlaceholder {
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: var(--tracking-wide);
+  color: var(--color-content-placeholder);
+  line-height: var(--line-height-relaxed);
+}
+
+/* Configured-state summary — Geist Mono, inline text with type-specific colours */
+.nodeConfigSummary {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-relaxed);
+  word-break: break-word;
+  white-space: normal;
+}
+
+/* Node label — label-md: Geist Sans / medium (500) / 14px / relaxed / wide tracking */
+.nodeConfigLabel {
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-relaxed);
+  letter-spacing: var(--tracking-wide);
+  color: var(--color-content-secondary);
+}
+
+/* Operator part (e.g. "is", "is not", "contains") — type tertiary colour */
+.nodeConfigSummary[data-type="trigger"]   .nodeConfigOp { color: var(--color-orange-content-tertiary); }
+.nodeConfigSummary[data-type="condition"] .nodeConfigOp { color: var(--color-blue-content-tertiary); }
+.nodeConfigSummary[data-type="action"]    .nodeConfigOp { color: var(--color-green-content-tertiary); }
+.nodeConfigSummary[data-type="ai"]        .nodeConfigOp { color: var(--color-purple-content-tertiary); }
+
+/* Value part (user-entered / selected values) — type secondary colour */
+.nodeConfigSummary[data-type="trigger"]   .nodeConfigVal { color: var(--color-orange-content-secondary); }
+.nodeConfigSummary[data-type="condition"] .nodeConfigVal { color: var(--color-blue-content-secondary); }
+.nodeConfigSummary[data-type="action"]    .nodeConfigVal { color: var(--color-green-content-secondary); }
+.nodeConfigSummary[data-type="ai"]        .nodeConfigVal { color: var(--color-purple-content-secondary); }
+
+/* ─── Node popover ───────────────────────────────────────────────────────────── */
+
+.nodePopover {
+  width: 360px;
+  max-height: 70vh;
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: 12px;
+  box-shadow: var(--shadow-below-md);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Scrollable middle — header and footer stay pinned */
+.popoverBody {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  /* Thin custom scrollbar so it feels native */
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-opaque) transparent;
+}
+.popoverBody::-webkit-scrollbar { width: 4px; }
+.popoverBody::-webkit-scrollbar-track { background: transparent; }
+.popoverBody::-webkit-scrollbar-thumb {
+  background: var(--color-border-opaque);
+  border-radius: var(--radius-full);
+}
+
+.popoverHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border-opaque);
+  flex-shrink: 0;
+}
+
+.popoverHeaderLeft {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+/* Type badge in popover header — same size as node card badge */
+.popoverTypeBadge {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* label-md: 14px / medium (500) / lh 1.5 / tracking +0.02em */
+.popoverTitle {
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-relaxed);
+  letter-spacing: var(--tracking-wide);
+  color: var(--color-content-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Name select — Alloy Input shell trigger + DropdownMenu panel ── */
+
+.nameSelect { position: relative; }
+
+/* Override <button> defaults; Alloy shell classes handle border/bg/radius */
+.nameSelectTrigger {
+  width: 100%;
+  cursor: pointer;
+  text-align: left;
+}
+
+/* Focus ring — mirrors Alloy .outlined:focus-within but on the button element itself */
+.nameSelectTrigger:focus-visible {
+  outline: none;
+  border-color: var(--color-border-focus);
+  box-shadow: 0 0 0 3px var(--color-bg-focus-ring);
+}
+
+/* Chevron slot — color tokens; transform applied to the SVG so rotation
+   pivots on the icon's own center, not the padded slot's center */
+.nameSelectChevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-content-tertiary);
+  transition: color var(--duration-fast) var(--ease-default);
+}
+.nameSelectChevron > svg {
+  transition: transform var(--duration-fast) var(--ease-default);
+  transform-origin: center center;
+}
+.nameSelectTrigger:hover .nameSelectChevron { color: var(--color-content-secondary); }
+.nameSelectTrigger[data-open] .nameSelectChevron { color: var(--color-content-primary); }
+.nameSelectTrigger[data-open] .nameSelectChevron > svg { transform: rotate(180deg); }
+
+/* Value text — mirrors Alloy .control sizing via shell's CSS custom props */
+.nameSelectValue {
+  flex: 1;
+  min-width: 0;
+  height: var(--field-h, 40px);
+  display: flex;
+  align-items: center;
+  padding-left: var(--ctrl-pl, var(--space-3));
+  padding-right: var(--ctrl-pr, var(--space-3));
+  font-family: var(--font-sans);
+  font-size: var(--field-fs, var(--text-sm));
+  color: var(--color-content-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nameSelectPlaceholder { color: var(--color-content-tertiary); }
+
+/* Panel portalled to document.body — Alloy DropdownMenu CSS module sets shape */
+.nameSelectPanel {
+  position: fixed !important; /* overrides Alloy's position:absolute */
+  max-height: 280px;
+  display: flex;
+  flex-direction: column;
+}
+
+.nameSelectSearchWrap {
+  padding: var(--space-2) var(--space-2) 0;
+  flex-shrink: 0;
+}
+
+.nameSelectList { overflow-y: auto; flex: 1; }
+
+/* Item rows — border-radius comes from Alloy dropdownStyles.item */
+.nameSelectItem {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  transition: background var(--duration-fast);
+}
+.nameSelectItem:hover { background: var(--color-bg-secondary); }
+.nameSelectItemSelected { background: var(--color-bg-secondary); font-weight: var(--font-weight-medium); }
+.nameSelectItemSelected:hover { background: var(--color-bg-tertiary); }
+
+.nameSelectEmpty {
+  padding: var(--space-3) var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--color-content-tertiary);
+  text-align: center;
+}
+
+/* Item label + category (shared with palette) */
+.nameSearchItemLabel {
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.nameSearchItemCategory {
+  font-size: var(--text-xs);
+  color: var(--color-content-tertiary);
+  white-space: nowrap;
+  flex-shrink: 0;
+  text-transform: capitalize;
+}
+
+/* ── Popover footer ── */
+.popoverFooter {
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--color-border-opaque);
+  display: flex;
+  justify-content: flex-end;
+  flex-shrink: 0;
+}
+
+
+.popoverSection {
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.popoverSectionLabel {
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-content-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.popoverDivider {
+  height: 1px;
+  background: var(--color-border-opaque);
+  flex-shrink: 0;
+}
+
+.popoverTags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+/* Suggested section — Alloy Tag as clickable button */
+.popoverSuggestBtn {
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  display: inline-flex;
+  transition: opacity var(--duration-fast);
+}
+.popoverSuggestBtn:hover { opacity: 0.72; }
+
+/* Condition value-option toggle pills (used in Configuration section) */
+.popoverTag {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 var(--space-2);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-primary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--duration-fast), border-color var(--duration-fast), color var(--duration-fast);
+}
+.popoverTag:hover {
+  background: color-mix(in srgb, var(--color-brand) 6%, var(--color-bg-primary));
+  border-color: var(--color-brand);
+  color: var(--color-brand);
+}
+
+.popoverAiWrap { display: flex; flex-direction: column; gap: var(--space-2); }
+
+.popoverAiInputRow {
+  display: flex;
+  gap: var(--space-1);
+  align-items: flex-end;
+}
+
+/* Alloy TextArea wrapper inside the AI input row */
+.popoverTextareaField {
+  flex: 1;
+}
+.popoverTextareaField textarea {
+  min-height: 60px;
+  resize: none;
+  user-select: text;
+}
+
+.popoverAiSend {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-brand);
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--color-content-inverse-primary);
+  cursor: pointer;
+  transition: background var(--duration-fast), opacity var(--duration-fast);
+}
+.popoverAiSend:disabled { opacity: 0.4; cursor: not-allowed; }
+.popoverAiSend:not(:disabled):hover { background: var(--color-brand-hover); }
+
+.popoverAiResult {
+  padding: var(--space-2);
+  background: color-mix(in srgb, var(--color-brand) 5%, var(--color-bg-primary));
+  border: 1px solid color-mix(in srgb, var(--color-brand) 18%, var(--color-border-opaque));
+  border-radius: var(--radius-md);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  color: var(--color-content-primary);
+  line-height: var(--line-height-relaxed);
+}
+
+.loadingDots {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.loadingDots span {
+  display: block;
+  width: 3px;
+  height: 3px;
+  border-radius: var(--radius-full);
+  background: currentColor;
+  animation: dotBounce 1.1s infinite ease-in-out;
+}
+.loadingDots span:nth-child(2) { animation-delay: 0.18s; }
+.loadingDots span:nth-child(3) { animation-delay: 0.36s; }
+
+@keyframes dotBounce {
+  0%, 100% { opacity: 0.3; transform: scaleY(0.7); }
+  50%       { opacity: 1;   transform: scaleY(1); }
+}
+
+.popoverFields { display: flex; flex-direction: column; gap: var(--space-2); }
+
+/* Label + field row for trigger config selects */
+.popoverFieldRow { display: flex; flex-direction: column; gap: var(--space-1); }
+.popoverFieldLabel {
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-relaxed);
+  color: var(--color-content-secondary);
+}
+
+/* Native time input — matches Alloy outlined field shell (md) */
+.popoverTimeInput {
+  width: 100%;
+  height: 40px;
+  padding: 0 var(--space-3);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  color: var(--color-content-primary);
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-md);
+  outline: none;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+.popoverTimeInput:hover { border-color: var(--color-border-focus); }
+.popoverTimeInput:focus { border-color: var(--color-border-focus); box-shadow: 0 0 0 2px var(--color-border-focus-ring, var(--color-brand-20, transparent)); }
+
+/* Boolean toggle row — checkbox + label inline */
+.popoverFieldRowInline {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+}
+.popoverCheckbox {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  accent-color: var(--color-brand-primary, var(--color-success-primary));
+  cursor: pointer;
+  border-radius: var(--radius-xs);
+}
+.popoverCheckboxLabel {
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  color: var(--color-content-secondary);
+  cursor: pointer;
+  user-select: none;
+  line-height: 1.4;
+}
+
+/* ─── PopoverSelect ──────────────────────────────────────────────────────────── */
+
+.psRoot { position: relative; width: 100%; }
+
+/* Trigger: Alloy outlined input shell, overrides for <button> */
+.psTrigger {
+  width: 100%;
+  cursor: pointer;
+  text-align: left;
+}
+.psTrigger:focus-visible {
+  outline: none;
+  border-color: var(--color-border-focus);
+  box-shadow: 0 0 0 3px var(--color-bg-focus-ring);
+}
+
+/* Value text — mirrors Alloy .control layout via shell custom props */
+.psValue {
+  flex: 1;
+  min-width: 0;
+  height: var(--field-h, 40px);
+  display: flex;
+  align-items: center;
+  padding-left: var(--ctrl-pl, var(--space-3));
+  font-family: var(--font-sans);
+  font-size: var(--field-fs, var(--text-sm));
+  color: var(--color-content-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.psPlaceholder { color: var(--color-content-tertiary); }
+
+/* Chevron — rotates on open; transform on svg so pivot is the icon center */
+.psChevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-content-tertiary);
+  transition: color var(--duration-fast) var(--ease-default);
+}
+.psChevron > svg {
+  transition: transform var(--duration-fast) var(--ease-default);
+  transform-origin: center center;
+}
+.psTrigger:hover .psChevron { color: var(--color-content-secondary); }
+.psTrigger[data-open] .psChevron { color: var(--color-content-primary); }
+.psTrigger[data-open] .psChevron > svg { transform: rotate(180deg); }
+
+/* Panel — portalled to body; Alloy DropdownMenu shape */
+.psPanel {
+  position: fixed !important;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+/* Item rows */
+.psItem {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  color: var(--color-content-primary);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  transition: background var(--duration-fast);
+}
+.psItem:hover { background: var(--color-bg-secondary); }
+.psItemSelected {
+  background: var(--color-bg-secondary);
+  font-weight: var(--font-weight-medium);
+}
+.psItemSelected:hover { background: var(--color-bg-tertiary); }
+
+.popoverConfigPlaceholder {
+  font-size: var(--text-sm);
+  color: var(--color-content-tertiary);
+  font-style: italic;
+}
+
+/* ─── Add step group ─────────────────────────────────────────────────────────── */
+
+.addStepGroup {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  width: 200px;
+  height: 80px;
+  padding: var(--space-2) var(--space-3);
+  border: 1.5px dashed color-mix(in srgb, var(--color-border-opaque) 80%, transparent);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-secondary);
+}
+
+
+/* ─── Empty state ────────────────────────────────────────────────────────────── */
+
+.emptyState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-8) var(--space-6);
+  text-align: center;
+}
+
+.emptyStateIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-xl);
+  margin-bottom: var(--space-1);
+  box-shadow: var(--shadow-below-low);
+}
+
+.emptyStateTitle {
+  font-size: var(--text-base);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-content-primary);
+}
+
+.emptyStateDesc {
+  font-size: var(--text-sm);
+  color: var(--color-content-tertiary);
+  max-width: 220px;
+  line-height: var(--line-height-snug);
+}
+
+.emptyStateCta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 32px;
+  padding: 0 var(--space-4);
+  background: var(--color-brand);
+  border: none;
+  border-radius: var(--radius-md);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-inverse-primary);
+  cursor: pointer;
+  margin-top: var(--space-2);
+  box-shadow: var(--shadow-below-low);
+  transition: background var(--duration-fast);
+}
+.emptyStateCta:hover { background: var(--color-brand-hover); }
+
+/* ─── Bottom bar ─────────────────────────────────────────────────────────────── */
+
+.canvasBottomBar {
+  position: absolute;
+  bottom: var(--space-2);
+  right: var(--space-2);
+  pointer-events: none;
+}
+
+.canvasBottomBar > * { pointer-events: auto; }
+
+/* ─── Zoom controls ─────────────────────────────────────────────────────────── */
+
+.zoomControls {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-4);
+}
+
+.zoomBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-md);
+  color: var(--color-content-secondary);
+  cursor: pointer;
+  box-shadow: var(--shadow-below-low);
+  transition: background var(--duration-fast), color var(--duration-fast);
+}
+.zoomBtn:hover { background: var(--color-bg-secondary); color: var(--color-content-primary); }
+
+/* Tidy up button — icon + text label, auto width */
+.tidyBtn {
+  width: auto;
+  padding: 0 var(--space-2);
+  gap: var(--space-1);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+}
+
+/* Divider between zoom buttons and tidy button */
+.zoomDivider {
+  display: block;
+  width: 1px;
+  height: 16px;
+  background: var(--color-border-opaque);
+  flex-shrink: 0;
+}
+
+.zoomLevel {
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-tertiary);
+  text-align: center;
+  user-select: none;
+  line-height: 1;
+  padding: 2px 0;
+}
+
+/* ─── Node settings fields ────────────────────────────────────────────────── */
+
+.settingsFields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.settingsField {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.settingsFieldLabel {
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-secondary);
+  letter-spacing: var(--tracking-normal);
+}
+
+.settingsSelectWrap { position: relative; }
+
+/* Alloy input-style select — matches tokens exactly */
+.settingsSelect {
+  width: 100%;
+  height: 32px;
+  padding: 0 28px 0 var(--space-2);
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-md);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-regular);
+  color: var(--color-content-primary);
+  outline: none;
+  appearance: none;
+  cursor: pointer;
+  transition: border-color var(--duration-fast), box-shadow var(--duration-fast);
+  box-shadow: var(--shadow-below-low);
+}
+.settingsSelect:focus {
+  border-color: var(--color-brand);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-brand) 12%, transparent);
+}
+.settingsSelect option[value=""] { color: var(--color-content-tertiary); }
+
+.settingsSelectChevron {
+  position: absolute;
+  right: var(--space-2);
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  color: var(--color-content-secondary);
+  display: flex;
+  align-items: center;
+}
+
+/* ─── Condition config inputs ────────────────────────────────────────────────── */
+
+/* Within-next row: number + unit select side by side */
+.conditionWithinNext {
+  display: flex;
+  gap: var(--space-1);
+  align-items: center;
+}
+.conditionWithinNextNum {
+  width: 60px !important; /* overrides 100% width */
+  flex-shrink: 0;
+}
+.conditionWithinNextUnit {
+  flex: 1;
+}
+
+/* Multi-value tag input */
+.conditionTagInput {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-md);
+  min-height: 40px;
+  align-items: center;
+  transition: border-color var(--duration-fast), box-shadow var(--duration-fast);
+  cursor: text;
+}
+.conditionTagInput:focus-within {
+  border-color: var(--color-brand);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-brand) 10%, transparent);
+}
+
+.conditionValueChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 24px;
+  padding: 0 2px 0 var(--space-2);
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-primary);
+  white-space: nowrap;
+}
+
+.conditionValueChipRemove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: none;
+  background: transparent;
+  color: var(--color-content-tertiary);
+  cursor: pointer;
+  border-radius: var(--radius-xs);
+  padding: 0;
+  flex-shrink: 0;
+  transition: background var(--duration-fast), color var(--duration-fast);
+}
+.conditionValueChipRemove:hover {
+  background: color-mix(in srgb, var(--color-content-primary) 8%, transparent);
+  color: var(--color-content-primary);
+}
+
+.conditionTagInputField {
+  flex: 1;
+  min-width: 80px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  outline: none;
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  color: var(--color-content-primary);
+  padding: 0 var(--space-1);
+  user-select: text;
+}
+.conditionTagInputField::placeholder { color: var(--color-content-tertiary); }
+
+/* Selected state for value-option tag chips */
+.popoverTagSelected {
+  background: color-mix(in srgb, var(--color-brand) 10%, var(--color-bg-primary));
+  border-color: color-mix(in srgb, var(--color-brand) 50%, var(--color-border-opaque));
+  color: var(--color-brand);
+}
+
+/* ─── Edge midpoint + button ─────────────────────────────────────────────────── */
+
+.edgeMidpointArea {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  /* Lower than node wrappers which come later in DOM order */
+  z-index: 0;
+}
+
+.edgeMidplusBtn {
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-inverse-primary);
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--color-content-inverse-primary);
+  opacity: 0;
+  flex-shrink: 0;
+  transition: opacity var(--duration-fast), background var(--duration-fast);
+  box-shadow: var(--shadow-below-low);
+}
+
+.edgeMidpointArea:hover .edgeMidplusBtn {
+  opacity: 1;
+}
+
+.edgeMidplusBtn:hover {
+  background: color-mix(in srgb, var(--color-content-primary) 80%, transparent);
+}
+
+/* ── Connector anchors ── */
+.anchor {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  background: var(--color-content-primary);
+  border: 2px solid var(--color-bg-primary);
+  border-radius: 50%;
+  left: 50%;
+  margin-left: -5px;
+  z-index: 10;
+  cursor: crosshair;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-default), transform var(--duration-fast) var(--ease-default);
+  box-shadow: var(--shadow-below-low);
+  pointer-events: all;
+}
+
+.anchorTop {
+  top: -6px;
+}
+
+.anchorBottom {
+  bottom: -6px;
+}
+
+/* Show anchors on node hover, selection, or when it's the drag-over target */
+.nodeWrapper:hover .anchor,
+.nodeWrapper[data-selected] .anchor,
+.nodeWrapper[data-drag-target] .anchor {
+  opacity: 1;
+}
+
+.anchor:hover {
+  transform: scale(1.3);
+}
+
+/* ── Canvas type picker (double-click to add node) ── */
+.typePicker {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-bg-primary);
+  border: 1px dashed var(--color-border-opaque);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-below-md);
+  transform: translate(-50%, -50%);
+  pointer-events: all;
+}
+
+.typePickerBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: transform var(--duration-fast) var(--ease-default), opacity var(--duration-fast);
+  color: var(--color-content-primary);
+}
+
+.typePickerBtn:hover {
+  transform: scale(1.15);
+}
+
+/* ─── Responsive ─────────────────────────────────────────────────────────────── */
+
+@media (max-width: 480px) { .leftPanel { display: none; } }

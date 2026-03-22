@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__plugin_figma_figma__get_design_context",
+      "mcp__plugin_figma_figma__get_screenshot",
+      "Bash(npm run:*)",
+      "Bash(ls /Users/unassignedlaptop9/Documents/MyClaudeFolder/Automation_2.0/tsconfig*.json)",
+      "Bash(npm install:*)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(npx tsc:*)",
+      "Bash(xargs kill:*)",
+      "Bash(grep -n '#[0-9a-fA-F]\\\\{3,6\\\\}\\\\|rgba\\([^\\)]*\\)\\\\|rgb\\(' /Users/unassignedlaptop9/Documents/MyClaudeFolder/Automation_2.0/src/pages/BuilderPage.module.css)",
+      "Bash(find /Users/unassignedlaptop9/Documents/MyClaudeFolder/Automation_2.0/src/components -type f -name *.tsx -o -name *.ts)",
+      "Bash(lsof -ti:5173)",
+      "Bash(echo \"Exit: $?\")",
+      "mcp__plugin_figma_figma__whoami",
+      "mcp__plugin_figma_figma__generate_figma_design",
+      "Bash(open \"http://localhost:5173/automations/1#figmacapture=3aec8af0-cefd-40a9-bca9-f9676d675178&figmaendpoint=https%3A%2F%2Fmcp.figma.com%2Fmcp%2Fcapture%2F3aec8af0-cefd-40a9-bca9-f9676d675178%2Fsubmit&figmadelay=4000&figmaselector=%5Bdata-popover%3D%22true%22%5D\")",
+      "Bash(xargs ls:*)",
+      "Bash(git remote:*)",
+      "Bash(git branch:*)",
+      "Bash(git push:*)"
+    ]
+  }
+}

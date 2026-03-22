@@ -1,0 +1,186 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.searchWrap {
+  position: relative;
+  max-width: 280px;
+}
+
+.searchIcon {
+  position: absolute;
+  left: var(--space-3);
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--color-content-tertiary);
+  display: flex;
+  pointer-events: none;
+}
+
+.searchInput {
+  width: 100%;
+  height: 32px;
+  padding: 0 var(--space-3) 0 var(--space-8);
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-md);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  color: var(--color-content-primary);
+  outline: none;
+  transition: border-color var(--duration-fast);
+}
+
+.searchInput::placeholder {
+  color: var(--color-content-tertiary);
+}
+
+.searchInput:focus {
+  border-color: var(--color-border-focus);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-border-focus) 12%, transparent);
+}
+
+.filterGroup {
+  display: flex;
+  gap: 2px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-md);
+  padding: 2px;
+}
+
+.filterBtn {
+  height: 26px;
+  padding: 0 var(--space-3);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-secondary);
+  cursor: pointer;
+  transition: background var(--duration-fast), color var(--duration-fast);
+}
+
+.filterBtn:hover {
+  color: var(--color-content-primary);
+}
+
+.filterBtnActive {
+  background: var(--color-bg-primary);
+  color: var(--color-content-primary);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+}
+
+/* ─── Grid ──────────────────────────────────────────────────────────────────── */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--space-3);
+}
+
+/* ─── Card ──────────────────────────────────────────────────────────────────── */
+.card {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-lg);
+}
+
+.cardLogo {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-bold);
+  color: white;
+  flex-shrink: 0;
+  letter-spacing: var(--tracking-tight);
+}
+
+.cardBody {
+  flex: 1;
+  min-width: 0;
+}
+
+.cardHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: 3px;
+}
+
+.cardName {
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-content-primary);
+}
+
+.statusDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-content-disabled);
+  flex-shrink: 0;
+}
+
+.statusDotConnected {
+  background: var(--color-success-fill);
+}
+
+.cardDesc {
+  font-size: var(--text-xs);
+  color: var(--color-content-tertiary);
+  line-height: var(--line-height-snug);
+}
+
+/* ─── Connect button ────────────────────────────────────────────────────────── */
+.connectBtn {
+  height: 28px;
+  padding: 0 var(--space-3);
+  background: var(--color-bg-inverse-primary);
+  color: var(--color-content-inverse-primary);
+  border: none;
+  border-radius: var(--radius-md);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: opacity var(--duration-fast);
+}
+
+.connectBtn:hover:not(:disabled) {
+  opacity: 0.88;
+}
+
+.connectBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.connectBtnConnected {
+  background: var(--color-bg-tertiary);
+  color: var(--color-content-secondary);
+}
+
+.connectBtnConnected:hover:not(:disabled) {
+  background: var(--color-error-bg);
+  color: var(--color-error-content);
+  opacity: 1;
+}

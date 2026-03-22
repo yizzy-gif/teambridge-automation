@@ -1,0 +1,98 @@
+/* ─── Alloy Design System tokens ────────────────────────────────────────────── */
+@import '../../../Alloy/src/styles/tokens.css';
+@import '../../../Alloy/src/styles/artwork.css';
+
+/* ─── Geist fonts ───────────────────────────────────────────────────────────── */
+
+/* Geist Sans — variable font */
+@font-face {
+  font-family: 'Geist';
+  src: url('../../node_modules/geist/dist/fonts/geist-sans/Geist-Variable.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Geist Mono — variable font */
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('../../node_modules/geist/dist/fonts/geist-mono/GeistMono-Variable.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ─── Reset ─────────────────────────────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* ─── Root ──────────────────────────────────────────────────────────────────── */
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  line-height: var(--line-height-normal);
+  color: var(--color-content-primary);
+  background: var(--color-bg-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ─── Scrollbars ────────────────────────────────────────────────────────────── */
+/* Native scrollbars are hidden globally — Alloy ScrollArea provides custom ones */
+* {
+  scrollbar-width: none;
+}
+*::-webkit-scrollbar {
+  display: none;
+}
+
+/* ─── Focus ─────────────────────────────────────────────────────────────────── */
+:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
+}
+
+/* ─── Brand extension tokens ─────────────────────────────────────────────────
+   Values not yet in the Alloy token set; add to Alloy when design stabilises.
+   ─────────────────────────────────────────────────────────────────────────── */
+:root {
+  /* Primary brand indigo — used for CTA buttons in the Builder */
+  --color-brand:         #4b4be7;
+  --color-brand-hover:   #3d3dd4;
+  --color-brand-active:  #3232be;
+
+  /* Dark surface — used for "Test Automation" button */
+  --color-surface-dark:         #20232d;
+  --color-surface-dark-border:  rgba(255 255 255 / 0.12);
+
+  /* Step-type icon backgrounds */
+  --step-trigger-bg:   var(--Alloy-orange-150, #fae1c0);
+  --step-trigger-fg:   var(--Alloy-orange-600, #b45309);
+  --step-condition-bg: var(--Alloy-blue-100,   #d1e1ff);
+  --step-condition-fg: var(--Alloy-blue-600,   #1454cb);
+  --step-action-bg:    var(--Alloy-green-100,  #bbf7d0);
+  --step-action-fg:    var(--Alloy-green-700,  #15803d);
+  --step-ai-bg:        var(--Alloy-purple-100, #ede9fe);
+  --step-ai-fg:        var(--Alloy-purple-600, #7c3aed);
+
+  /* Canvas dot-grid */
+  --canvas-bg:         #fafafa;
+  --canvas-dot-color:  rgba(0 0 0 / 0.08);
+
+  /* Flow node tag badge colors — Figma alloy-*-300 */
+  --tag-trigger-color:   #f5c481;  /* alloy-orange-300 */
+  --tag-condition-color: #75a5fe;  /* alloy-blue-300   */
+  --tag-action-color:    #7acd82;  /* alloy-green-300  */
+  --tag-ai-color:        #a78bfa;  /* alloy-purple-300 */
+
+  /* Muted placeholder text inside node Select field — Figma --content/inversesecondary */
+  --color-content-placeholder: #cbd0d7;
+}

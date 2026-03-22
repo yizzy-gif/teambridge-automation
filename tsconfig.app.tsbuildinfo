@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/layouts/appshell.tsx","./src/pages/automationspage.tsx","./src/pages/builderpage.tsx","./src/pages/integrationspage.tsx","./src/pages/settingspage.tsx"],"errors":true,"version":"5.7.3"}
