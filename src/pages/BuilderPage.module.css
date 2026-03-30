@@ -90,8 +90,9 @@
 .topBarName:hover        { border-bottom-color: var(--color-content-tertiary); }
 .topBarName:focus-visible,
 .topBarName:focus {
-  border-bottom-color: var(--color-brand);
+  border-bottom-color: var(--color-border-selected);
   border-bottom-style: solid;
+  border-radius: 0;
   outline: none;
 }
 
@@ -317,24 +318,27 @@
 .aiComposer {
   position: relative;
   overflow: visible;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
 }
 
-/* Inner card: bg, border, shadow, radius, clips children to radius */
+/* Inner card: default border */
 .aiComposerCard {
-  background: var(--color-bg-primary);
   border: 1px solid var(--color-border-opaque);
   border-radius: var(--radius-lg);
   overflow: hidden;
+  background: var(--color-bg-primary);
   box-shadow: var(--shadow-below-md);
-  transition: background var(--duration-fast), box-shadow var(--duration-fast);
+  transition: border-color var(--duration-fast), background var(--duration-fast), box-shadow var(--duration-fast);
 }
-/* Gradient border via background-clip — border-color can't be a gradient directly */
+/* Active: gradient border + outer ring */
 .aiComposerCard:focus-within {
   border-color: transparent;
   background:
     linear-gradient(var(--color-bg-primary), var(--color-bg-primary)) padding-box,
-    linear-gradient(90deg, #8c4fe2 0%, #446cff 100%) border-box;
-  box-shadow: var(--shadow-below-md), 0 0 0 3px rgba(140, 79, 226, 0.12);
+    linear-gradient(135deg, #8c4fe2 0%, #446cff 55%, #38c0f0 100%) border-box;
+  box-shadow: var(--shadow-below-md), 0 0 0 3px rgba(140, 79, 226, 0.15);
 }
 
 /* Tooltip — absolutely positioned above the card, shown via React state */
@@ -388,6 +392,27 @@
   display: flex;
   align-items: center;
   gap: var(--space-1);
+}
+
+/* Mic button — 24×24 icon-only, bordered */
+.aiComposerMicBtn {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: 6px;
+  color: var(--color-content-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0;
+  transition: background var(--duration-fast), color var(--duration-fast);
+}
+.aiComposerMicBtn:hover {
+  background: var(--color-bg-secondary);
+  color: var(--color-content-primary);
 }
 
 /* Attach (+) button — 24×24 icon-only */
@@ -468,18 +493,30 @@
 .aiComposerSendBtn:not(:disabled):hover { opacity: 0.82; }
 .aiComposerSendBtn:disabled { cursor: not-allowed; }
 
+.aiComposerResult {
+  font-size: var(--text-xs);
+  color: var(--color-content-secondary);
+  line-height: 1.4;
+}
+
 /* ─── Node Palette Card ────────────────────────────────────────────────────────── */
 
 .paletteCard {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
   background: var(--color-bg-primary);
   border: 1px solid var(--color-border-opaque);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-below-md);
   overflow: hidden;
+}
+
+/* Results list — shown when search is active */
+.paletteResults {
+  border-top: 1px solid var(--color-border-opaque);
+  padding: var(--space-2) var(--space-2);
+  display: flex;
+  flex-direction: column;
+  max-height: 320px;
+  overflow-y: auto;
 }
 
 .paletteHeader {
@@ -491,9 +528,22 @@
   flex-shrink: 0;
 }
 
-/* SearchField wrapper — remove its default outer margin */
+/* SearchField wrapper fills the trigger */
 .paletteSearch {
   width: 100%;
+}
+
+/* Stop-propagation div (trigger > div) must fill 100% */
+.paletteCard [aria-haspopup="menu"] > div {
+  width: 100%;
+}
+
+/* Strip border, radius, shadow from the outlined shell — card handles those */
+.paletteSearch > div {
+  width: 100%;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
 }
 
 /* Instructional hint below search */
@@ -579,6 +629,18 @@
 .paletteItem:hover {
   background: var(--color-bg-secondary);
   border-color: var(--color-border-opaque);
+}
+
+.paletteItem:focus-visible {
+  outline: none !important;
+  background: var(--color-bg-tertiary);
+  border-color: var(--color-border-selected);
+  box-shadow: none;
+}
+
+/* Also suppress global :focus-visible outline on any child elements */
+.paletteItem:focus-visible * {
+  outline: none !important;
 }
 
 .paletteItem:active {
@@ -1031,11 +1093,13 @@
     inset 0 -3px 5px color-mix(in srgb, var(--color-bg-always-dark) 6%, transparent);
 }
 
-/* Edit-selected — 2px AI purple ring */
+/* Edit-selected — gradient border via background-clip */
 .flowNodeOuterEditSelected .flowNode {
-  box-shadow:
-    inset 0 0 0 2px #8c4fe2,
-    inset 0 -3px 5px color-mix(in srgb, var(--color-bg-always-dark) 6%, transparent);
+  border: 2px solid transparent;
+  background:
+    linear-gradient(var(--color-bg-primary), var(--color-bg-primary)) padding-box,
+    linear-gradient(135deg, #8c4fe2 0%, #446cff 55%, #38c0f0 100%) border-box;
+  box-shadow: inset 0 -3px 5px color-mix(in srgb, var(--color-bg-always-dark) 6%, transparent);
 }
 
 /* ─── Drop placeholder — ghost node shown while dragging from palette ─────── */
@@ -1232,18 +1296,35 @@
 .nodeConfigSummary[data-type="action"]    .nodeConfigVal { color: var(--color-green-content-secondary); }
 .nodeConfigSummary[data-type="ai"]        .nodeConfigVal { color: var(--color-purple-content-secondary); }
 
+/* ─── Right panel — mirrors left panel, anchored to right edge ───────────────── */
+
+.rightPanel {
+  position: fixed;
+  top: calc(48px + 16px);
+  right: 0;
+  bottom: calc(60px + var(--space-4)); /* clear zoom/tidy controls (60px tall, space-4 gap) */
+  width: 360px;
+  padding: 0 var(--space-4) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  z-index: var(--z-raised);
+  pointer-events: none;
+}
+
 /* ─── Node popover ───────────────────────────────────────────────────────────── */
 
 .nodePopover {
-  width: 360px;
-  max-height: 70vh;
+  flex: 1;
+  min-height: 0;
   background: var(--color-bg-primary);
   border: 1px solid var(--color-border-opaque);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow-below-md);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  pointer-events: auto;
 }
 
 /* Scrollable middle — header and footer stay pinned */
@@ -1490,38 +1571,42 @@
 
 .popoverAiWrap { display: flex; flex-direction: column; gap: var(--space-2); }
 
-.popoverAiInputRow {
+/* Composer card — row layout: textarea left, buttons top-right */
+.popoverAiCard {
   display: flex;
-  gap: var(--space-1);
   align-items: flex-end;
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--color-bg-primary);
+  transition: border-color var(--duration-fast), background var(--duration-fast), box-shadow var(--duration-fast);
+}
+.popoverAiCard:focus-within {
+  border-color: transparent;
+  background:
+    linear-gradient(var(--color-bg-primary), var(--color-bg-primary)) padding-box,
+    linear-gradient(135deg, #8c4fe2 0%, #446cff 55%, #38c0f0 100%) border-box;
+  box-shadow: 0 0 0 3px rgba(140, 79, 226, 0.15);
 }
 
-/* Alloy TextArea wrapper inside the AI input row */
-.popoverTextareaField {
+/* Textarea: fills remaining width, 1-line initial, grows with content */
+.popoverAiCard textarea {
   flex: 1;
-}
-.popoverTextareaField textarea {
-  min-height: 60px;
-  resize: none;
-  user-select: text;
+  min-width: 0;
+  min-height: unset;
+  max-height: 160px;
+  overflow-y: auto;
+  field-sizing: content;
 }
 
-.popoverAiSend {
-  width: 28px;
-  height: 28px;
-  flex-shrink: 0;
+/* Buttons: top-right, shrink-proof */
+.popoverAiActionBar {
   display: flex;
   align-items: center;
-  justify-content: center;
-  background: var(--color-brand);
-  border: none;
-  border-radius: var(--radius-md);
-  color: var(--color-content-inverse-primary);
-  cursor: pointer;
-  transition: background var(--duration-fast), opacity var(--duration-fast);
+  gap: var(--space-1);
+  padding: var(--space-2);
+  flex-shrink: 0;
 }
-.popoverAiSend:disabled { opacity: 0.4; cursor: not-allowed; }
-.popoverAiSend:not(:disabled):hover { background: var(--color-brand-hover); }
 
 .popoverAiResult {
   padding: var(--space-2);
@@ -1583,7 +1668,7 @@
   box-sizing: border-box;
 }
 .popoverTimeInput:hover { border-color: var(--color-border-focus); }
-.popoverTimeInput:focus { border-color: var(--color-border-focus); box-shadow: 0 0 0 2px var(--color-border-focus-ring, var(--color-brand-20, transparent)); }
+.popoverTimeInput:focus { border-color: var(--color-border-focus); box-shadow: 0 0 0 3px var(--color-bg-focus-ring); }
 
 /* Boolean toggle row — checkbox + label inline */
 .popoverFieldRowInline {
@@ -1908,6 +1993,134 @@
 }
 .conditionWithinNextUnit {
   flex: 1;
+}
+
+/* ─── Add boolean button ─────────────────────────────────────────────────────── */
+
+.addBooleanBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  background: transparent;
+  border: 1.5px dashed var(--color-border-opaque);
+  border-radius: var(--radius-md);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-tertiary);
+  cursor: pointer;
+  transition: border-color var(--duration-fast), color var(--duration-fast), background var(--duration-fast);
+}
+.addBooleanBtn:hover {
+  border-color: var(--color-content-secondary);
+  border-style: solid;
+  color: var(--color-content-primary);
+  background: var(--color-bg-secondary);
+}
+
+/* ─── Boolean branch sections ────────────────────────────────────────────────── */
+
+.booleanSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.booleanBranch {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  transition: border-color var(--duration-fast);
+}
+.booleanBranch:focus-within {
+  border-color: var(--color-border-focus);
+}
+
+.booleanBranchHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-2) var(--space-2) 0;
+  gap: var(--space-2);
+}
+
+.booleanBranchTypeLabel {
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-content-secondary);
+  letter-spacing: 0.02em;
+}
+
+.booleanBranchDivider {
+  height: 1px;
+  margin: var(--space-2) 0 0;
+  background: var(--color-border-opaque);
+}
+
+.booleanBranchBody {
+  padding: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.booleanBranchElseLabel {
+  padding: var(--space-2) var(--space-2) var(--space-2);
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--color-content-tertiary);
+  font-style: italic;
+}
+
+.booleanBranchRemoveBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-content-tertiary);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  padding: 0;
+  transition: background var(--duration-fast), color var(--duration-fast);
+}
+.booleanBranchRemoveBtn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-content-primary) 8%, transparent);
+  color: var(--color-content-primary);
+}
+.booleanBranchRemoveBtn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.booleanAddBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  width: 100%;
+  padding: var(--space-2) 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-tertiary);
+  cursor: pointer;
+  transition: color var(--duration-fast), background var(--duration-fast);
+}
+.booleanAddBtn:hover {
+  color: var(--color-content-primary);
+  background: var(--color-bg-secondary);
 }
 
 /* Multi-value tag input */

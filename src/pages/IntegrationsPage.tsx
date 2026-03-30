@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { clsx } from 'clsx';
+import { Divider } from '@alloy/components/Divider';
 import styles from './IntegrationsPage.module.css';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -118,6 +119,8 @@ export function IntegrationsPage() {
           ))}
         </div>
       </div>
+
+      <Divider />
 
       <div className={styles.grid}>
         {filtered.map((integration) => (

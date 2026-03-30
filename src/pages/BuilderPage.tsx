@@ -18,13 +18,39 @@ import { ArrowCircleBrokenRightIcon } from '@alloy/components/icons/ArrowCircleB
 import { ChevronDownIcon } from '@alloy/components/icons/ChevronDownIcon';
 import { Grid01Icon } from '@alloy/components/icons/Grid01Icon';
 import { XIcon } from '@alloy/components/icons/XIcon';
+import { CheckCircleIcon } from '@alloy/components/icons/CheckCircleIcon';
+import { Users03Icon } from '@alloy/components/icons/Users03Icon';
+import { File04Icon } from '@alloy/components/icons/File04Icon';
+import { Home02Icon } from '@alloy/components/icons/Home02Icon';
+import { ClockIcon } from '@alloy/components/icons/ClockIcon';
+import { Edit03Icon } from '@alloy/components/icons/Edit03Icon';
+import { Mail01Icon } from '@alloy/components/icons/Mail01Icon';
+import { Bell01Icon } from '@alloy/components/icons/Bell01Icon';
+import { Announcement02Icon } from '@alloy/components/icons/Announcement02Icon';
+import { Microphone02Icon } from '@alloy/components/icons/Microphone02Icon';
+import { ArrowNarrowUpIcon } from '@alloy/components/icons/ArrowNarrowUpIcon';
+import { TeambridgeAIIcon } from '@alloy/components/icons/TeambridgeAIIcon';
 import { ScrollArea } from '@alloy/components/ScrollArea';
+import { Divider } from '@alloy/components/Divider';
 import styles from './BuilderPage.module.css';
+import { callFlowAgent } from '@/features/ai/client';
+import { GLOBAL_TOOLS, STEP_TOOLS } from '@/features/ai/tools';
+import { buildGlobalSystemPrompt, buildStepSystemPrompt } from '@/features/ai/systemPrompts';
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
 type StepType = 'trigger' | 'condition' | 'action' | 'ai';
 type AutomationStatus = 'draft' | 'active' | 'inactive' | 'archived';
+
+type BooleanBranchType = 'if' | 'else_if' | 'else';
+
+interface BooleanBranch {
+  id: string;
+  type: BooleanBranchType;
+  conditionOperator?: string;
+  conditionValues?: string[];
+  actionNodeId?: string;
+}
 
 interface GraphNode {
   id: string;
@@ -36,6 +62,8 @@ interface GraphNode {
   conditionOperator?: string;
   conditionValues?: string[];
   configValues?: Record<string, string>;
+  booleanMode?: boolean;
+  booleanBranches?: BooleanBranch[];
 }
 
 interface GraphEdge {
@@ -43,6 +71,7 @@ interface GraphEdge {
   from: string;
   to: string;
   branch?: 'yes' | 'no';
+  booleanBranchId?: string;
 }
 
 // Alias kept so FlowNode component compiles without changes
@@ -61,21 +90,13 @@ function ChevronLeft() {
 
 
 
-function SparkleIcon({ size = 12 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 12 12" fill="none" aria-hidden>
-      <path d="M6 1c-.4 1.7-1.7 2.6-3 3 1.3.4 2.6 1.3 3 3 .4-1.7 1.7-2.6 3-3-1.3-.4-2.6-1.3-3-3Z"
-        stroke="currentColor" strokeWidth="1" strokeLinejoin="round"/>
-      <path d="M2.5 8.5c-.2.9-1 1.1-1.2 1.2.2 0 1 .3 1.2 1.2.2-.9 1-1.1 1.2-1.2-.2 0-1-.3-1.2-1.2Z"
-        stroke="currentColor" strokeWidth="0.9" strokeLinejoin="round"/>
-    </svg>
-  );
-}
 
 function PlusIcon({ size = 10 }: { size?: number }) {
+  // Alloy stroke-width scale (24×24 viewBox): ≤12px → 2, ≤16px → 1.75, ≤20px → 1.5, >20px → 1.25
+  const strokeWidth = size <= 12 ? 2 : size <= 16 ? 1.75 : size <= 20 ? 1.5 : 1.25;
   return (
-    <svg width={size} height={size} viewBox="0 0 10 10" fill="none" aria-hidden>
-      <path d="M5 1v8M1 5h8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path d="M12 4v16M4 12h16" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round"/>
     </svg>
   );
 }
@@ -178,6 +199,14 @@ function TrashIcon() {
   );
 }
 
+function XSmallIcon() {
+  return (
+    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden>
+      <path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
+    </svg>
+  );
+}
+
 function LoadingDots() {
   return (
     <span className={styles.loadingDots} aria-label="Loading">
@@ -192,7 +221,7 @@ const STEP_CONFIG: Record<StepType, { icon: React.ReactNode; label: string; bgCl
   trigger:   { icon: <Target04Icon size={12} />,                label: 'Trigger',   bgClass: styles.iconTrigger   },
   condition: { icon: <GitBranch01Icon size={12} />,             label: 'Condition', bgClass: styles.iconCondition },
   action:    { icon: <ArrowCircleBrokenRightIcon size={12} />,  label: 'Action',    bgClass: styles.iconAction    },
-  ai:        { icon: <SparkleIcon />,                           label: 'AI',        bgClass: styles.iconAi        },
+  ai:        { icon: <TeambridgeAIIcon size={12} />,             label: 'AI',        bgClass: styles.iconAi        },
 };
 
 const NODE_TYPE_TAG_COLOR: Record<StepType, TagColor> = {
@@ -201,6 +230,47 @@ const NODE_TYPE_TAG_COLOR: Record<StepType, TagColor> = {
   action:    'green',
   ai:        'purple',
 };
+
+// ─── Action icons ──────────────────────────────────────────────────────────────
+
+// Per-item overrides — keyed by LibraryItem.id
+const ACTION_ITEM_ICON: Record<string, React.ReactNode> = {
+  user_actions_clock_in:              <ClockIcon size={12} />,
+  user_actions_clock_out:             <ClockIcon size={12} />,
+  update_data_modify:                 <Edit03Icon size={12} />,
+  notifications_send_email:           <Mail01Icon size={12} />,
+  notifications_webhook_notification: <Bell01Icon size={12} />,
+  notifications_send_one_way_sms:     <Announcement02Icon size={12} />,
+  notifications_send_feed_message:    <Announcement02Icon size={12} />,
+  notifications_send_chat_message:    <Announcement02Icon size={12} />,
+  notifications_send_report:          <Announcement02Icon size={12} />,
+};
+
+// Category fallbacks for action items without a per-item override
+const ACTION_CATEGORY_ICON: Record<string, React.ReactNode> = {
+  shift_actions:    <CheckCircleIcon size={12} />,
+  geofence_actions: <Home02Icon size={12} />,
+  user_actions:     <Users03Icon size={12} />,
+  update_data:      <File04Icon size={12} />,
+  notifications:    <Bell01Icon size={12} />,
+};
+
+function getLibraryItemIcon(item: LibraryItem): React.ReactNode {
+  if (item.type === 'action') {
+    return ACTION_ITEM_ICON[item.id] ?? ACTION_CATEGORY_ICON[item.category] ?? STEP_CONFIG.action.icon;
+  }
+  return STEP_CONFIG[item.type].icon;
+}
+
+function getStepIcon(step: FlowStep): React.ReactNode {
+  if (step.type === 'action' && step.selectedValue) {
+    const item = ALL_LIBRARY_ITEMS.find(i => i.label === step.selectedValue && i.type === 'action');
+    if (item) {
+      return ACTION_ITEM_ICON[item.id] ?? ACTION_CATEGORY_ICON[item.category] ?? STEP_CONFIG.action.icon;
+    }
+  }
+  return STEP_CONFIG[step.type].icon;
+}
 
 // ─── Condition library ─────────────────────────────────────────────────────────
 
@@ -1392,22 +1462,66 @@ interface NodePopoverProps {
   onUpdateConditionConfig: (op: string, vals: string[]) => void;
   onUpdateConfigField: (key: string, value: string) => void;
   onClose: () => void;
+  onAddBooleanMode?: () => void;
+  onUpdateBooleanBranch?: (branchId: string, updates: Partial<BooleanBranch>) => void;
+  onAddElseIf?: () => void;
+  onRemoveBooleanBranch?: (branchId: string) => void;
 }
 
-function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpdateConfigField, onClose }: NodePopoverProps) {
+function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpdateConfigField, onClose, onAddBooleanMode, onUpdateBooleanBranch, onAddElseIf, onRemoveBooleanBranch }: NodePopoverProps) {
   const cfg = STEP_CONFIG[step.type];
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
   const [aiResult, setAiResult] = useState<string | null>(null);
 
-  const handleAiSend = () => {
+  const handleAiSend = async () => {
     if (!aiPrompt.trim() || aiLoading) return;
     setAiLoading(true);
     setAiResult(null);
-    setTimeout(() => {
-      setAiResult(`Try: "${aiPrompt.trim()}" — add a matching ${step.type} from the suggestions above.`);
+    try {
+      const libItems = ALL_LIBRARY_ITEMS.filter(i => i.type === step.type);
+      const configItem = ALL_LIBRARY_ITEMS.find(i => i.label === step.selectedValue);
+      const rawFields: NodeConfigField[] = configItem ? (NODE_CONFIG[configItem.id] ?? []) : [];
+      const configFields = rawFields.map(f => ({
+        key: f.key,
+        label: f.label,
+        type: f.type,
+        required: f.required,
+        options: f.options ?? (f.optionsByDependency ? Object.values(f.optionsByDependency).flat() : undefined),
+      }));
+      const condDef = step.type === 'condition' && step.selectedValue
+        ? CONDITION_LIBRARY.find(c => c.label === step.selectedValue) ?? null
+        : null;
+      const systemPrompt = buildStepSystemPrompt({
+        step: {
+          id: step.id, type: step.type, selectedValue: step.selectedValue,
+          conditionOperator: step.conditionOperator, conditionValues: step.conditionValues,
+          configValues: step.configValues, configured: step.configured,
+        },
+        libraryItemsForType: libItems.map(i => ({ id: i.id, label: i.label, type: i.type, category: i.category })),
+        configFields,
+        conditionOperators: condDef?.operators,
+        conditionValueOptions: condDef?.valueOptions,
+      });
+      const result = await callFlowAgent({ systemPrompt, userMessage: aiPrompt, tools: STEP_TOOLS });
+      for (const call of result.toolCalls) {
+        const inp = call.toolInput;
+        if (call.toolName === 'select_step_value') {
+          onSelectSuggestion(inp.value as string);
+        } else if (call.toolName === 'set_condition_config') {
+          onUpdateConditionConfig(inp.operator as string, inp.values as string[]);
+        } else if (call.toolName === 'set_step_config_field') {
+          onUpdateConfigField(inp.field_key as string, inp.value as string);
+        }
+      }
+      const text = result.textBlocks.join(' ').trim();
+      setAiResult(text || 'Done.');
+      setAiPrompt('');
+    } catch (err) {
+      setAiResult(`Error: ${err instanceof Error ? err.message : 'Something went wrong'}`);
+    } finally {
       setAiLoading(false);
-    }, 1400);
+    }
   };
 
   // Condition config — only relevant when a condition node has a selectedValue
@@ -1435,7 +1549,7 @@ function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpda
       <div className={styles.popoverHeader}>
         <div className={styles.popoverHeaderLeft}>
           <span className={clsx(styles.popoverTypeBadge, cfg.bgClass)} aria-hidden>
-            {cfg.icon}
+            {getStepIcon(step)}
           </span>
           <span className={styles.popoverTitle}>{POPOVER_TITLES[step.type]}</span>
         </div>
@@ -1551,79 +1665,210 @@ function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpda
             {/* ── Condition config fields ───────────────────────────────── */}
             {step.type === 'condition' && (condDef ? (
               <div className={styles.popoverFields}>
-                {/* Operator selector */}
-                <PopoverSelect
-                  value={condOp}
-                  onChange={op => onUpdateConditionConfig(op, condVals)}
-                  options={condDef.operators.map(op => ({ value: op, label: OPERATOR_LABELS[op] ?? op }))}
-                />
-
-                {!isNoValueOp && isInOp && condDef.valueOptions && (
-                  <div className={styles.popoverTags}>
-                    {condDef.valueOptions.map(opt => {
-                      const selected = condVals.includes(opt);
-                      return (
-                        <button
-                          key={opt}
-                          className={clsx(styles.popoverTag, selected && styles.popoverTagSelected)}
-                          onClick={() => onUpdateConditionConfig(condOp, selected ? condVals.filter(v => v !== opt) : [...condVals, opt])}
-                          type="button"
-                        >
-                          {opt}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {!isNoValueOp && isInOp && !condDef.valueOptions && (
-                  <ConditionTagInput values={condVals} onChange={next => onUpdateConditionConfig(condOp, next)} />
-                )}
-
-                {!isNoValueOp && isWithinNext && (
-                  <div className={styles.conditionWithinNext}>
-                    <NumberField
-                      size="md"
-                      min={1}
-                      placeholder="30"
-                      value={condVals[0] ?? ''}
-                      onChange={e => onUpdateConditionConfig(condOp, [e.target.value, condVals[1] ?? 'days'])}
-                      aria-label="Time amount"
-                      className={styles.conditionWithinNextNum}
-                    />
+                {!step.booleanMode ? (
+                  <>
+                    {/* Operator selector */}
                     <PopoverSelect
-                      value={condVals[1] ?? 'days'}
-                      onChange={unit => onUpdateConditionConfig(condOp, [condVals[0] ?? '', unit])}
-                      className={styles.conditionWithinNextUnit}
-                      options={[
-                        { value: 'hours', label: 'hours' },
-                        { value: 'days',  label: 'days'  },
-                        { value: 'weeks', label: 'weeks' },
-                      ]}
+                      value={condOp}
+                      onChange={op => onUpdateConditionConfig(op, condVals)}
+                      options={condDef.operators.map(op => ({ value: op, label: OPERATOR_LABELS[op] ?? op }))}
                     />
-                  </div>
-                )}
 
-                {!isNoValueOp && !isInOp && !isWithinNext && condDef.valueOptions && (
-                  <PopoverSelect
-                    value={condVals[0] ?? ''}
-                    onChange={v => onUpdateConditionConfig(condOp, [v])}
-                    placeholder="Select value…"
-                    options={[
-                      { value: '', label: 'Select value…' },
-                      ...condDef.valueOptions.map(opt => ({ value: opt, label: opt })),
-                    ]}
-                  />
-                )}
+                    {!isNoValueOp && isInOp && condDef.valueOptions && (
+                      <div className={styles.popoverTags}>
+                        {condDef.valueOptions.map(opt => {
+                          const selected = condVals.includes(opt);
+                          return (
+                            <button
+                              key={opt}
+                              className={clsx(styles.popoverTag, selected && styles.popoverTagSelected)}
+                              onClick={() => onUpdateConditionConfig(condOp, selected ? condVals.filter(v => v !== opt) : [...condVals, opt])}
+                              type="button"
+                            >
+                              {opt}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
 
-                {!isNoValueOp && !isInOp && !isWithinNext && !condDef.valueOptions && (
-                  <TextField
-                    size="md"
-                    placeholder="Enter value…"
-                    value={condVals[0] ?? ''}
-                    onChange={e => onUpdateConditionConfig(condOp, [e.target.value])}
-                    aria-label="Condition value"
-                  />
+                    {!isNoValueOp && isInOp && !condDef.valueOptions && (
+                      <ConditionTagInput values={condVals} onChange={next => onUpdateConditionConfig(condOp, next)} />
+                    )}
+
+                    {!isNoValueOp && isWithinNext && (
+                      <div className={styles.conditionWithinNext}>
+                        <NumberField
+                          size="md"
+                          min={1}
+                          placeholder="30"
+                          value={condVals[0] ?? ''}
+                          onChange={e => onUpdateConditionConfig(condOp, [e.target.value, condVals[1] ?? 'days'])}
+                          aria-label="Time amount"
+                          className={styles.conditionWithinNextNum}
+                        />
+                        <PopoverSelect
+                          value={condVals[1] ?? 'days'}
+                          onChange={unit => onUpdateConditionConfig(condOp, [condVals[0] ?? '', unit])}
+                          className={styles.conditionWithinNextUnit}
+                          options={[
+                            { value: 'hours', label: 'hours' },
+                            { value: 'days',  label: 'days'  },
+                            { value: 'weeks', label: 'weeks' },
+                          ]}
+                        />
+                      </div>
+                    )}
+
+                    {!isNoValueOp && !isInOp && !isWithinNext && condDef.valueOptions && (
+                      <PopoverSelect
+                        value={condVals[0] ?? ''}
+                        onChange={v => onUpdateConditionConfig(condOp, [v])}
+                        placeholder="Select value…"
+                        options={[
+                          { value: '', label: 'Select value…' },
+                          ...condDef.valueOptions.map(opt => ({ value: opt, label: opt })),
+                        ]}
+                      />
+                    )}
+
+                    {!isNoValueOp && !isInOp && !isWithinNext && !condDef.valueOptions && (
+                      <TextField
+                        size="md"
+                        placeholder="Enter value…"
+                        value={condVals[0] ?? ''}
+                        onChange={e => onUpdateConditionConfig(condOp, [e.target.value])}
+                        aria-label="Condition value"
+                      />
+                    )}
+
+                    {/* ── Add boolean button ── */}
+                    <button
+                      type="button"
+                      className={styles.addBooleanBtn}
+                      onClick={onAddBooleanMode}
+                    >
+                      <PlusIcon size={10} />
+                      Add boolean
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    {/* ── Boolean branch list ── */}
+                    <div className={styles.booleanSection}>
+                      {(step.booleanBranches ?? []).map((branch, idx) => {
+                        const isFirst       = idx === 0;
+                        const isLast        = idx === (step.booleanBranches?.length ?? 0) - 1;
+                        const isElse        = branch.type === 'else';
+                        const bOp           = branch.conditionOperator ?? condDef.operators[0];
+                        const bVals         = branch.conditionValues ?? [];
+                        const bNoVal        = ['is_empty', 'is_not_empty', 'missing_required'].includes(bOp);
+                        const bIsIn         = bOp === 'in';
+                        const bIsWithin     = bOp === 'within_next';
+                        return (
+                          <div key={branch.id} className={styles.booleanBranch}>
+                            {/* Branch header */}
+                            <div className={styles.booleanBranchHeader}>
+                              <span className={styles.booleanBranchTypeLabel}>
+                                {branch.type === 'if' ? 'if' : branch.type === 'else_if' ? 'else if' : 'else'}
+                              </span>
+                              <button
+                                type="button"
+                                className={styles.booleanBranchRemoveBtn}
+                                disabled={isFirst || isLast}
+                                onClick={() => onRemoveBooleanBranch?.(branch.id)}
+                                aria-label="Remove branch"
+                              >
+                                <XSmallIcon />
+                              </button>
+                            </div>
+                            <div className={styles.booleanBranchDivider} />
+                            {/* Branch body */}
+                            {isElse ? (
+                              <p className={styles.booleanBranchElseLabel}>All other cases</p>
+                            ) : (
+                              <div className={styles.booleanBranchBody}>
+                                <PopoverSelect
+                                  value={bOp}
+                                  onChange={op => onUpdateBooleanBranch?.(branch.id, { conditionOperator: op, conditionValues: [] })}
+                                  options={condDef.operators.map(op => ({ value: op, label: OPERATOR_LABELS[op] ?? op }))}
+                                />
+                                {!bNoVal && bIsIn && condDef.valueOptions && (
+                                  <div className={styles.popoverTags}>
+                                    {condDef.valueOptions.map(opt => {
+                                      const sel = bVals.includes(opt);
+                                      return (
+                                        <button key={opt} type="button"
+                                          className={clsx(styles.popoverTag, sel && styles.popoverTagSelected)}
+                                          onClick={() => onUpdateBooleanBranch?.(branch.id, {
+                                            conditionValues: sel ? bVals.filter(v => v !== opt) : [...bVals, opt],
+                                          })}
+                                        >{opt}</button>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                                {!bNoVal && bIsIn && !condDef.valueOptions && (
+                                  <ConditionTagInput
+                                    values={bVals}
+                                    onChange={next => onUpdateBooleanBranch?.(branch.id, { conditionValues: next })}
+                                  />
+                                )}
+                                {!bNoVal && bIsWithin && (
+                                  <div className={styles.conditionWithinNext}>
+                                    <NumberField
+                                      size="md" min={1} placeholder="30"
+                                      value={bVals[0] ?? ''}
+                                      onChange={e => onUpdateBooleanBranch?.(branch.id, { conditionValues: [e.target.value, bVals[1] ?? 'days'] })}
+                                      aria-label="Time amount"
+                                      className={styles.conditionWithinNextNum}
+                                    />
+                                    <PopoverSelect
+                                      value={bVals[1] ?? 'days'}
+                                      onChange={unit => onUpdateBooleanBranch?.(branch.id, { conditionValues: [bVals[0] ?? '', unit] })}
+                                      className={styles.conditionWithinNextUnit}
+                                      options={[
+                                        { value: 'hours', label: 'hours' },
+                                        { value: 'days',  label: 'days'  },
+                                        { value: 'weeks', label: 'weeks' },
+                                      ]}
+                                    />
+                                  </div>
+                                )}
+                                {!bNoVal && !bIsIn && !bIsWithin && condDef.valueOptions && (
+                                  <PopoverSelect
+                                    value={bVals[0] ?? ''}
+                                    onChange={v => onUpdateBooleanBranch?.(branch.id, { conditionValues: [v] })}
+                                    placeholder="Select value…"
+                                    options={[
+                                      { value: '', label: 'Select value…' },
+                                      ...condDef.valueOptions.map(opt => ({ value: opt, label: opt })),
+                                    ]}
+                                  />
+                                )}
+                                {!bNoVal && !bIsIn && !bIsWithin && !condDef.valueOptions && (
+                                  <TextField
+                                    size="md"
+                                    placeholder="Enter value…"
+                                    value={bVals[0] ?? ''}
+                                    onChange={e => onUpdateBooleanBranch?.(branch.id, { conditionValues: [e.target.value] })}
+                                    aria-label="Condition value"
+                                  />
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {/* Add else if */}
+                    {(step.booleanBranches?.length ?? 0) < 7 && (
+                      <button type="button" className={styles.booleanAddBtn} onClick={onAddElseIf}>
+                        <PlusIcon size={10} />
+                        Add else if
+                      </button>
+                    )}
+                  </>
                 )}
               </div>
             ) : (
@@ -1735,25 +1980,35 @@ function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpda
       {/* ── 5. AI prompt — always ── */}
       <div className={styles.popoverDivider} />
       <div className={styles.popoverSection}>
-        <p className={styles.popoverSectionLabel}>AI Suggest</p>
+        <p className={styles.popoverSectionLabel}>Work with AI</p>
         <div className={styles.popoverAiWrap}>
-          <div className={styles.popoverAiInputRow}>
-            <TextArea
-              size="md"
-              placeholder={AI_PLACEHOLDERS[step.type]}
+          <div className={styles.popoverAiCard}>
+            <textarea
+              className={styles.aiComposerTextarea}
+              placeholder="Tell AI what you want to build..."
+              rows={1}
               value={aiPrompt}
-              onChange={e => setAiPrompt(e.target.value)}
+              onChange={e => {
+                setAiPrompt(e.target.value);
+                const t = e.target;
+                t.style.height = 'auto';
+                t.style.height = t.scrollHeight + 'px';
+              }}
               onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAiSend(); } }}
-              className={styles.popoverTextareaField}
             />
-            <button
-              className={styles.popoverAiSend}
-              onClick={handleAiSend}
-              disabled={!aiPrompt.trim() || aiLoading}
-              aria-label="Send to AI"
-            >
-              {aiLoading ? <LoadingDots /> : <SparkleIcon size={12} />}
-            </button>
+            <div className={styles.popoverAiActionBar}>
+              <button type="button" className={styles.aiComposerMicBtn} aria-label="Voice input">
+                <Microphone02Icon size={14} />
+              </button>
+              <button
+                className={styles.aiComposerSendBtn}
+                onClick={handleAiSend}
+                disabled={!aiPrompt.trim() || aiLoading}
+                aria-label="Send to AI"
+              >
+                {aiLoading ? <LoadingDots /> : <ArrowNarrowUpIcon size={12} />}
+              </button>
+            </div>
           </div>
           {aiResult && <p className={styles.popoverAiResult}>{aiResult}</p>}
         </div>
@@ -1830,7 +2085,7 @@ function TopBar({ onBack, onTest, onPublish, saveState, name, onNameChange, stat
         >
           <ChevronLeft />
         </Button>
-        <span className={styles.topBarDivider} aria-hidden="true" />
+        <Divider orientation="vertical" />
         {/* contenteditable span: width = text content width, so border-bottom
             is always exactly as wide as the visible text — no measurement needed */}
         <span
@@ -1881,86 +2136,57 @@ function TopBar({ onBack, onTest, onPublish, saveState, name, onNameChange, stat
 
 // ─── NodePaletteCard ─────────────────────────────────────────────────────────────
 
-type TypeFilter = 'all' | StepType;
-
-const TYPE_FILTERS: { value: TypeFilter; label: string }[] = [
-  { value: 'all',       label: 'All'       },
-  { value: 'trigger',   label: 'Trigger'   },
-  { value: 'condition', label: 'Condition' },
-  { value: 'action',    label: 'Action'    },
-  { value: 'ai',        label: 'AI'        },
-];
-
 interface NodePaletteCardProps {
   onDragStart: (item: LibraryItem) => void;
   onDragEnd: () => void;
+  onNodeSelect: (item: LibraryItem) => void;
 }
 
-function NodePaletteCard({ onDragStart, onDragEnd }: NodePaletteCardProps) {
-  const [expanded, setExpanded] = useState(false);
+function NodePaletteCard({ onDragStart, onDragEnd, onNodeSelect }: NodePaletteCardProps) {
   const [search, setSearch] = useState('');
-  const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
 
-  const isFiltering = search.trim() !== '' || typeFilter !== 'all';
+  const filteredItems = search.trim() === '' ? [] : ALL_LIBRARY_ITEMS.filter((item) =>
+    item.label.toLowerCase().includes(search.trim().toLowerCase()) ||
+    item.category.toLowerCase().includes(search.trim().toLowerCase())
+  );
 
-  const filteredItems = ALL_LIBRARY_ITEMS.filter((item) => {
-    const matchesType = typeFilter === 'all' || item.type === typeFilter;
-    const matchesSearch = search.trim() === '' ||
-      item.label.toLowerCase().includes(search.trim().toLowerCase()) ||
-      item.category.toLowerCase().includes(search.trim().toLowerCase());
-    return matchesType && matchesSearch;
-  });
-
-  const visible = isFiltering ? filteredItems : expanded ? ALL_LIBRARY_ITEMS : PINNED_ITEMS;
+  const hasResults = search.trim() !== '';
 
   return (
     <div className={styles.paletteCard}>
-      <div className={styles.paletteHeader}>
-        <SearchField
-          size="sm"
-          placeholder="Search nodes…"
-          value={search}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearch(e.target.value)}
-          onClear={() => setSearch('')}
-          className={styles.paletteSearch}
-        />
-        <div className={styles.paletteFilters}>
-          {TYPE_FILTERS.map((f) => (
-            <button
-              key={f.value}
-              className={clsx(
-                styles.paletteFilterChip,
-                typeFilter === f.value && styles.paletteFilterChipActive,
-              )}
-              onClick={() => setTypeFilter(f.value)}
-            >
-              {f.label}
-            </button>
-          ))}
-        </div>
-      </div>
-      <ScrollArea className={styles.paletteList}>
-        <div className={styles.paletteListInner}>
-          {visible.length === 0 ? (
+      <SearchField
+        size="md"
+        placeholder="Search nodes…"
+        value={search}
+        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearch(e.target.value)}
+        onClear={() => setSearch('')}
+        className={styles.paletteSearch}
+      />
+      {hasResults && (
+        <div className={styles.paletteResults}>
+          {filteredItems.length === 0 ? (
             <p className={styles.paletteEmpty}>No nodes match</p>
           ) : (
-            visible.map((item) => {
+            filteredItems.map((item) => {
               const cfg = STEP_CONFIG[item.type];
               return (
                 <div
                   key={item.id}
                   className={styles.paletteItem}
                   draggable
+                  tabIndex={0}
                   onDragStart={(e) => {
                     e.dataTransfer.effectAllowed = 'copy';
                     e.dataTransfer.setData('application/x-lib-node', item.id);
                     onDragStart(item);
                   }}
                   onDragEnd={onDragEnd}
+                  onClick={() => { onNodeSelect(item); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onNodeSelect(item); } }}
                   title={item.label}
                 >
                   <span className={clsx(styles.paletteItemIcon, cfg.bgClass)}>
-                    {cfg.icon}
+                    {getLibraryItemIcon(item)}
                   </span>
                   <span className={styles.paletteItemContent}>
                     <span className={styles.paletteItemLabel}>{item.label}</span>
@@ -1974,11 +2200,6 @@ function NodePaletteCard({ onDragStart, onDragEnd }: NodePaletteCardProps) {
             })
           )}
         </div>
-      </ScrollArea>
-      {!isFiltering && (
-        <button className={styles.paletteShowMore} onClick={() => setExpanded((v) => !v)}>
-          {expanded ? 'Show less' : `Show ${HIDDEN_ITEMS.length} more`}
-        </button>
       )}
     </div>
   );
@@ -1989,23 +2210,23 @@ function NodePaletteCard({ onDragStart, onDragEnd }: NodePaletteCardProps) {
 interface LeftPanelProps {
   onLibNodeDragStart: (item: LibraryItem) => void;
   onLibNodeDragEnd: () => void;
+  onLibNodeSelect: (item: LibraryItem) => void;
   editNodeMode: boolean;
   editingCount: number;
   onToggleEditMode: () => void;
+  aiPrompt: string;
+  onAiPromptChange: (v: string) => void;
+  aiLoading: boolean;
+  aiResult: string | null;
+  onAiSend: () => void;
 }
 
 function LeftPanel({
-  onLibNodeDragStart, onLibNodeDragEnd,
+  onLibNodeDragStart, onLibNodeDragEnd, onLibNodeSelect,
   editNodeMode, editingCount, onToggleEditMode,
+  aiPrompt, onAiPromptChange, aiLoading, aiResult, onAiSend,
 }: LeftPanelProps) {
-  const [aiPrompt,       setAiPrompt]       = useState('');
   const [showEditTooltip, setShowEditTooltip] = useState(false);
-
-  const handleAiSend = () => {
-    if (!aiPrompt.trim()) return;
-    // TODO: wire to claude-sonnet-4-6
-    setAiPrompt('');
-  };
 
   return (
     <aside className={styles.leftPanel}>
@@ -2014,7 +2235,10 @@ function LeftPanel({
         <NodePaletteCard
           onDragStart={onLibNodeDragStart}
           onDragEnd={onLibNodeDragEnd}
+          onNodeSelect={onLibNodeSelect}
         />
+
+        <Divider />
 
         {/* ── AI Composer ── */}
         <div className={styles.aiComposer}>
@@ -2030,11 +2254,11 @@ function LeftPanel({
             <textarea
               className={styles.aiComposerTextarea}
               value={aiPrompt}
-              onChange={(e) => setAiPrompt(e.target.value)}
+              onChange={(e) => onAiPromptChange(e.target.value)}
               placeholder="Ask AI anything..."
               aria-label="Ask AI"
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAiSend(); }
+                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onAiSend(); }
               }}
             />
             <div className={styles.aiComposerActionBar}>
@@ -2063,19 +2287,27 @@ function LeftPanel({
                   {editingCount > 0 ? `Edit node (${editingCount})` : 'Edit node'}
                 </button>
               </div>
-              {/* Right group: send */}
+              {/* Right group: mic + send */}
               <div className={styles.aiComposerRight}>
                 <button
+                  type="button"
+                  className={styles.aiComposerMicBtn}
+                  aria-label="Voice input"
+                >
+                  <Microphone02Icon size={14} />
+                </button>
+                <button
                   className={styles.aiComposerSendBtn}
-                  onClick={handleAiSend}
-                  disabled={!aiPrompt.trim()}
+                  onClick={onAiSend}
+                  disabled={!aiPrompt.trim() || aiLoading}
                   aria-label="Send to AI"
                 >
-                  <ArrowUpIcon />
+                  {aiLoading ? <LoadingDots /> : <ArrowNarrowUpIcon size={12} />}
                 </button>
               </div>
             </div>
           </div>
+          {aiResult && <p className={styles.aiComposerResult}>{aiResult}</p>}
         </div>
       </div>
     </aside>
@@ -2106,6 +2338,10 @@ interface FlowNodeProps {
   editNodeMode?: boolean;
   /** Whether this node is currently edit-selected (shows AI purple ring) */
   isEditSelected?: boolean;
+  onAddBooleanMode?: () => void;
+  onUpdateBooleanBranch?: (branchId: string, updates: Partial<BooleanBranch>) => void;
+  onAddElseIf?: () => void;
+  onRemoveBooleanBranch?: (branchId: string) => void;
 }
 
 function FlowNode({
@@ -2126,10 +2362,13 @@ function FlowNode({
   onMoveDown,
   editNodeMode = false,
   isEditSelected = false,
+  onAddBooleanMode,
+  onUpdateBooleanBranch,
+  onAddElseIf,
+  onRemoveBooleanBranch,
 }: FlowNodeProps) {
   const cfg = STEP_CONFIG[step.type];
   const outerRef = useRef<HTMLDivElement>(null);
-  const [popoverPos, setPopoverPos] = useState<{ top: number; left: number } | null>(null);
   // Popover visibility is independent from selection — closing popover keeps node selected.
   const [popoverOpen, setPopoverOpen] = useState(false);
 
@@ -2178,43 +2417,11 @@ function FlowNode({
       setPopoverOpen(true);
     } else {
       setPopoverOpen(false);
-      setPopoverPos(null);
     }
   }, [isSelected]);
 
-  // Track position via rAF while open — stays aligned during canvas pan/zoom.
   // Popover is suppressed while editNodeMode is active (click = edit-select, not config).
   const showPopover = isSelected && popoverOpen && !isDragging && !editNodeMode;
-  useEffect(() => {
-    if (!showPopover) { setPopoverPos(null); return; }
-    const POPOVER_W = 252;
-    const GAP = 12;
-    let rafId: number;
-    const tick = () => {
-      if (outerRef.current) {
-        const r = outerRef.current.getBoundingClientRect();
-        // Use the left panel's right edge as the canvas's visible left boundary
-        const leftPanel = document.querySelector('[class*="leftPanel"]');
-        const canvasLeft = leftPanel ? leftPanel.getBoundingClientRect().right + GAP : GAP;
-        const fitsRight = r.right + GAP + POPOVER_W <= window.innerWidth;
-        const leftIfLeft = r.left - GAP - POPOVER_W;
-        const fitsLeft = leftIfLeft >= canvasLeft;
-        const nextLeft = fitsRight
-          ? r.right + GAP
-          : fitsLeft
-            ? leftIfLeft
-            : canvasLeft;
-        const nextTop = Math.min(r.top, window.innerHeight - 420);
-        setPopoverPos((prev) => {
-          if (prev && prev.top === nextTop && prev.left === nextLeft) return prev;
-          return { top: nextTop, left: nextLeft };
-        });
-      }
-      rafId = requestAnimationFrame(tick);
-    };
-    rafId = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(rafId);
-  }, [showPopover]);
 
   return (
     <div
@@ -2246,7 +2453,7 @@ function FlowNode({
         <div className={styles.nodeHeading}>
           {/* Type badge */}
           <span className={clsx(styles.nodeTypeBadge, cfg.bgClass)} aria-label={cfg.label}>
-            {cfg.icon}
+            {getStepIcon(step)}
           </span>
           {/* Spacer to balance absolutely-positioned dots button */}
           <div style={{ width: 24 }} aria-hidden />
@@ -2298,17 +2505,19 @@ function FlowNode({
         />
       </div>
 
-      {/* Config popover — escapes overflow:hidden, tracks node via rAF */}
-      {showPopover && popoverPos && createPortal(
-        <div
-          style={{ position: 'fixed', top: popoverPos.top, left: popoverPos.left, zIndex: 1000 }}
-        >
+      {/* Config popover — fixed to right side of screen */}
+      {showPopover && createPortal(
+        <div className={styles.rightPanel}>
           <NodePopover
             step={step}
             onSelectSuggestion={(value) => onUpdateStep(value)}
             onUpdateConditionConfig={onUpdateConditionConfig}
             onUpdateConfigField={onUpdateConfigField}
             onClose={() => setPopoverOpen(false)}
+            onAddBooleanMode={onAddBooleanMode}
+            onUpdateBooleanBranch={onUpdateBooleanBranch}
+            onAddElseIf={onAddElseIf}
+            onRemoveBooleanBranch={onRemoveBooleanBranch}
           />
         </div>,
         document.body,
@@ -2383,7 +2592,7 @@ function InsertPopover({ parentId, nodes, edges, anchorRect, onInsert, onClose }
                   className={styles.connectorInsertItem}
                   onClick={() => { onInsert(item.type, item.label); onClose(); }}
                 >
-                  <span className={clsx(styles.paletteItemIcon, cfg.bgClass)}>{cfg.icon}</span>
+                  <span className={clsx(styles.paletteItemIcon, cfg.bgClass)}>{getLibraryItemIcon(item)}</span>
                   {item.label}
                 </button>
               );
@@ -2486,6 +2695,10 @@ interface FlowCanvasProps {
   editNodeMode: boolean;
   editingNodeIds: Set<string>;
   onEditNodeToggle: (id: string, multi: boolean) => void;
+  onAddBooleanMode?: (nodeId: string) => void;
+  onUpdateBooleanBranch?: (nodeId: string, branchId: string, updates: Partial<BooleanBranch>) => void;
+  onAddElseIf?: (nodeId: string) => void;
+  onRemoveBooleanBranch?: (nodeId: string, branchId: string) => void;
 }
 
 function FlowCanvas({
@@ -2494,6 +2707,7 @@ function FlowCanvas({
   onDuplicateNode, onDeleteNode, onAddRootTrigger,
   onInsertOnEdge, onPositionChange, onSetAllPositions, onAddEdge, onDeleteEdge, onCreateNodeAt, onCanvasDropAtPos,
   editNodeMode, editingNodeIds, onEditNodeToggle,
+  onAddBooleanMode, onUpdateBooleanBranch, onAddElseIf, onRemoveBooleanBranch,
 }: FlowCanvasProps) {
   const canvasRef      = useRef<HTMLDivElement>(null);
   const graphContentRef = useRef<HTMLDivElement>(null);
@@ -2887,6 +3101,37 @@ function FlowCanvas({
                       transform={`rotate(${caretRotate}, ${x2}, ${y2})`}
                       style={{ pointerEvents: 'none' }}
                     />
+                    {/* Boolean branch pill label at edge midpoint */}
+                    {edge.booleanBranchId && (() => {
+                      const branch = nodes
+                        .find(n => n.booleanBranches?.some(b => b.id === edge.booleanBranchId))
+                        ?.booleanBranches?.find(b => b.id === edge.booleanBranchId);
+                      if (!branch) return null;
+                      const label = branch.type === 'if' ? 'if' : branch.type === 'else_if' ? 'else if' : 'else';
+                      const pillW = label === 'else if' ? 44 : label === 'else' ? 30 : 20;
+                      const mx = (x1 + x2) / 2;
+                      const my = (y1 + y2) / 2;
+                      return (
+                        <g style={{ pointerEvents: 'none' }}>
+                          <rect x={mx - pillW / 2} y={my - 9} width={pillW} height={18}
+                            rx={9}
+                            fill="var(--color-bg-primary)"
+                            stroke="var(--color-border-opaque)"
+                            strokeWidth="1"
+                          />
+                          <text x={mx} y={my + 1}
+                            textAnchor="middle"
+                            dominantBaseline="middle"
+                            style={{
+                              fontFamily: 'var(--font-sans)',
+                              fontSize: '10px',
+                              fontWeight: '500',
+                              fill: 'var(--color-content-secondary)',
+                            }}
+                          >{label}</text>
+                        </g>
+                      );
+                    })()}
                     {/* Wide transparent hit path — drag here to reconnect or disconnect */}
                     <path d={d} stroke="transparent" strokeWidth="12" fill="none"
                       data-edge-endpoint={edge.id}
@@ -2991,6 +3236,10 @@ function FlowCanvas({
                     onMoveDown={() => {}}
                     editNodeMode={editNodeMode}
                     isEditSelected={editingNodeIds.has(node.id)}
+                    onAddBooleanMode={onAddBooleanMode ? () => onAddBooleanMode(node.id) : undefined}
+                    onUpdateBooleanBranch={onUpdateBooleanBranch ? (branchId, updates) => onUpdateBooleanBranch(node.id, branchId, updates) : undefined}
+                    onAddElseIf={onAddElseIf ? () => onAddElseIf(node.id) : undefined}
+                    onRemoveBooleanBranch={onRemoveBooleanBranch ? (branchId) => onRemoveBooleanBranch(node.id, branchId) : undefined}
                   />
 
                   {/* Bottom anchor — all types */}
@@ -3100,6 +3349,9 @@ export function BuilderPage() {
   const [editNodeMode,    setEditNodeMode]    = useState(false);
   const [editingNodeIds,  setEditingNodeIds]  = useState<Set<string>>(new Set());
   const [saveState,       setSaveState]       = useState<SaveState>('idle');
+  const [globalAiPrompt,  setGlobalAiPrompt]  = useState('');
+  const [globalAiLoading, setGlobalAiLoading] = useState(false);
+  const [globalAiResult,  setGlobalAiResult]  = useState<string | null>(null);
   const saveTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -3219,6 +3471,143 @@ export function BuilderPage() {
       configValues: { ...(n.configValues ?? {}), [key]: value },
     }));
 
+  // ── Boolean branch handlers ─────────────────────────────────────────────────
+
+  const addBooleanMode = (nodeId: string) => {
+    const condNode = nodes.find(n => n.id === nodeId);
+    if (!condNode) return;
+    const parentPos = nodePositions[nodeId] ?? { x: 0, y: 0 };
+
+    const ifBranchId   = `branch-${++_nextId}`;
+    const elseBranchId = `branch-${++_nextId}`;
+    const ifActionNode   = makeNode('action');
+    const elseActionNode = makeNode('action');
+
+    const pitch = NODE_W * 1.3;
+    const parentCenterX = parentPos.x + NODE_W / 2;
+    const baseY = parentPos.y + V_SPACING;
+    const leftmostX = parentCenterX - pitch / 2 - NODE_W / 2;
+
+    const ifBranch: BooleanBranch = {
+      id: ifBranchId,
+      type: 'if',
+      conditionOperator: condNode.conditionOperator,
+      conditionValues: condNode.conditionValues ?? [],
+      actionNodeId: ifActionNode.id,
+    };
+    const elseBranch: BooleanBranch = {
+      id: elseBranchId,
+      type: 'else',
+      actionNodeId: elseActionNode.id,
+    };
+
+    setNodes(prev => [
+      ...prev.map(n => n.id !== nodeId ? n : {
+        ...n,
+        booleanMode: true,
+        booleanBranches: [ifBranch, elseBranch],
+        conditionOperator: undefined,
+        conditionValues: undefined,
+      }),
+      ifActionNode,
+      elseActionNode,
+    ]);
+    setNodePositions(prev => ({
+      ...prev,
+      [ifActionNode.id]:   { x: leftmostX,        y: baseY },
+      [elseActionNode.id]: { x: leftmostX + pitch, y: baseY },
+    }));
+    const ifEdge:   GraphEdge = { id: `edge-${++_nextId}`, from: nodeId, to: ifActionNode.id,   booleanBranchId: ifBranchId   };
+    const elseEdge: GraphEdge = { id: `edge-${++_nextId}`, from: nodeId, to: elseActionNode.id, booleanBranchId: elseBranchId };
+    setEdges(prev => [...prev.filter(e => e.from !== nodeId), ifEdge, elseEdge]);
+  };
+
+  const updateBooleanBranch = (nodeId: string, branchId: string, updates: Partial<BooleanBranch>) => {
+    setNodes(prev => prev.map(n => {
+      if (n.id !== nodeId || !n.booleanBranches) return n;
+      return {
+        ...n,
+        booleanBranches: n.booleanBranches.map(b => b.id === branchId ? { ...b, ...updates } : b),
+      };
+    }));
+  };
+
+  const addElseIf = (nodeId: string) => {
+    const condNode = nodes.find(n => n.id === nodeId);
+    if (!condNode?.booleanBranches) return;
+    const parentPos = nodePositions[nodeId] ?? { x: 0, y: 0 };
+
+    const newBranchId   = `branch-${++_nextId}`;
+    const newActionNode = makeNode('action');
+    const currentBranches = condNode.booleanBranches;
+    const insertIdx = currentBranches.length - 1;
+
+    const newBranch: BooleanBranch = {
+      id: newBranchId,
+      type: 'else_if',
+      conditionOperator: currentBranches[0]?.conditionOperator,
+      conditionValues: [],
+      actionNodeId: newActionNode.id,
+    };
+
+    const updatedBranches: BooleanBranch[] = [
+      ...currentBranches.slice(0, insertIdx),
+      newBranch,
+      currentBranches[insertIdx],
+    ];
+
+    const N = updatedBranches.length;
+    const pitch = NODE_W * 1.3;
+    const parentCenterX = parentPos.x + NODE_W / 2;
+    const leftmostX = parentCenterX - (pitch * (N - 1)) / 2 - NODE_W / 2;
+    const baseY = parentPos.y + V_SPACING;
+
+    const newPositions: Record<string, { x: number; y: number }> = {};
+    updatedBranches.forEach((b, i) => {
+      if (b.actionNodeId) newPositions[b.actionNodeId] = { x: leftmostX + i * pitch, y: baseY };
+    });
+
+    setNodes(prev => [
+      ...prev.map(n => n.id !== nodeId ? n : { ...n, booleanBranches: updatedBranches }),
+      newActionNode,
+    ]);
+    setNodePositions(prev => ({ ...prev, ...newPositions }));
+    setEdges(prev => [...prev, { id: `edge-${++_nextId}`, from: nodeId, to: newActionNode.id, booleanBranchId: newBranchId }]);
+  };
+
+  const removeBooleanBranch = (nodeId: string, branchId: string) => {
+    const condNode = nodes.find(n => n.id === nodeId);
+    if (!condNode?.booleanBranches) return;
+    const branch = condNode.booleanBranches.find(b => b.id === branchId);
+    if (!branch || branch.type === 'if' || branch.type === 'else') return;
+
+    const removedActionNodeId = branch.actionNodeId;
+    const remainingBranches   = condNode.booleanBranches.filter(b => b.id !== branchId);
+    const parentPos = nodePositions[nodeId] ?? { x: 0, y: 0 };
+
+    const N = remainingBranches.length;
+    const pitch = NODE_W * 1.3;
+    const parentCenterX = parentPos.x + NODE_W / 2;
+    const leftmostX = parentCenterX - (pitch * (N - 1)) / 2 - NODE_W / 2;
+    const baseY = parentPos.y + V_SPACING;
+
+    const newPositions: Record<string, { x: number; y: number }> = {};
+    remainingBranches.forEach((b, i) => {
+      if (b.actionNodeId) newPositions[b.actionNodeId] = { x: leftmostX + i * pitch, y: baseY };
+    });
+
+    setNodes(prev => prev
+      .filter(n => n.id !== removedActionNodeId)
+      .map(n => n.id !== nodeId ? n : { ...n, booleanBranches: remainingBranches })
+    );
+    setEdges(prev => prev.filter(e => e.booleanBranchId !== branchId));
+    setNodePositions(prev => {
+      const next = { ...prev, ...newPositions };
+      if (removedActionNodeId) delete next[removedActionNodeId];
+      return next;
+    });
+  };
+
   const duplicateNode = (id: string) => {
     const src = nodes.find(n => n.id === id);
     if (!src) return;
@@ -3274,6 +3663,55 @@ export function BuilderPage() {
     setEdges(prev => prev.filter(e => e.id !== edgeId));
   };
 
+  const handleGlobalAiSend = useCallback(async () => {
+    if (!globalAiPrompt.trim() || globalAiLoading) return;
+    setGlobalAiLoading(true);
+    setGlobalAiResult(null);
+    try {
+      const promptNodes = nodes.map(n => ({
+        id: n.id, type: n.type, selectedValue: n.selectedValue,
+        conditionOperator: n.conditionOperator, conditionValues: n.conditionValues,
+        configValues: n.configValues, configured: n.configured,
+      }));
+      const promptEdges = edges.map(e => ({ from: e.from, to: e.to, branch: e.branch }));
+      const libraryItems = ALL_LIBRARY_ITEMS.map(i => ({ id: i.id, label: i.label, type: i.type, category: i.category }));
+      const nodeConfig: Record<string, import('@/features/ai/systemPrompts').PromptConfigField[]> = {};
+      for (const [cfgId, fields] of Object.entries(NODE_CONFIG)) {
+        nodeConfig[cfgId] = fields.map(f => ({
+          key: f.key, label: f.label, type: f.type, required: f.required,
+          options: f.options ?? (f.optionsByDependency ? Object.values(f.optionsByDependency).flat() : undefined),
+        }));
+      }
+      const systemPrompt = buildGlobalSystemPrompt({ nodes: promptNodes, edges: promptEdges, editingNodeIds, libraryItems, nodeConfig });
+      const result = await callFlowAgent({ systemPrompt, userMessage: globalAiPrompt, tools: GLOBAL_TOOLS });
+      let changes = 0;
+      for (const call of result.toolCalls) {
+        const inp = call.toolInput;
+        if (call.toolName === 'add_node') {
+          const parentId = (inp.parent_node_id as string) === 'null' ? null : (inp.parent_node_id as string);
+          addNodeAfter(parentId, inp.type as StepType, inp.branch as 'yes' | 'no' | undefined, inp.selected_value as string);
+          changes++;
+        } else if (call.toolName === 'update_node') {
+          updateNode(inp.node_id as string, inp.selected_value as string);
+          changes++;
+        } else if (call.toolName === 'set_config_field') {
+          updateConfigField(inp.node_id as string, inp.field_key as string, inp.value as string);
+          changes++;
+        } else if (call.toolName === 'delete_node') {
+          deleteNode(inp.node_id as string);
+          changes++;
+        }
+      }
+      const text = result.textBlocks.join(' ').trim();
+      setGlobalAiResult(text || `Applied ${changes} change${changes !== 1 ? 's' : ''}.`);
+      setGlobalAiPrompt('');
+    } catch (err) {
+      setGlobalAiResult(`Error: ${err instanceof Error ? err.message : 'Something went wrong'}`);
+    } finally {
+      setGlobalAiLoading(false);
+    }
+  }, [globalAiPrompt, globalAiLoading, nodes, edges, editingNodeIds, addNodeAfter, updateNode, updateConfigField, deleteNode]);
+
   // ── Create a new disconnected node at canvas position ──
   const createNodeAt = (type: StepType, x: number, y: number) => {
     const n = makeNode(type);
@@ -3312,9 +3750,15 @@ export function BuilderPage() {
         <LeftPanel
           onLibNodeDragStart={(item) => setDraggingLibNode(item)}
           onLibNodeDragEnd={() => setDraggingLibNode(null)}
+          onLibNodeSelect={(item) => { handleCanvasDropAtPos(item, 0, CANVAS_TOP); setSelectedId(null); }}
           editNodeMode={editNodeMode}
           editingCount={editingNodeIds.size}
           onToggleEditMode={toggleEditMode}
+          aiPrompt={globalAiPrompt}
+          onAiPromptChange={setGlobalAiPrompt}
+          aiLoading={globalAiLoading}
+          aiResult={globalAiResult}
+          onAiSend={handleGlobalAiSend}
         />
 
         <FlowCanvas
@@ -3342,6 +3786,10 @@ export function BuilderPage() {
           editNodeMode={editNodeMode}
           editingNodeIds={editingNodeIds}
           onEditNodeToggle={handleEditNodeToggle}
+          onAddBooleanMode={addBooleanMode}
+          onUpdateBooleanBranch={updateBooleanBranch}
+          onAddElseIf={addElseIf}
+          onRemoveBooleanBranch={removeBooleanBranch}
         />
       </div>
     </div>

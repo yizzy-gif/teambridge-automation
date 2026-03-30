@@ -1,6 +1,7 @@
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { ScrollArea } from '@alloy/components/ScrollArea';
+import { Divider } from '@alloy/components/Divider';
 import styles from './AppShell.module.css';
 
 // ─── Nav items ────────────────────────────────────────────────────────────────
@@ -12,6 +13,18 @@ const primaryNav = [
     icon: (
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
         <path d="M2 4h3v3H2V4ZM6.5 4h7.5M6.5 7.5h7.5M2 9h3v3H2V9ZM6.5 9h7.5M6.5 12.5h7.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
+      </svg>
+    ),
+  },
+  {
+    to: '/templates',
+    label: 'Templates',
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
+        <rect x="1.5" y="1.5" width="5.5" height="5.5" rx="1" stroke="currentColor" strokeWidth="1.2"/>
+        <rect x="9" y="1.5" width="5.5" height="5.5" rx="1" stroke="currentColor" strokeWidth="1.2"/>
+        <rect x="1.5" y="9" width="5.5" height="5.5" rx="1" stroke="currentColor" strokeWidth="1.2"/>
+        <rect x="9" y="9" width="5.5" height="5.5" rx="1" stroke="currentColor" strokeWidth="1.2"/>
       </svg>
     ),
   },
@@ -52,7 +65,8 @@ export function AppShell() {
   const pageTitle = (() => {
     if (location.pathname.startsWith('/automations/new')) return 'New Automation';
     if (location.pathname.match(/^\/automations\/.+/)) return 'Edit Automation';
-    if (location.pathname.startsWith('/automations')) return 'Automations';
+    if (location.pathname.startsWith('/automations')) return 'Manage';
+    if (location.pathname.startsWith('/templates')) return 'Templates';
     if (location.pathname.startsWith('/integrations')) return 'Integrations';
     if (location.pathname.startsWith('/settings')) return 'Settings';
     return 'Automation';
@@ -73,6 +87,8 @@ export function AppShell() {
           <span className={styles.logoLabel}>Teambridge</span>
         </div>
 
+        <Divider />
+
         {/* Section label */}
         <div className={styles.sectionLabel}>Automation</div>
 
@@ -91,6 +107,8 @@ export function AppShell() {
             </NavLink>
           ))}
         </nav>
+
+        <Divider />
 
         {/* Bottom nav */}
         <nav className={styles.navBottom} aria-label="Secondary">

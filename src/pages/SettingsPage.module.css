@@ -91,7 +91,7 @@
 .numberInput:focus,
 .select:focus {
   border-color: var(--color-border-focus);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-border-focus) 12%, transparent);
+  box-shadow: 0 0 0 3px var(--color-bg-focus-ring);
 }
 
 /* ─── Toggle ────────────────────────────────────────────────────────────────── */

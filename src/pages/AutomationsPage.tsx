@@ -1,11 +1,35 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { clsx } from 'clsx';
+import { Tabs } from '@alloy/components/Tabs';
+import { StatusTag } from '@alloy/components/StatusTag';
+import type { StatusTagStatus } from '@alloy/components/StatusTag';
+import { Tag } from '@alloy/components/Tag';
+import type { TagColor } from '@alloy/components/Tag';
+import { ToggleButton } from '@alloy/components/ToggleButton';
+import { DataCard } from '@alloy/components/DataCard';
+import { Divider } from '@alloy/components/Divider';
+import {
+  Table, TableHeader, TableBody, TableRow, TableHead, TableCell,
+  CellStack, CellStatusTag, CellTag, CellText,
+} from '@alloy/components/Table';
+import { Grid01Icon } from '@alloy/components/icons/Grid01Icon';
+import { BarChart02Icon } from '@alloy/components/icons/BarChart02Icon';
+import { Users03Icon } from '@alloy/components/icons/Users03Icon';
+import { CheckCircleIcon } from '@alloy/components/icons/CheckCircleIcon';
+import { ListBulletIcon } from '@alloy/components/icons/ListBulletIcon';
 import styles from './AutomationsPage.module.css';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type AutomationStatus = 'active' | 'paused' | 'draft';
+type ViewMode = 'card' | 'table';
+
+interface AutomationStats {
+  reached: number;  // successfully acted on (green)
+  pending: number;  // queued / awaiting step (blue)
+  skipped: number;  // condition unmet / filtered out (yellow)
+}
 
 interface Automation {
   id: string;
@@ -15,6 +39,8 @@ interface Automation {
   trigger: string;
   lastRun: string | null;
   runsTotal: number;
+  category: string;
+  stats: AutomationStats;
 }
 
 // ─── Mock data ────────────────────────────────────────────────────────────────
@@ -28,6 +54,8 @@ const MOCK_AUTOMATIONS: Automation[] = [
     trigger: 'Employee created',
     lastRun: '2 hours ago',
     runsTotal: 48,
+    category: 'HR',
+    stats: { reached: 38, pending: 5, skipped: 5 },
   },
   {
     id: '2',
@@ -37,6 +65,8 @@ const MOCK_AUTOMATIONS: Automation[] = [
     trigger: 'Schedule — weekly',
     lastRun: '3 days ago',
     runsTotal: 120,
+    category: 'Finance',
+    stats: { reached: 98, pending: 12, skipped: 10 },
   },
   {
     id: '3',
@@ -46,6 +76,8 @@ const MOCK_AUTOMATIONS: Automation[] = [
     trigger: 'Shift updated',
     lastRun: '1 week ago',
     runsTotal: 31,
+    category: 'Scheduling',
+    stats: { reached: 24, pending: 3, skipped: 4 },
   },
   {
     id: '4',
@@ -55,10 +87,12 @@ const MOCK_AUTOMATIONS: Automation[] = [
     trigger: 'Hours logged',
     lastRun: null,
     runsTotal: 0,
+    category: 'HR',
+    stats: { reached: 0, pending: 0, skipped: 0 },
   },
 ];
 
-// ─── Status badge ─────────────────────────────────────────────────────────────
+// ─── Constants ────────────────────────────────────────────────────────────────
 
 const STATUS_LABEL: Record<AutomationStatus, string> = {
   active: 'Active',
@@ -66,12 +100,60 @@ const STATUS_LABEL: Record<AutomationStatus, string> = {
   draft: 'Draft',
 };
 
+const CATEGORY_COLOR: Record<string, TagColor> = {
+  HR: 'blue',
+  Finance: 'matcha',
+  Scheduling: 'orange',
+};
+
+const STATUS_TAG_STATUS: Record<AutomationStatus, StatusTagStatus> = {
+  active: 'success',
+  paused: 'warning',
+  draft: 'neutral',
+};
+
+// ─── Status badge ─────────────────────────────────────────────────────────────
+
 function StatusBadge({ status }: { status: AutomationStatus }) {
   return (
-    <span className={clsx(styles.badge, styles[`badge_${status}`])}>
-      <span className={styles.badgeDot} />
+    <StatusTag status={STATUS_TAG_STATUS[status]} size="sm">
       {STATUS_LABEL[status]}
-    </span>
+    </StatusTag>
+  );
+}
+
+// ─── Segmented stats bar ──────────────────────────────────────────────────────
+
+function AutomationBar({ stats, compact }: { stats: AutomationStats; compact?: boolean }) {
+  const total = stats.reached + stats.pending + stats.skipped;
+  if (total === 0) return null;
+  const pReached = (stats.reached / total) * 100;
+  const pPending = (stats.pending / total) * 100;
+  const pSkipped = (stats.skipped / total) * 100;
+  return (
+    <div className={clsx(styles.statsWrap, compact && styles.statsWrapCompact)}>
+      <div className={styles.statsBar}>
+        {pReached > 0 && <div className={styles.barReached} style={{ width: `${pReached}%` }} />}
+        {pPending > 0 && <div className={styles.barPending} style={{ width: `${pPending}%` }} />}
+        {pSkipped > 0 && <div className={styles.barSkipped} style={{ width: `${pSkipped}%` }} />}
+      </div>
+      {!compact && (
+        <div className={styles.statsLegend}>
+          <span className={styles.legendItem}>
+            <span className={clsx(styles.legendDot, styles.dotReached)} />
+            {stats.reached} reached
+          </span>
+          <span className={styles.legendItem}>
+            <span className={clsx(styles.legendDot, styles.dotPending)} />
+            {stats.pending} pending
+          </span>
+          <span className={styles.legendItem}>
+            <span className={clsx(styles.legendDot, styles.dotSkipped)} />
+            {stats.skipped} skipped
+          </span>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -100,6 +182,13 @@ export function AutomationsPage() {
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<AutomationStatus | 'all'>('all');
+  const [view, setView] = useState<ViewMode>('card');
+
+  const totalRuns   = MOCK_AUTOMATIONS.reduce((s, a) => s + a.runsTotal, 0);
+  const totalReached = MOCK_AUTOMATIONS.reduce((s, a) => s + a.stats.reached, 0);
+  const totalStats   = MOCK_AUTOMATIONS.reduce((s, a) => s + a.stats.reached + a.stats.pending + a.stats.skipped, 0);
+  const completionRate = totalStats > 0 ? Math.round((totalReached / totalStats) * 100) : 0;
+  const activeCount  = MOCK_AUTOMATIONS.filter((a) => a.status === 'active').length;
 
   const filtered = MOCK_AUTOMATIONS.filter((a) => {
     const matchesSearch =
@@ -111,52 +200,111 @@ export function AutomationsPage() {
 
   return (
     <div className={styles.page}>
-      {/* Toolbar */}
-      <div className={styles.toolbar}>
-        <div className={styles.searchWrap}>
-          <span className={styles.searchIcon} aria-hidden>
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <circle cx="6" cy="6" r="4.5" stroke="currentColor" strokeWidth="1.2"/>
-              <path d="m9.5 9.5 2.5 2.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
-            </svg>
-          </span>
-          <input
-            className={styles.searchInput}
-            type="search"
-            placeholder="Search automations…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            aria-label="Search automations"
-          />
-        </div>
-
-        <div className={styles.filterGroup} role="group" aria-label="Filter by status">
-          {(['all', 'active', 'paused', 'draft'] as const).map((f) => (
-            <button
-              key={f}
-              className={clsx(styles.filterBtn, filter === f && styles.filterBtnActive)}
-              onClick={() => setFilter(f)}
-            >
-              {f === 'all' ? 'All' : STATUS_LABEL[f]}
-            </button>
-          ))}
-        </div>
-
-        <button
-          className={styles.newBtn}
-          onClick={() => navigate('/automations/new')}
-        >
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
-            <path d="M6 1v10M1 6h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-          </svg>
-          New workflow
-        </button>
+      {/* Metric cards */}
+      <div className={styles.metrics}>
+        <DataCard
+          color="slate"
+          icon={<Grid01Icon size={24} />}
+          label="Automations"
+          value={MOCK_AUTOMATIONS.length}
+          tag={`${activeCount} active`}
+          tagColor="green"
+        />
+        <DataCard
+          color="blue"
+          icon={<BarChart02Icon size={24} />}
+          label="Total runs"
+          value={totalRuns}
+          tag="all time"
+          tagColor="neutral"
+        />
+        <DataCard
+          color="green"
+          icon={<Users03Icon size={24} />}
+          label="People reached"
+          value={totalReached}
+          tag={`${MOCK_AUTOMATIONS.reduce((s, a) => s + a.stats.pending, 0)} pending`}
+          tagColor="blue"
+        />
+        <DataCard
+          color="matcha"
+          icon={<CheckCircleIcon size={24} />}
+          label="Completion rate"
+          value={`${completionRate}%`}
+          tag={`${MOCK_AUTOMATIONS.reduce((s, a) => s + a.stats.skipped, 0)} skipped`}
+          tagColor="yellow"
+        />
       </div>
 
-      {/* List */}
+      <Divider />
+
+      {/* Toolbar */}
+      <div className={styles.toolbar}>
+        <div className={styles.toolbarTop}>
+          <div className={styles.searchWrap}>
+            <span className={styles.searchIcon} aria-hidden>
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <circle cx="6" cy="6" r="4.5" stroke="currentColor" strokeWidth="1.2"/>
+                <path d="m9.5 9.5 2.5 2.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+              </svg>
+            </span>
+            <input
+              className={styles.searchInput}
+              type="search"
+              placeholder="Search automations…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              aria-label="Search automations"
+            />
+          </div>
+
+          {/* View toggle */}
+          <div className={styles.viewToggle}>
+            <ToggleButton
+              size="sm"
+              iconOnly
+              selectionStyle="border"
+              selected={view === 'card'}
+              onSelectedChange={() => setView('card')}
+              aria-label="Card view"
+            >
+              <Grid01Icon size={14} />
+            </ToggleButton>
+            <ToggleButton
+              size="sm"
+              iconOnly
+              selectionStyle="border"
+              selected={view === 'table'}
+              onSelectedChange={() => setView('table')}
+              aria-label="Table view"
+            >
+              <ListBulletIcon size={14} />
+            </ToggleButton>
+          </div>
+
+          <button
+            className={styles.newBtn}
+            onClick={() => navigate('/automations/new')}
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
+              <path d="M6 1v10M1 6h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+            </svg>
+            New workflow
+          </button>
+        </div>
+
+        <Tabs value={filter} onChange={(v) => setFilter(v as AutomationStatus | 'all')}>
+          <Tabs.Tab value="all">All</Tabs.Tab>
+          <Tabs.Tab value="active">Active</Tabs.Tab>
+          <Tabs.Tab value="paused">Paused</Tabs.Tab>
+          <Tabs.Tab value="draft">Draft</Tabs.Tab>
+        </Tabs>
+      </div>
+
+      {/* Content */}
       {filtered.length === 0 ? (
         <EmptyState onNew={() => navigate('/automations/new')} />
-      ) : (
+      ) : view === 'card' ? (
         <div className={styles.list}>
           {filtered.map((automation) => (
             <button
@@ -164,19 +312,16 @@ export function AutomationsPage() {
               className={styles.card}
               onClick={() => navigate(`/automations/${automation.id}`)}
             >
-              <div className={styles.cardHeader}>
-                <span className={styles.cardName}>{automation.name}</span>
+              <div className={styles.cardTop}>
                 <StatusBadge status={automation.status} />
+                <Tag color={CATEGORY_COLOR[automation.category]} size="sm" variant="subtle">
+                  {automation.category}
+                </Tag>
               </div>
+              <span className={styles.cardName}>{automation.name}</span>
               <p className={styles.cardDesc}>{automation.description}</p>
+              <AutomationBar stats={automation.stats} />
               <div className={styles.cardMeta}>
-                <span className={styles.metaItem}>
-                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
-                    <path d="M1.5 6c0-2.485 2.015-4.5 4.5-4.5S10.5 3.515 10.5 6 8.485 10.5 6 10.5 1.5 8.485 1.5 6Z" stroke="currentColor" strokeWidth="1.1"/>
-                    <path d="M6 3.5V6l1.5 1.5" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
-                  {automation.trigger}
-                </span>
                 {automation.lastRun && (
                   <span className={styles.metaItem}>
                     Last run {automation.lastRun}
@@ -188,6 +333,62 @@ export function AutomationsPage() {
               </div>
             </button>
           ))}
+        </div>
+      ) : (
+        <div className={styles.tableWrap}>
+          <Table size="md">
+            <TableHeader>
+              <TableRow hoverable={false}>
+                <TableHead>Name</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Category</TableHead>
+                <TableHead>Trigger</TableHead>
+                <TableHead>Runs</TableHead>
+                <TableHead>Last run</TableHead>
+                <TableHead>Stats</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filtered.map((automation) => (
+                <TableRow
+                  key={automation.id}
+                  onClick={() => navigate(`/automations/${automation.id}`)}
+                  style={{ cursor: 'pointer' }}
+                >
+                  <TableCell>
+                    <CellStack
+                      primary={automation.name}
+                      secondary={automation.description}
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <CellStatusTag status={STATUS_TAG_STATUS[automation.status]}>
+                      {STATUS_LABEL[automation.status]}
+                    </CellStatusTag>
+                  </TableCell>
+                  <TableCell>
+                    <CellTag color={CATEGORY_COLOR[automation.category]} variant="subtle">
+                      {automation.category}
+                    </CellTag>
+                  </TableCell>
+                  <TableCell>
+                    <CellText variant="secondary">{automation.trigger}</CellText>
+                  </TableCell>
+                  <TableCell>
+                    <CellText>{automation.runsTotal}</CellText>
+                  </TableCell>
+                  <TableCell>
+                    <CellText variant="secondary">
+                      {automation.lastRun ?? '—'}
+                    </CellText>
+                  </TableCell>
+                  <TableCell>
+                    <AutomationBar stats={automation.stats} compact />
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         </div>
       )}
     </div>

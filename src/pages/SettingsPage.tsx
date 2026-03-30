@@ -1,3 +1,4 @@
+import { Divider } from '@alloy/components/Divider';
 import styles from './SettingsPage.module.css';
 
 // ─── Section ──────────────────────────────────────────────────────────────────
@@ -13,15 +14,18 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 // ─── Row ─────────────────────────────────────────────────────────────────────
 
-function Row({ label, description, control }: { label: string; description?: string; control: React.ReactNode }) {
+function Row({ label, description, control, first = false }: { label: string; description?: string; control: React.ReactNode; first?: boolean }) {
   return (
-    <div className={styles.row}>
-      <div className={styles.rowBody}>
-        <div className={styles.rowLabel}>{label}</div>
-        {description && <div className={styles.rowDesc}>{description}</div>}
+    <>
+      {!first && <Divider />}
+      <div className={styles.row}>
+        <div className={styles.rowBody}>
+          <div className={styles.rowLabel}>{label}</div>
+          {description && <div className={styles.rowDesc}>{description}</div>}
+        </div>
+        <div className={styles.rowControl}>{control}</div>
       </div>
-      <div className={styles.rowControl}>{control}</div>
-    </div>
+    </>
   );
 }
 
@@ -43,6 +47,7 @@ export function SettingsPage() {
     <div className={styles.page}>
       <Section title="General">
         <Row
+          first
           label="Automation run limit"
           description="Maximum number of automation runs per day across all workflows."
           control={
@@ -69,8 +74,11 @@ export function SettingsPage() {
         />
       </Section>
 
+      <Divider />
+
       <Section title="Notifications">
         <Row
+          first
           label="Failure alerts"
           description="Receive an in-app notification when an automation fails."
           control={<Toggle defaultChecked />}
@@ -87,8 +95,11 @@ export function SettingsPage() {
         />
       </Section>
 
+      <Divider />
+
       <Section title="AI Features">
         <Row
+          first
           label="AI step suggestions"
           description="Allow AI to suggest next steps as you build automations."
           control={<Toggle defaultChecked />}

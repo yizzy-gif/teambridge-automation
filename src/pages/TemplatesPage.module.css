@@ -1,0 +1,336 @@
+/* ─── Page ─────────────────────────────────────────────────────────────────── */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding-bottom: var(--space-12);
+}
+
+/* ─── Top Nav ───────────────────────────────────────────────────────────────── */
+
+.topNav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+/* ─── Hero Banner ───────────────────────────────────────────────────────────── */
+
+.hero {
+  position: relative;
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-lg);
+  /* Figma: padding: var(--40, 40px) 0; gap: 20px; */
+  padding: var(--space-10) var(--space-6); /* 40px top/bottom, 24px left/right */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden; /* clips ring artwork at border-radius */
+}
+
+/* Clips decorative rings at the hero boundary */
+.heroDecos {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* Left artwork — scales with hero width, clamped so it never disappears or overpowers */
+.heroDecoLeft {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: clamp(80px, 30%, 280px);
+  height: 100%;
+}
+
+/* Right artwork — scales with hero width, clamped so it never disappears or overpowers */
+.heroDecoRight {
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: clamp(80px, 30%, 280px);
+  height: 100%;
+}
+
+.heroContent {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-5); /* 20px — Figma gap between titleGroup and search */
+  width: 100%;
+  text-align: center;
+}
+
+/* Wraps title + subtitle; smaller gap between them */
+.heroTitleGroup {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.heroTitle {
+  font-size: var(--text-2xl);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-content-primary);
+  line-height: 1.25;
+  margin: 0;
+}
+
+.heroAccent {
+  background: linear-gradient(90deg, #F5E5E1 0%, #3CB6D1 38%, #2ABF84 66%, #EDD678 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.heroSubtitle {
+  font-size: var(--text-sm);
+  color: var(--color-content-secondary);
+  margin: 0;
+}
+
+/* Pill-shaped search input */
+.heroSearch {
+  width: 100%;
+  max-width: 480px;
+}
+
+.heroSearch > div {
+  border-radius: 24px !important;
+}
+
+.heroSearch input {
+  border-radius: 24px !important;
+}
+
+/* ─── Hero Pills ─────────────────────────────────────────────────────────────── */
+
+.heroPills {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  width: 100%;
+}
+
+.heroPill {
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(4px);
+  border-color: rgba(255, 255, 255, 0.6);
+  white-space: nowrap;
+}
+
+.heroPill:hover:not([data-active]) {
+  background: rgba(255, 255, 255, 0.88);
+  border-color: rgba(255, 255, 255, 0.8);
+}
+
+.heroPill[data-active] {
+  background: var(--color-bg-primary) !important;
+  border-color: var(--color-content-primary) !important;
+  color: var(--color-content-primary);
+}
+
+/* ─── Filter Rows ───────────────────────────────────────────────────────────── */
+
+.filterRows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.filterSelects {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.filterSelect {
+  width: 168px;
+  flex-shrink: 0;
+}
+
+.filterPills {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1-5);
+}
+
+/* ─── Section ───────────────────────────────────────────────────────────────── */
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.sectionTitle {
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-regular);
+  color: var(--color-content-secondary);
+  margin: 0;
+}
+
+.sectionTitle strong {
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-content-primary);
+}
+
+/* ─── Card Grid ─────────────────────────────────────────────────────────────── */
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--space-3);
+  align-content: start;
+}
+
+/* ─── Card ─────────────────────────────────────────────────────────────────── */
+
+.card {
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-lg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: box-shadow var(--duration-fast) var(--ease-default),
+              border-color var(--duration-fast) var(--ease-default);
+}
+
+.card:hover {
+  box-shadow: var(--shadow-below-md);
+  border-color: var(--color-border-transparent);
+}
+
+/* ─── Preview Area ──────────────────────────────────────────────────────────── */
+
+.previewArea {
+  position: relative;
+  background: var(--color-bg-secondary);
+  border-bottom: 1px solid var(--color-border-opaque);
+  padding: var(--space-4) var(--space-3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.previewSvg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+/* ─── Save / Bookmark Button ────────────────────────────────────────────────── */
+
+.saveBtn {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--color-content-tertiary);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-default),
+              color var(--duration-fast) var(--ease-default),
+              border-color var(--duration-fast) var(--ease-default);
+  padding: 0;
+}
+
+.saveBtn:hover {
+  background: var(--color-bg-primary);
+  border-color: var(--color-border-opaque);
+  color: var(--color-content-secondary);
+}
+
+.saveBtnActive {
+  color: #7B5DBF;
+}
+
+.saveBtnActive:hover {
+  color: #7B5DBF;
+}
+
+/* ─── Card Body ─────────────────────────────────────────────────────────────── */
+
+.cardBody {
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  flex: 1;
+}
+
+.cardName {
+  font-size: var(--text-base);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-relaxed);
+  letter-spacing: var(--tracking-normal);
+  color: var(--color-content-primary);
+  margin: 0;
+  flex: 1;
+}
+
+/* ─── Card Meta ─────────────────────────────────────────────────────────────── */
+
+.cardMeta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.cardMetaItem {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 10px;
+  white-space: nowrap;
+  color: var(--color-content-secondary);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: 0.02em;
+}
+
+.cardMetaDot {
+  width: 3px;
+  height: 3px;
+  border-radius: var(--radius-full);
+  background: var(--color-content-tertiary);
+  flex-shrink: 0;
+}
+
+/* ─── Card Tags ─────────────────────────────────────────────────────────────── */
+
+.cardTags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+/* ─── Use Template Button ───────────────────────────────────────────────────── */
+
+.previewBtn {
+  width: 100%;
+  justify-content: center;
+}
+
+/* ─── Empty State ───────────────────────────────────────────────────────────── */
+
+.emptyState {
+  font-size: var(--text-sm);
+  color: var(--color-content-secondary);
+  padding: var(--space-10) 0;
+  text-align: center;
+}
