@@ -3341,7 +3341,7 @@ function FlowCanvas({
                   key={selectedId}
                   step={selectedNode}
                   left={pos.x + NODE_W / 2}
-                  top={pos.y + selectedNodeH - 4}
+                  top={pos.y + selectedNodeH + 8}
                   onSelectSuggestion={v  => onUpdateNode(selectedId, v)}
                   onUpdateConditionConfig={(op, vals) => onUpdateNodeCondition(selectedId, op, vals)}
                   onUpdateConfigField={(key, val)  => onUpdateNodeConfigField(selectedId, key, val)}
