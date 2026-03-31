@@ -2268,7 +2268,7 @@
 
 .nodeAiFloat {
   position: absolute;
-  width: 240px;
+  width: 296px;
   transform: translateX(-50%);
   z-index: 50;
   pointer-events: auto;
