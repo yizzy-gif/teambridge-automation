@@ -2780,6 +2780,7 @@ function FlowCanvas({
   const [pan,  setPan]  = useState({ x: INIT_PAN_X, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
+  const [selectedNodeH, setSelectedNodeH] = useState(NODE_H);
   const [, setCanvasDragOver] = useState(false);
   const [isTidying, setIsTidying] = useState(false);
   const [edgeInsert, setEdgeInsert] = useState<{ edge: GraphEdge; anchorRect: DOMRect } | null>(null);
@@ -2810,6 +2811,13 @@ function FlowCanvas({
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [typePickerPos]);
+
+  // ── Measure actual selected-node height for consistent AI input gap ──
+  useEffect(() => {
+    if (!selectedId || !graphContentRef.current) { setSelectedNodeH(NODE_H); return; }
+    const el = graphContentRef.current.querySelector<HTMLElement>(`[data-node-id="${selectedId}"]`);
+    setSelectedNodeH(el ? el.offsetHeight : NODE_H);
+  }, [selectedId, nodes]);
 
   // ── Wheel: scroll = pan, ctrl/cmd+scroll = zoom ──
   useEffect(() => {
@@ -3333,7 +3341,7 @@ function FlowCanvas({
                   key={selectedId}
                   step={selectedNode}
                   left={pos.x + NODE_W / 2}
-                  top={pos.y + NODE_H - 4}
+                  top={pos.y + selectedNodeH - 4}
                   onSelectSuggestion={v  => onUpdateNode(selectedId, v)}
                   onUpdateConditionConfig={(op, vals) => onUpdateNodeCondition(selectedId, op, vals)}
                   onUpdateConfigField={(key, val)  => onUpdateNodeConfigField(selectedId, key, val)}
