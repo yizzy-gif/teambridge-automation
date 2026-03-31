@@ -1617,6 +1617,8 @@
   font-size: var(--text-sm);
   color: var(--color-content-primary);
   line-height: var(--line-height-relaxed);
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .loadingDots {
