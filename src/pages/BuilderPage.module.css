@@ -2212,6 +2212,33 @@
   z-index: 0;
 }
 
+/* Badge shown at midpoint of boolean branch edges */
+.booleanEdgeBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0 var(--space-2);
+  height: 20px;
+  max-width: 200px;
+  background: var(--color-bg-inverse-primary);
+  color: var(--color-content-inverse-primary);
+  border-radius: var(--radius-full);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: var(--shadow-below-low);
+  pointer-events: none;
+  user-select: none;
+}
+
+.booleanEdgeBadgeSep {
+  opacity: 0.45;
+  flex-shrink: 0;
+}
+
 .edgeMidplusBtn {
   width: 20px;
   height: 20px;
@@ -2235,6 +2262,106 @@
 
 .edgeMidplusBtn:hover {
   background: color-mix(in srgb, var(--color-content-primary) 80%, transparent);
+}
+
+/* ─── Floating AI input (below selected node, in canvas space) ────────────── */
+
+.nodeAiFloat {
+  position: absolute;
+  width: 240px;
+  transform: translateX(-50%);
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  pointer-events: auto;
+  animation: nodeAiFadeIn var(--duration-fast) var(--ease-out);
+}
+
+@keyframes nodeAiFadeIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(-6px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+.nodeAiCard {
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-below-md);
+  padding: var(--space-2) var(--space-3) var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.nodeAiCard:focus-within {
+  border-color: var(--color-border-focus);
+  box-shadow: var(--shadow-below-md), 0 0 0 3px var(--color-bg-brand-subtler);
+}
+
+.nodeAiIconRow {
+  display: flex;
+  align-items: center;
+}
+
+.nodeAiIcon {
+  color: var(--color-brand);
+}
+
+.nodeAiTextarea {
+  width: 100%;
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: none;
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-regular);
+  color: var(--color-content-primary);
+  line-height: 1.5;
+  min-height: 20px;
+  max-height: 96px;
+  overflow-y: auto;
+}
+.nodeAiTextarea::placeholder { color: var(--color-content-tertiary); }
+
+.nodeAiActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-1);
+}
+
+/* Loader state shown while AI is running */
+.nodeAiLoaderState {
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-below-md);
+  padding: var(--space-3) var(--space-4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+}
+
+.nodeAiLoaderLabel {
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-secondary);
+}
+
+.nodeAiResult {
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  color: var(--color-content-secondary);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+  line-height: 1.5;
+  margin: 0;
 }
 
 /* ── Connector anchors ── */

@@ -32,6 +32,7 @@ import { ArrowNarrowUpIcon } from '@alloy/components/icons/ArrowNarrowUpIcon';
 import { TeambridgeAIIcon } from '@alloy/components/icons/TeambridgeAIIcon';
 import { ScrollArea } from '@alloy/components/ScrollArea';
 import { Divider } from '@alloy/components/Divider';
+import { AILoader } from '@alloy/components/ai/AILoader';
 import styles from './BuilderPage.module.css';
 import { callFlowAgent } from '@/features/ai/client';
 import { GLOBAL_TOOLS, STEP_TOOLS } from '@/features/ai/tools';
@@ -1749,7 +1750,7 @@ function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpda
                       onClick={onAddBooleanMode}
                     >
                       <PlusIcon size={10} />
-                      Add boolean
+                      +Branch
                     </button>
                   </>
                 ) : (
@@ -1976,43 +1977,6 @@ function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpda
           </div>
         </>
       )}
-
-      {/* ── 5. AI prompt — always ── */}
-      <div className={styles.popoverDivider} />
-      <div className={styles.popoverSection}>
-        <p className={styles.popoverSectionLabel}>Work with AI</p>
-        <div className={styles.popoverAiWrap}>
-          <div className={styles.popoverAiCard}>
-            <textarea
-              className={styles.aiComposerTextarea}
-              placeholder="Tell AI what you want to build..."
-              rows={1}
-              value={aiPrompt}
-              onChange={e => {
-                setAiPrompt(e.target.value);
-                const t = e.target;
-                t.style.height = 'auto';
-                t.style.height = t.scrollHeight + 'px';
-              }}
-              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAiSend(); } }}
-            />
-            <div className={styles.popoverAiActionBar}>
-              <button type="button" className={styles.aiComposerMicBtn} aria-label="Voice input">
-                <Microphone02Icon size={14} />
-              </button>
-              <button
-                className={styles.aiComposerSendBtn}
-                onClick={handleAiSend}
-                disabled={!aiPrompt.trim() || aiLoading}
-                aria-label="Send to AI"
-              >
-                {aiLoading ? <LoadingDots /> : <ArrowNarrowUpIcon size={12} />}
-              </button>
-            </div>
-          </div>
-          {aiResult && <p className={styles.popoverAiResult}>{aiResult}</p>}
-        </div>
-      </div>
 
       </div>{/* end popoverBody */}
 
@@ -2670,6 +2634,114 @@ interface TypePickerPos {
   canvasY: number;
 }
 
+// ─── NodeAiFloatingInput ──────────────────────────────────────────────────────
+
+interface NodeAiFloatingInputProps {
+  step: FlowStep;
+  /** Canvas-space position: center-x of node, just below node bottom */
+  left: number;
+  top: number;
+  onSelectSuggestion: (value: string) => void;
+  onUpdateConditionConfig: (op: string, vals: string[]) => void;
+  onUpdateConfigField: (key: string, value: string) => void;
+}
+
+function NodeAiFloatingInput({ step, left, top, onSelectSuggestion, onUpdateConditionConfig, onUpdateConfigField }: NodeAiFloatingInputProps) {
+  const [aiPrompt, setAiPrompt]   = useState('');
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiResult, setAiResult]   = useState<string | null>(null);
+
+  const handleSend = useCallback(async () => {
+    if (!aiPrompt.trim() || aiLoading) return;
+    setAiLoading(true);
+    setAiResult(null);
+    try {
+      const libItems    = ALL_LIBRARY_ITEMS.filter(i => i.type === step.type);
+      const configItem  = ALL_LIBRARY_ITEMS.find(i => i.label === step.selectedValue);
+      const rawFields: NodeConfigField[] = configItem ? (NODE_CONFIG[configItem.id] ?? []) : [];
+      const configFields = rawFields.map(f => ({
+        key: f.key, label: f.label, type: f.type, required: f.required,
+        options: f.options ?? (f.optionsByDependency ? Object.values(f.optionsByDependency).flat() : undefined),
+      }));
+      const condDef = step.type === 'condition' && step.selectedValue
+        ? CONDITION_LIBRARY.find(c => c.label === step.selectedValue) ?? null : null;
+      const systemPrompt = buildStepSystemPrompt({
+        step: { id: step.id, type: step.type, selectedValue: step.selectedValue,
+                conditionOperator: step.conditionOperator, conditionValues: step.conditionValues,
+                configValues: step.configValues, configured: step.configured },
+        libraryItemsForType: libItems.map(i => ({ id: i.id, label: i.label, type: i.type, category: i.category })),
+        configFields,
+        conditionOperators: condDef?.operators,
+        conditionValueOptions: condDef?.valueOptions,
+      });
+      const result = await callFlowAgent({ systemPrompt, userMessage: aiPrompt, tools: STEP_TOOLS });
+      for (const call of result.toolCalls) {
+        const inp = call.toolInput;
+        if (call.toolName === 'select_step_value')       onSelectSuggestion(inp.value as string);
+        else if (call.toolName === 'set_condition_config') onUpdateConditionConfig(inp.operator as string, inp.values as string[]);
+        else if (call.toolName === 'set_step_config_field') onUpdateConfigField(inp.field_key as string, inp.value as string);
+      }
+      const text = result.textBlocks.join(' ').trim();
+      setAiResult(text || 'Done.');
+      setAiPrompt('');
+    } catch (err) {
+      setAiResult(`Error: ${err instanceof Error ? err.message : 'Something went wrong'}`);
+    } finally {
+      setAiLoading(false);
+    }
+  }, [aiPrompt, aiLoading, step, onSelectSuggestion, onUpdateConditionConfig, onUpdateConfigField]);
+
+  return (
+    <div
+      className={styles.nodeAiFloat}
+      style={{ left, top }}
+      onMouseDown={e => e.stopPropagation()}
+    >
+      {aiLoading ? (
+        <div className={styles.nodeAiLoaderState}>
+          <AILoader variant="gradient-fill" size="sm" />
+          <span className={styles.nodeAiLoaderLabel}>AI is thinking…</span>
+        </div>
+      ) : (
+        <div className={styles.nodeAiCard}>
+          <div className={styles.nodeAiIconRow}>
+            <TeambridgeAIIcon size={14} className={styles.nodeAiIcon} />
+          </div>
+          <textarea
+            className={styles.nodeAiTextarea}
+            placeholder="Ask AI about this node…"
+            rows={1}
+            value={aiPrompt}
+            onChange={e => {
+              setAiPrompt(e.target.value);
+              const t = e.target;
+              t.style.height = 'auto';
+              t.style.height = t.scrollHeight + 'px';
+            }}
+            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+          />
+          <div className={styles.nodeAiActions}>
+            <button type="button" className={styles.aiComposerMicBtn} aria-label="Voice input">
+              <Microphone02Icon size={13} />
+            </button>
+            <button
+              className={styles.aiComposerSendBtn}
+              onClick={handleSend}
+              disabled={!aiPrompt.trim()}
+              aria-label="Send to AI"
+            >
+              <ArrowNarrowUpIcon size={12} />
+            </button>
+          </div>
+        </div>
+      )}
+      {aiResult && <p className={styles.nodeAiResult}>{aiResult}</p>}
+    </div>
+  );
+}
+
+// ─── FlowCanvas ───────────────────────────────────────────────────────────────
+
 interface FlowCanvasProps {
   nodes: GraphNode[];
   edges: GraphEdge[];
@@ -3101,37 +3173,7 @@ function FlowCanvas({
                       transform={`rotate(${caretRotate}, ${x2}, ${y2})`}
                       style={{ pointerEvents: 'none' }}
                     />
-                    {/* Boolean branch pill label at edge midpoint */}
-                    {edge.booleanBranchId && (() => {
-                      const branch = nodes
-                        .find(n => n.booleanBranches?.some(b => b.id === edge.booleanBranchId))
-                        ?.booleanBranches?.find(b => b.id === edge.booleanBranchId);
-                      if (!branch) return null;
-                      const label = branch.type === 'if' ? 'if' : branch.type === 'else_if' ? 'else if' : 'else';
-                      const pillW = label === 'else if' ? 44 : label === 'else' ? 30 : 20;
-                      const mx = (x1 + x2) / 2;
-                      const my = (y1 + y2) / 2;
-                      return (
-                        <g style={{ pointerEvents: 'none' }}>
-                          <rect x={mx - pillW / 2} y={my - 9} width={pillW} height={18}
-                            rx={9}
-                            fill="var(--color-bg-primary)"
-                            stroke="var(--color-border-opaque)"
-                            strokeWidth="1"
-                          />
-                          <text x={mx} y={my + 1}
-                            textAnchor="middle"
-                            dominantBaseline="middle"
-                            style={{
-                              fontFamily: 'var(--font-sans)',
-                              fontSize: '10px',
-                              fontWeight: '500',
-                              fill: 'var(--color-content-secondary)',
-                            }}
-                          >{label}</text>
-                        </g>
-                      );
-                    })()}
+                    {/* Boolean branch edge — no inline SVG pill; badge is in HTML layer below */}
                     {/* Wide transparent hit path — drag here to reconnect or disconnect */}
                     <path d={d} stroke="transparent" strokeWidth="12" fill="none"
                       data-edge-endpoint={edge.id}
@@ -3173,6 +3215,41 @@ function FlowCanvas({
               if (!from || !to) return null;
               const midX = (from.x + to.x) / 2;
               const midY = (from.y + to.y) / 2;
+
+              if (edge.booleanBranchId) {
+                // Boolean branch edge — show badge, no insert button
+                const branch = nodes
+                  .find(n => n.booleanBranches?.some(b => b.id === edge.booleanBranchId))
+                  ?.booleanBranches?.find(b => b.id === edge.booleanBranchId);
+                if (!branch) return null;
+                const typeLabel  = branch.type === 'if' ? 'if' : branch.type === 'else_if' ? 'else if' : 'else';
+                const opLabel    = branch.conditionOperator ? (OPERATOR_LABELS[branch.conditionOperator] ?? branch.conditionOperator) : null;
+                const val        = branch.conditionValues?.[0] ?? null;
+                return (
+                  <div
+                    key={`midplus-${edge.id}`}
+                    className={styles.edgeMidpointArea}
+                    style={{ left: midX - 100, top: midY - 14, width: 200, height: 28 }}
+                  >
+                    <span className={styles.booleanEdgeBadge}>
+                      {typeLabel}
+                      {opLabel && (
+                        <>
+                          <span className={styles.booleanEdgeBadgeSep}>·</span>
+                          {opLabel}
+                        </>
+                      )}
+                      {val && (
+                        <>
+                          <span className={styles.booleanEdgeBadgeSep}>·</span>
+                          {val}
+                        </>
+                      )}
+                    </span>
+                  </div>
+                );
+              }
+
               return (
                 <div
                   key={`midplus-${edge.id}`}
@@ -3251,6 +3328,24 @@ function FlowCanvas({
                 </div>
               );
             })}
+
+            {/* ── Floating AI input below selected node ── */}
+            {selectedId && (() => {
+              const pos          = nodePositions[selectedId];
+              const selectedNode = nodes.find(n => n.id === selectedId);
+              if (!pos || !selectedNode) return null;
+              return (
+                <NodeAiFloatingInput
+                  key={selectedId}
+                  step={selectedNode}
+                  left={pos.x + NODE_W / 2}
+                  top={pos.y + NODE_H + 20}
+                  onSelectSuggestion={v  => onUpdateNode(selectedId, v)}
+                  onUpdateConditionConfig={(op, vals) => onUpdateNodeCondition(selectedId, op, vals)}
+                  onUpdateConfigField={(key, val)  => onUpdateNodeConfigField(selectedId, key, val)}
+                />
+              );
+            })()}
 
             {/* Edge insert popover — opened when clicking a midpoint + button */}
             {edgeInsert && (
