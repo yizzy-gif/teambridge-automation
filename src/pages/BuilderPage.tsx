@@ -2697,19 +2697,11 @@ function NodeAiFloatingInput({ step, left, top, onSelectSuggestion, onUpdateCond
       style={{ left, top }}
       onMouseDown={e => e.stopPropagation()}
     >
-      {aiLoading ? (
-        <div className={styles.nodeAiLoaderState}>
-          <AILoader variant="gradient-fill" size="sm" />
-          <span className={styles.nodeAiLoaderLabel}>AI is thinking…</span>
-        </div>
-      ) : (
-        <div className={styles.nodeAiCard}>
-          <div className={styles.nodeAiIconRow}>
-            <TeambridgeAIIcon size={14} className={styles.nodeAiIcon} />
-          </div>
+      <div className={styles.popoverAiWrap}>
+        <div className={styles.popoverAiCard}>
           <textarea
-            className={styles.nodeAiTextarea}
-            placeholder="Ask AI about this node…"
+            className={styles.aiComposerTextarea}
+            placeholder="Tell AI what you want to build..."
             rows={1}
             value={aiPrompt}
             onChange={e => {
@@ -2720,22 +2712,24 @@ function NodeAiFloatingInput({ step, left, top, onSelectSuggestion, onUpdateCond
             }}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
           />
-          <div className={styles.nodeAiActions}>
+          <div className={styles.popoverAiActionBar}>
             <button type="button" className={styles.aiComposerMicBtn} aria-label="Voice input">
-              <Microphone02Icon size={13} />
+              <Microphone02Icon size={14} />
             </button>
             <button
               className={styles.aiComposerSendBtn}
               onClick={handleSend}
-              disabled={!aiPrompt.trim()}
+              disabled={!aiPrompt.trim() || aiLoading}
               aria-label="Send to AI"
             >
-              <ArrowNarrowUpIcon size={12} />
+              {aiLoading
+                ? <AILoader variant="gradient-fill" size={16} />
+                : <ArrowNarrowUpIcon size={12} />}
             </button>
           </div>
         </div>
-      )}
-      {aiResult && <p className={styles.nodeAiResult}>{aiResult}</p>}
+        {aiResult && <p className={styles.popoverAiResult}>{aiResult}</p>}
+      </div>
     </div>
   );
 }
