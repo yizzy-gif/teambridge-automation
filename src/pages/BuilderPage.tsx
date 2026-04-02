@@ -30,6 +30,7 @@ import { Announcement02Icon } from '@alloy/components/icons/Announcement02Icon';
 import { Microphone02Icon } from '@alloy/components/icons/Microphone02Icon';
 import { ArrowNarrowUpIcon } from '@alloy/components/icons/ArrowNarrowUpIcon';
 import { TeambridgeAIIcon } from '@alloy/components/icons/TeambridgeAIIcon';
+import { SettingsGearIcon } from '@alloy/components/icons/SettingsGearIcon';
 import { ScrollArea } from '@alloy/components/ScrollArea';
 import { Divider } from '@alloy/components/Divider';
 import { AILoader } from '@alloy/components/ai/AILoader';
@@ -38,20 +39,28 @@ import { callFlowAgent } from '@/features/ai/client';
 import { GLOBAL_TOOLS, STEP_TOOLS } from '@/features/ai/tools';
 import { buildGlobalSystemPrompt, buildStepSystemPrompt } from '@/features/ai/systemPrompts';
 
+// ─── Workflow settings persistence ─────────────────────────────────────────────
+
+const LS_KEY = 'workflow_settings';
+
+type WorkflowSettingsEntry = { name: string; description: string; tags: string[] };
+type WorkflowSettingsStore = Record<string, WorkflowSettingsEntry>;
+
+function loadWorkflowSettings(): WorkflowSettingsStore {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    return raw ? (JSON.parse(raw) as WorkflowSettingsStore) : {};
+  } catch { return {}; }
+}
+
+function saveWorkflowSettings(store: WorkflowSettingsStore): void {
+  try { localStorage.setItem(LS_KEY, JSON.stringify(store)); } catch { /* quota/private */ }
+}
+
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
 type StepType = 'trigger' | 'condition' | 'action' | 'ai';
 type AutomationStatus = 'draft' | 'active' | 'inactive' | 'archived';
-
-type BooleanBranchType = 'if' | 'else_if' | 'else';
-
-interface BooleanBranch {
-  id: string;
-  type: BooleanBranchType;
-  conditionOperator?: string;
-  conditionValues?: string[];
-  actionNodeId?: string;
-}
 
 interface GraphNode {
   id: string;
@@ -63,8 +72,8 @@ interface GraphNode {
   conditionOperator?: string;
   conditionValues?: string[];
   configValues?: Record<string, string>;
-  booleanMode?: boolean;
-  booleanBranches?: BooleanBranch[];
+  /** Links sibling condition nodes that share the same condition config. */
+  branchGroupId?: string;
 }
 
 interface GraphEdge {
@@ -72,7 +81,6 @@ interface GraphEdge {
   from: string;
   to: string;
   branch?: 'yes' | 'no';
-  booleanBranchId?: string;
 }
 
 // Alias kept so FlowNode component compiles without changes
@@ -200,13 +208,6 @@ function TrashIcon() {
   );
 }
 
-function XSmallIcon() {
-  return (
-    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden>
-      <path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
-    </svg>
-  );
-}
 
 function LoadingDots() {
   return (
@@ -1055,10 +1056,8 @@ function canAddNodeAfter(
   // Can't place a condition after an action or ai step
   if ((parent.type === 'action' || parent.type === 'ai') && type === 'condition') return false;
   const outCount = edges.filter(e => e.from === parentId).length;
-  // Condition nodes can have at most 2 branches (yes / no)
-  if (parent.type === 'condition' && outCount >= 2) return false;
-  // All other node types support exactly one outgoing edge
-  if (parent.type !== 'condition' && outCount >= 1) return false;
+  // All node types support exactly one outgoing edge
+  if (outCount >= 1) return false;
   return true;
 }
 
@@ -1153,6 +1152,40 @@ function computeLayout(
     place(root.id, rootCentreX + w / 2);
     rootCentreX += w + H_SPACING; // extra gap between independent workflows
   }
+
+  // ── Post-process: fix sibling branch groups ──────────────────────────────────
+  // Sibling nodes share a branchGroupId but have no edges between them, so the
+  // base layout places them at different depths. Correct this by centering all
+  // group members side-by-side at the same Y as the deepest (anchor) member.
+  const SIBLING_PITCH = NODE_W + 48;
+  const branchGroups = new Map<string, GraphNode[]>();
+  nodes.forEach(n => {
+    if (n.branchGroupId) {
+      const g = branchGroups.get(n.branchGroupId) ?? [];
+      g.push(n);
+      branchGroups.set(n.branchGroupId, g);
+    }
+  });
+  branchGroups.forEach(siblings => {
+    if (siblings.length < 2) return;
+    // Anchor = deepest member (the one connected into the main graph)
+    const anchorNode = siblings.reduce((best, n) =>
+      (depth.get(n.id) ?? 0) > (depth.get(best.id) ?? 0) ? n : best,
+      siblings[0]
+    );
+    const anchorPos = positions.get(anchorNode.id);
+    if (!anchorPos) return;
+    // Sort siblings by their order in the nodes array (creation order)
+    const sorted = [...siblings].sort(
+      (a, b) => nodes.findIndex(n => n.id === a.id) - nodes.findIndex(n => n.id === b.id)
+    );
+    const totalWidth = (sorted.length - 1) * SIBLING_PITCH;
+    const anchorCentreX = anchorPos.x + NODE_W / 2;
+    const startX = anchorCentreX - totalWidth / 2 - NODE_W / 2;
+    sorted.forEach((n, i) => {
+      positions.set(n.id, { x: startX + i * SIBLING_PITCH, y: anchorPos.y });
+    });
+  });
 
   return positions;
 }
@@ -1459,17 +1492,21 @@ function PopoverSelect({
 
 interface NodePopoverProps {
   step: FlowStep;
+  /** All nodes in the same branch group (including this node), sorted left→right. */
+  groupSiblings?: FlowStep[];
   onSelectSuggestion: (value: string) => void;
   onUpdateConditionConfig: (op: string, vals: string[]) => void;
+  /** Update a specific branch node's values (does not sync across group). */
+  onUpdateBranchValues?: (nodeId: string, vals: string[]) => void;
+  /** Update a single branch node's operator+values independently (no group sync). */
+  onUpdateBranchConfig?: (nodeId: string, op: string, vals: string[]) => void;
   onUpdateConfigField: (key: string, value: string) => void;
   onClose: () => void;
-  onAddBooleanMode?: () => void;
-  onUpdateBooleanBranch?: (branchId: string, updates: Partial<BooleanBranch>) => void;
-  onAddElseIf?: () => void;
-  onRemoveBooleanBranch?: (branchId: string) => void;
+  onAddBranchSibling?: () => void;
+  onDeleteBranch?: (nodeId: string) => void;
 }
 
-function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpdateConfigField, onClose, onAddBooleanMode, onUpdateBooleanBranch, onAddElseIf, onRemoveBooleanBranch }: NodePopoverProps) {
+function NodePopover({ step, groupSiblings, onSelectSuggestion, onUpdateConditionConfig, onUpdateBranchValues, onUpdateBranchConfig, onUpdateConfigField, onClose, onAddBranchSibling, onDeleteBranch }: NodePopoverProps) {
   const cfg = STEP_CONFIG[step.type];
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
@@ -1666,211 +1703,198 @@ function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpda
             {/* ── Condition config fields ───────────────────────────────── */}
             {step.type === 'condition' && (condDef ? (
               <div className={styles.popoverFields}>
-                {!step.booleanMode ? (
-                  <>
-                    {/* Operator selector */}
-                    <PopoverSelect
-                      value={condOp}
-                      onChange={op => onUpdateConditionConfig(op, condVals)}
-                      options={condDef.operators.map(op => ({ value: op, label: OPERATOR_LABELS[op] ?? op }))}
-                    />
-
-                    {!isNoValueOp && isInOp && condDef.valueOptions && (
-                      <div className={styles.popoverTags}>
-                        {condDef.valueOptions.map(opt => {
-                          const selected = condVals.includes(opt);
-                          return (
-                            <button
-                              key={opt}
-                              className={clsx(styles.popoverTag, selected && styles.popoverTagSelected)}
-                              onClick={() => onUpdateConditionConfig(condOp, selected ? condVals.filter(v => v !== opt) : [...condVals, opt])}
-                              type="button"
-                            >
-                              {opt}
-                            </button>
-                          );
-                        })}
+                {/* ── When in a branch group: each branch has its own operator + value ── */}
+                {step.branchGroupId && groupSiblings && groupSiblings.length > 0 ? (
+                    <>
+                      <div className={styles.branchListHeader}>
+                        <span className={styles.branchListTitle}>Branches</span>
                       </div>
-                    )}
-
-                    {!isNoValueOp && isInOp && !condDef.valueOptions && (
-                      <ConditionTagInput values={condVals} onChange={next => onUpdateConditionConfig(condOp, next)} />
-                    )}
-
-                    {!isNoValueOp && isWithinNext && (
-                      <div className={styles.conditionWithinNext}>
-                        <NumberField
-                          size="md"
-                          min={1}
-                          placeholder="30"
-                          value={condVals[0] ?? ''}
-                          onChange={e => onUpdateConditionConfig(condOp, [e.target.value, condVals[1] ?? 'days'])}
-                          aria-label="Time amount"
-                          className={styles.conditionWithinNextNum}
-                        />
-                        <PopoverSelect
-                          value={condVals[1] ?? 'days'}
-                          onChange={unit => onUpdateConditionConfig(condOp, [condVals[0] ?? '', unit])}
-                          className={styles.conditionWithinNextUnit}
-                          options={[
-                            { value: 'hours', label: 'hours' },
-                            { value: 'days',  label: 'days'  },
-                            { value: 'weeks', label: 'weeks' },
-                          ]}
-                        />
-                      </div>
-                    )}
-
-                    {!isNoValueOp && !isInOp && !isWithinNext && condDef.valueOptions && (
-                      <PopoverSelect
-                        value={condVals[0] ?? ''}
-                        onChange={v => onUpdateConditionConfig(condOp, [v])}
-                        placeholder="Select value…"
-                        options={[
-                          { value: '', label: 'Select value…' },
-                          ...condDef.valueOptions.map(opt => ({ value: opt, label: opt })),
-                        ]}
-                      />
-                    )}
-
-                    {!isNoValueOp && !isInOp && !isWithinNext && !condDef.valueOptions && (
-                      <TextField
-                        size="md"
-                        placeholder="Enter value…"
-                        value={condVals[0] ?? ''}
-                        onChange={e => onUpdateConditionConfig(condOp, [e.target.value])}
-                        aria-label="Condition value"
-                      />
-                    )}
-
-                    {/* ── Add boolean button ── */}
-                    <button
-                      type="button"
-                      className={styles.addBooleanBtn}
-                      onClick={onAddBooleanMode}
-                    >
-                      <PlusIcon size={10} />
-                      +Branch
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    {/* ── Boolean branch list ── */}
-                    <div className={styles.booleanSection}>
-                      {(step.booleanBranches ?? []).map((branch, idx) => {
-                        const isFirst       = idx === 0;
-                        const isLast        = idx === (step.booleanBranches?.length ?? 0) - 1;
-                        const isElse        = branch.type === 'else';
-                        const bOp           = branch.conditionOperator ?? condDef.operators[0];
-                        const bVals         = branch.conditionValues ?? [];
-                        const bNoVal        = ['is_empty', 'is_not_empty', 'missing_required'].includes(bOp);
-                        const bIsIn         = bOp === 'in';
-                        const bIsWithin     = bOp === 'within_next';
+                      {groupSiblings.map((sibling, idx) => {
+                        const bOp      = sibling.conditionOperator ?? condDef.operators[0];
+                        const bVals    = sibling.conditionValues ?? [];
+                        const isCurrent  = sibling.id === step.id;
+                        const canDelete  = groupSiblings.length >= 2;
+                        const bNoValue   = ['is_empty', 'is_not_empty', 'missing_required'].includes(bOp);
+                        const bIsIn      = bOp === 'in';
+                        const bWithin    = bOp === 'within_next';
+                        const setBConfig = (op: string, vals: string[]) =>
+                          onUpdateBranchConfig?.(sibling.id, op, vals);
                         return (
-                          <div key={branch.id} className={styles.booleanBranch}>
-                            {/* Branch header */}
-                            <div className={styles.booleanBranchHeader}>
-                              <span className={styles.booleanBranchTypeLabel}>
-                                {branch.type === 'if' ? 'if' : branch.type === 'else_if' ? 'else if' : 'else'}
-                              </span>
-                              <button
-                                type="button"
-                                className={styles.booleanBranchRemoveBtn}
-                                disabled={isFirst || isLast}
-                                onClick={() => onRemoveBooleanBranch?.(branch.id)}
-                                aria-label="Remove branch"
-                              >
-                                <XSmallIcon />
-                              </button>
+                          <div key={sibling.id} className={clsx(styles.branchRow, isCurrent && styles.branchRowCurrent)}>
+                            <div className={styles.branchRowHead}>
+                              <span className={styles.branchRowLabel}>Branch {idx + 1}</span>
+                              {canDelete && (
+                                <button
+                                  type="button"
+                                  className={styles.branchRowDeleteBtn}
+                                  onClick={() => onDeleteBranch?.(sibling.id)}
+                                  aria-label={`Remove branch ${idx + 1}`}
+                                >×</button>
+                              )}
                             </div>
-                            <div className={styles.booleanBranchDivider} />
-                            {/* Branch body */}
-                            {isElse ? (
-                              <p className={styles.booleanBranchElseLabel}>All other cases</p>
-                            ) : (
-                              <div className={styles.booleanBranchBody}>
-                                <PopoverSelect
-                                  value={bOp}
-                                  onChange={op => onUpdateBooleanBranch?.(branch.id, { conditionOperator: op, conditionValues: [] })}
-                                  options={condDef.operators.map(op => ({ value: op, label: OPERATOR_LABELS[op] ?? op }))}
-                                />
-                                {!bNoVal && bIsIn && condDef.valueOptions && (
-                                  <div className={styles.popoverTags}>
-                                    {condDef.valueOptions.map(opt => {
-                                      const sel = bVals.includes(opt);
-                                      return (
-                                        <button key={opt} type="button"
-                                          className={clsx(styles.popoverTag, sel && styles.popoverTagSelected)}
-                                          onClick={() => onUpdateBooleanBranch?.(branch.id, {
-                                            conditionValues: sel ? bVals.filter(v => v !== opt) : [...bVals, opt],
-                                          })}
-                                        >{opt}</button>
-                                      );
-                                    })}
-                                  </div>
-                                )}
-                                {!bNoVal && bIsIn && !condDef.valueOptions && (
-                                  <ConditionTagInput
-                                    values={bVals}
-                                    onChange={next => onUpdateBooleanBranch?.(branch.id, { conditionValues: next })}
-                                  />
-                                )}
-                                {!bNoVal && bIsWithin && (
-                                  <div className={styles.conditionWithinNext}>
-                                    <NumberField
-                                      size="md" min={1} placeholder="30"
-                                      value={bVals[0] ?? ''}
-                                      onChange={e => onUpdateBooleanBranch?.(branch.id, { conditionValues: [e.target.value, bVals[1] ?? 'days'] })}
-                                      aria-label="Time amount"
-                                      className={styles.conditionWithinNextNum}
-                                    />
-                                    <PopoverSelect
-                                      value={bVals[1] ?? 'days'}
-                                      onChange={unit => onUpdateBooleanBranch?.(branch.id, { conditionValues: [bVals[0] ?? '', unit] })}
-                                      className={styles.conditionWithinNextUnit}
-                                      options={[
-                                        { value: 'hours', label: 'hours' },
-                                        { value: 'days',  label: 'days'  },
-                                        { value: 'weeks', label: 'weeks' },
-                                      ]}
-                                    />
-                                  </div>
-                                )}
-                                {!bNoVal && !bIsIn && !bIsWithin && condDef.valueOptions && (
-                                  <PopoverSelect
-                                    value={bVals[0] ?? ''}
-                                    onChange={v => onUpdateBooleanBranch?.(branch.id, { conditionValues: [v] })}
-                                    placeholder="Select value…"
-                                    options={[
-                                      { value: '', label: 'Select value…' },
-                                      ...condDef.valueOptions.map(opt => ({ value: opt, label: opt })),
-                                    ]}
-                                  />
-                                )}
-                                {!bNoVal && !bIsIn && !bIsWithin && !condDef.valueOptions && (
-                                  <TextField
-                                    size="md"
-                                    placeholder="Enter value…"
-                                    value={bVals[0] ?? ''}
-                                    onChange={e => onUpdateBooleanBranch?.(branch.id, { conditionValues: [e.target.value] })}
-                                    aria-label="Condition value"
-                                  />
-                                )}
+                            {/* Per-branch operator selector */}
+                            <PopoverSelect
+                              value={bOp}
+                              onChange={op => setBConfig(op, [])}
+                              options={condDef.operators.map(op => ({ value: op, label: OPERATOR_LABELS[op] ?? op }))}
+                            />
+                            {/* Per-branch value inputs */}
+                            {!bNoValue && bIsIn && condDef.valueOptions && (
+                              <div className={styles.popoverTags}>
+                                {condDef.valueOptions.map(opt => {
+                                  const sel = bVals.includes(opt);
+                                  return (
+                                    <button key={opt} type="button"
+                                      className={clsx(styles.popoverTag, sel && styles.popoverTagSelected)}
+                                      onClick={() => setBConfig(bOp, sel ? bVals.filter(v => v !== opt) : [...bVals, opt])}
+                                    >{opt}</button>
+                                  );
+                                })}
                               </div>
+                            )}
+                            {!bNoValue && bIsIn && !condDef.valueOptions && (
+                              <ConditionTagInput values={bVals} onChange={vals => setBConfig(bOp, vals)} />
+                            )}
+                            {!bNoValue && bWithin && (
+                              <div className={styles.conditionWithinNext}>
+                                <NumberField
+                                  size="md" min={1} placeholder="30"
+                                  value={bVals[0] ?? ''}
+                                  onChange={e => setBConfig(bOp, [e.target.value, bVals[1] ?? 'days'])}
+                                  aria-label="Time amount"
+                                  className={styles.conditionWithinNextNum}
+                                />
+                                <PopoverSelect
+                                  value={bVals[1] ?? 'days'}
+                                  onChange={unit => setBConfig(bOp, [bVals[0] ?? '', unit])}
+                                  className={styles.conditionWithinNextUnit}
+                                  options={[
+                                    { value: 'hours', label: 'hours' },
+                                    { value: 'days',  label: 'days'  },
+                                    { value: 'weeks', label: 'weeks' },
+                                  ]}
+                                />
+                              </div>
+                            )}
+                            {!bNoValue && !bIsIn && !bWithin && condDef.valueOptions && (
+                              <PopoverSelect
+                                value={bVals[0] ?? ''}
+                                onChange={v => setBConfig(bOp, [v])}
+                                placeholder="Select value…"
+                                options={[
+                                  { value: '', label: 'Select value…' },
+                                  ...condDef.valueOptions.map(opt => ({ value: opt, label: opt })),
+                                ]}
+                              />
+                            )}
+                            {!bNoValue && !bIsIn && !bWithin && !condDef.valueOptions && (
+                              <TextField
+                                size="md"
+                                placeholder="Enter value…"
+                                value={bVals[0] ?? ''}
+                                onChange={e => setBConfig(bOp, [e.target.value])}
+                                aria-label={`Branch ${idx + 1} value`}
+                              />
                             )}
                           </div>
                         );
                       })}
-                    </div>
-                    {/* Add else if */}
-                    {(step.booleanBranches?.length ?? 0) < 7 && (
-                      <button type="button" className={styles.booleanAddBtn} onClick={onAddElseIf}>
+                      <button
+                        type="button"
+                        className={styles.addBranchBtn}
+                        onClick={onAddBranchSibling}
+                      >
                         <PlusIcon size={10} />
-                        Add else if
+                        Branch
                       </button>
-                    )}
-                  </>
-                )}
+                    </>
+                  ) : (
+                    <>
+                      {/* ── Single-node mode: shared operator selector ── */}
+                      <PopoverSelect
+                        value={condOp}
+                        onChange={op => onUpdateConditionConfig(op, [])}
+                        options={condDef.operators.map(op => ({ value: op, label: OPERATOR_LABELS[op] ?? op }))}
+                      />
+                      {/* ── Single-node value inputs ── */}
+                      {!isNoValueOp && isInOp && condDef.valueOptions && (
+                        <div className={styles.popoverTags}>
+                          {condDef.valueOptions.map(opt => {
+                            const selected = condVals.includes(opt);
+                            return (
+                              <button
+                                key={opt}
+                                className={clsx(styles.popoverTag, selected && styles.popoverTagSelected)}
+                                onClick={() => onUpdateConditionConfig(condOp, selected ? condVals.filter(v => v !== opt) : [...condVals, opt])}
+                                type="button"
+                              >
+                                {opt}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {!isNoValueOp && isInOp && !condDef.valueOptions && (
+                        <ConditionTagInput values={condVals} onChange={next => onUpdateConditionConfig(condOp, next)} />
+                      )}
+
+                      {!isNoValueOp && isWithinNext && (
+                        <div className={styles.conditionWithinNext}>
+                          <NumberField
+                            size="md"
+                            min={1}
+                            placeholder="30"
+                            value={condVals[0] ?? ''}
+                            onChange={e => onUpdateConditionConfig(condOp, [e.target.value, condVals[1] ?? 'days'])}
+                            aria-label="Time amount"
+                            className={styles.conditionWithinNextNum}
+                          />
+                          <PopoverSelect
+                            value={condVals[1] ?? 'days'}
+                            onChange={unit => onUpdateConditionConfig(condOp, [condVals[0] ?? '', unit])}
+                            className={styles.conditionWithinNextUnit}
+                            options={[
+                              { value: 'hours', label: 'hours' },
+                              { value: 'days',  label: 'days'  },
+                              { value: 'weeks', label: 'weeks' },
+                            ]}
+                          />
+                        </div>
+                      )}
+
+                      {!isNoValueOp && !isInOp && !isWithinNext && condDef.valueOptions && (
+                        <PopoverSelect
+                          value={condVals[0] ?? ''}
+                          onChange={v => onUpdateConditionConfig(condOp, [v])}
+                          placeholder="Select value…"
+                          options={[
+                            { value: '', label: 'Select value…' },
+                            ...condDef.valueOptions.map(opt => ({ value: opt, label: opt })),
+                          ]}
+                        />
+                      )}
+
+                      {!isNoValueOp && !isInOp && !isWithinNext && !condDef.valueOptions && (
+                        <TextField
+                          size="md"
+                          placeholder="Enter value…"
+                          value={condVals[0] ?? ''}
+                          onChange={e => onUpdateConditionConfig(condOp, [e.target.value])}
+                          aria-label="Condition value"
+                        />
+                      )}
+
+                      <button
+                        type="button"
+                        className={styles.addBranchBtn}
+                        onClick={onAddBranchSibling}
+                      >
+                        <PlusIcon size={10} />
+                        Branch
+                      </button>
+                    </>
+                  )}
               </div>
             ) : (
               <p className={styles.popoverConfigPlaceholder}>
@@ -2017,9 +2041,10 @@ interface TopBarProps {
   name: string;
   onNameChange: (v: string) => void;
   status: AutomationStatus;
+  onSettingsOpen: () => void;
 }
 
-function TopBar({ onBack, onTest, onPublish, saveState, name, onNameChange, status }: TopBarProps) {
+function TopBar({ onBack, onTest, onPublish, saveState, name, onNameChange, status, onSettingsOpen }: TopBarProps) {
   const nameRef = useRef<HTMLSpanElement>(null);
   const focused = useRef(false);
 
@@ -2090,10 +2115,153 @@ function TopBar({ onBack, onTest, onPublish, saveState, name, onNameChange, stat
             {saveState === 'saving' ? 'Saving…' : 'All changes saved'}
           </span>
         )}
-        <Button variant="secondary" size="md" onClick={onTest}>Run test</Button>
+        <Button variant="ghost" size="md" iconOnly onClick={onSettingsOpen} aria-label="Workflow settings" className={styles.settingsGearBtn}>
+          <SettingsGearIcon />
+        </Button>
+        <Button variant="tertiary" size="md" onClick={onTest}>Run test</Button>
         <Button variant="primary"   size="md" onClick={onPublish}>Publish</Button>
       </div>
     </header>
+  );
+}
+
+
+// ─── DialogTagInput ──────────────────────────────────────────────────────────────
+
+function DialogTagInput({ values, onChange }: { values: string[]; onChange: (v: string[]) => void }) {
+  const [input, setInput] = useState('');
+  return (
+    <div className={styles.settingsTagInput} onClick={e => (e.currentTarget.querySelector('input') as HTMLInputElement | null)?.focus()}>
+      {values.map((v, i) => (
+        <Tag
+          key={i}
+          variant="subtle"
+          color="neutral"
+          size="sm"
+          dismissible
+          onDismiss={() => onChange(values.filter((_, j) => j !== i))}
+        >
+          {v}
+        </Tag>
+      ))}
+      <input
+        className={styles.settingsTagInputField}
+        value={input}
+        onChange={e => setInput(e.target.value)}
+        placeholder={values.length === 0 ? 'Type and press Enter…' : 'Add another…'}
+        onKeyDown={e => {
+          if (e.key === 'Enter' && input.trim()) {
+            e.preventDefault();
+            onChange([...values, input.trim()]);
+            setInput('');
+          }
+          if (e.key === 'Backspace' && !input && values.length > 0) {
+            onChange(values.slice(0, -1));
+          }
+        }}
+      />
+    </div>
+  );
+}
+
+
+// ─── WorkflowSettingsDialog ──────────────────────────────────────────────────────
+
+interface WorkflowSettingsDialogProps {
+  open: boolean;
+  name: string;
+  description: string;
+  tags: string[];
+  onClose: () => void;
+  onSave: (name: string, description: string, tags: string[]) => void;
+}
+
+function WorkflowSettingsDialog({ open, name, description, tags, onClose, onSave }: WorkflowSettingsDialogProps) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const [draftName, setDraftName]               = useState(name);
+  const [draftDescription, setDraftDescription] = useState(description);
+  const [draftTags, setDraftTags]               = useState<string[]>(tags);
+
+  // Sync draft state whenever dialog opens
+  useEffect(() => {
+    if (open) {
+      setDraftName(name);
+      setDraftDescription(description);
+      setDraftTags(tags);
+    }
+  }, [open, name, description, tags]);
+
+  // Escape → close without saving
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [open, onClose]);
+
+  // Outside mousedown → close without saving
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (!dialogRef.current?.contains(e.target as Node)) onClose();
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  return createPortal(
+    <div className={styles.settingsOverlay} role="dialog" aria-modal="true" aria-label="Workflow settings">
+      <div ref={dialogRef} className={styles.settingsDialog} onMouseDown={e => e.stopPropagation()}>
+        {/* Header */}
+        <div className={styles.settingsHeader}>
+          <span className={styles.settingsTitle}>Workflow details</span>
+          <button className={styles.settingsCloseBtn} onClick={onClose} aria-label="Close settings" type="button">
+            <XIcon size={16} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className={styles.settingsBody}>
+          <div className={styles.settingsFieldGroup}>
+            <label className={styles.settingsLabel} htmlFor="settings-name">Name</label>
+            <TextField
+              id="settings-name"
+              size="md"
+              value={draftName}
+              onChange={e => setDraftName(e.target.value)}
+              placeholder="Workflow name"
+            />
+          </div>
+
+          <div className={styles.settingsFieldGroup}>
+            <label className={styles.settingsLabel} htmlFor="settings-description">Description</label>
+            <TextArea
+              id="settings-description"
+              size="md"
+              value={draftDescription}
+              onChange={e => setDraftDescription(e.target.value)}
+              placeholder="Describe what this workflow does…"
+            />
+          </div>
+
+          <div className={styles.settingsFieldGroup}>
+            <label className={styles.settingsLabel}>Tags</label>
+            <DialogTagInput values={draftTags} onChange={setDraftTags} />
+            <p className={styles.settingsHint}>Used for filtering and searching on the automations list.</p>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className={styles.settingsFooter}>
+          <Button variant="primary" size="md" onClick={() => onSave(draftName, draftDescription, draftTags)}>
+            Save
+          </Button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -2302,10 +2470,11 @@ interface FlowNodeProps {
   editNodeMode?: boolean;
   /** Whether this node is currently edit-selected (shows AI purple ring) */
   isEditSelected?: boolean;
-  onAddBooleanMode?: () => void;
-  onUpdateBooleanBranch?: (branchId: string, updates: Partial<BooleanBranch>) => void;
-  onAddElseIf?: () => void;
-  onRemoveBooleanBranch?: (branchId: string) => void;
+  onAddBranchSibling?: () => void;
+  groupSiblings?: FlowStep[];
+  onUpdateBranchValues?: (nodeId: string, vals: string[]) => void;
+  onUpdateBranchConfig?: (nodeId: string, op: string, vals: string[]) => void;
+  onDeleteBranch?: (nodeId: string) => void;
 }
 
 function FlowNode({
@@ -2326,10 +2495,11 @@ function FlowNode({
   onMoveDown,
   editNodeMode = false,
   isEditSelected = false,
-  onAddBooleanMode,
-  onUpdateBooleanBranch,
-  onAddElseIf,
-  onRemoveBooleanBranch,
+  onAddBranchSibling,
+  groupSiblings,
+  onUpdateBranchValues,
+  onUpdateBranchConfig,
+  onDeleteBranch,
 }: FlowNodeProps) {
   const cfg = STEP_CONFIG[step.type];
   const outerRef = useRef<HTMLDivElement>(null);
@@ -2478,10 +2648,11 @@ function FlowNode({
             onUpdateConditionConfig={onUpdateConditionConfig}
             onUpdateConfigField={onUpdateConfigField}
             onClose={() => setPopoverOpen(false)}
-            onAddBooleanMode={onAddBooleanMode}
-            onUpdateBooleanBranch={onUpdateBooleanBranch}
-            onAddElseIf={onAddElseIf}
-            onRemoveBooleanBranch={onRemoveBooleanBranch}
+            onAddBranchSibling={onAddBranchSibling}
+            groupSiblings={groupSiblings}
+            onUpdateBranchValues={onUpdateBranchValues}
+            onUpdateBranchConfig={onUpdateBranchConfig}
+            onDeleteBranch={onDeleteBranch}
           />
         </div>,
         document.body,
@@ -2761,10 +2932,10 @@ interface FlowCanvasProps {
   editNodeMode: boolean;
   editingNodeIds: Set<string>;
   onEditNodeToggle: (id: string, multi: boolean) => void;
-  onAddBooleanMode?: (nodeId: string) => void;
-  onUpdateBooleanBranch?: (nodeId: string, branchId: string, updates: Partial<BooleanBranch>) => void;
-  onAddElseIf?: (nodeId: string) => void;
-  onRemoveBooleanBranch?: (nodeId: string, branchId: string) => void;
+  onAddBranchSibling?: (nodeId: string) => void;
+  onUpdateBranchValues?: (nodeId: string, vals: string[]) => void;
+  onUpdateBranchConfig?: (nodeId: string, op: string, vals: string[]) => void;
+  autoTidyToken?: number;
 }
 
 function FlowCanvas({
@@ -2773,7 +2944,10 @@ function FlowCanvas({
   onDuplicateNode, onDeleteNode, onAddRootTrigger,
   onInsertOnEdge, onPositionChange, onSetAllPositions, onAddEdge, onDeleteEdge, onCreateNodeAt, onCanvasDropAtPos,
   editNodeMode, editingNodeIds, onEditNodeToggle,
-  onAddBooleanMode, onUpdateBooleanBranch, onAddElseIf, onRemoveBooleanBranch,
+  onAddBranchSibling,
+  onUpdateBranchValues,
+  onUpdateBranchConfig,
+  autoTidyToken,
 }: FlowCanvasProps) {
   const canvasRef      = useRef<HTMLDivElement>(null);
   const graphContentRef = useRef<HTMLDivElement>(null);
@@ -2791,7 +2965,12 @@ function FlowCanvas({
   // Refs so mousemove/mouseup callbacks don't go stale
   const isPanning      = useRef(false);
   const panStart       = useRef({ mx: 0, my: 0, px: 0, py: 0 });
-  const nodeDragRef    = useRef<{ id: string; offsetX: number; offsetY: number } | null>(null);
+  const nodeDragRef    = useRef<{
+    id: string;
+    offsetX: number;
+    offsetY: number;
+    groupOffsets?: { id: string; offsetX: number; offsetY: number }[];
+  } | null>(null);
   const pendingEdgeRef         = useRef<PendingEdge | null>(null);
   const draggingOverNodeIdRef  = useRef<string | null>(null);
   const reconnectingEdgeIdRef  = useRef<string | null>(null);
@@ -2898,7 +3077,17 @@ function FlowCanvas({
       const gc = graphContentRef.current.getBoundingClientRect();
       const mx = (e.clientX - gc.left) / zoomRef.current;
       const my = (e.clientY - gc.top)  / zoomRef.current;
-      nodeDragRef.current = { id: nodeId, offsetX: mx - pos.x, offsetY: my - pos.y };
+      // For branch group nodes, store offsets for all siblings so they move together
+      const draggedNode = nodes.find(n => n.id === nodeId);
+      const groupOffsets = draggedNode?.branchGroupId
+        ? nodes
+            .filter(n => n.branchGroupId === draggedNode.branchGroupId && n.id !== nodeId)
+            .map(n => {
+              const p = nodePositions[n.id] ?? { x: 0, y: 0 };
+              return { id: n.id, offsetX: mx - p.x, offsetY: my - p.y };
+            })
+        : undefined;
+      nodeDragRef.current = { id: nodeId, offsetX: mx - pos.x, offsetY: my - pos.y, groupOffsets };
       setDraggingNodeId(nodeId);
       onSelectNode(nodeId);
       return;
@@ -2910,7 +3099,7 @@ function FlowCanvas({
     isPanning.current = true;
     panStart.current  = { mx: e.clientX, my: e.clientY, px: pan.x, py: pan.y };
     (e.currentTarget as HTMLElement).dataset.panning = 'true';
-  }, [pan, onDeselectNode, nodePositions, onSelectNode, editNodeMode, onEditNodeToggle]);
+  }, [pan, onDeselectNode, nodes, nodePositions, onSelectNode, editNodeMode, onEditNodeToggle]);
 
   // ── MouseMove: draw pending edge OR drag node OR pan canvas ──
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
@@ -2946,6 +3135,12 @@ function FlowCanvas({
         mx - nodeDragRef.current.offsetX,
         my - nodeDragRef.current.offsetY,
       );
+      // Move all branch group siblings together
+      if (nodeDragRef.current.groupOffsets) {
+        for (const { id, offsetX, offsetY } of nodeDragRef.current.groupOffsets) {
+          onPositionChange(id, mx - offsetX, my - offsetY);
+        }
+      }
       return;
     }
     if (isPanning.current) {
@@ -3053,11 +3248,49 @@ function FlowCanvas({
     layout.forEach((pos, id) => { next[id] = pos; });
     setIsTidying(true);
     onSetAllPositions(next);
-    setZoom(1);
-    setPan({ x: INIT_PAN_X, y: 0 });
+
+    if (canvasRef.current && layout.size > 0) {
+      const positions = [...layout.values()];
+      const minX = Math.min(...positions.map(p => p.x));
+      const maxX = Math.max(...positions.map(p => p.x + NODE_W));
+      const contentW = maxX - minX;
+      const contentCentreX = (minX + maxX) / 2;
+      const canvasW = canvasRef.current.clientWidth;
+      const PADDING = 48;
+      // Account for overlay panels so we centre within the visible viewport slice
+      const rightPanelEl = document.querySelector('[class*="rightPanel"]');
+      const rightPanelW  = rightPanelEl ? (rightPanelEl as HTMLElement).offsetWidth : 0;
+      const visibleLeft  = LEFT_PANEL_W;
+      const visibleRight = canvasW - rightPanelW;
+      const visibleW     = Math.max(visibleRight - visibleLeft, PADDING * 2 + 1);
+      const visibleCentreX = visibleLeft + visibleW / 2;
+      // Scale zoom down if content is wider than the visible area (with padding)
+      const fitZoom = Math.min(1, (visibleW - PADDING * 2) / contentW);
+      const clampedZoom = Math.max(0.3, fitZoom);
+      setZoom(clampedZoom);
+      // Centre horizontally within the visible strip.
+      // graphContent has left:50% and width:(maxX+H_SPACING), transform-origin:top center.
+      // Screen formula: screen_x = canvasW/2 + pan.x + (layout_x - gcHalfW) * zoom
+      // Solving for pan.x so contentCentreX maps to visibleCentreX:
+      const gcHalfW = (maxX + H_SPACING) / 2;
+      setPan({ x: Math.round(visibleCentreX - canvasW / 2 + (gcHalfW - contentCentreX) * clampedZoom), y: 40 });
+    } else {
+      setZoom(1);
+      setPan({ x: INIT_PAN_X, y: 0 });
+    }
     // Remove the tidying flag after the CSS transition completes
     setTimeout(() => setIsTidying(false), 380);
   };
+
+  // ── Auto-tidy when a branch sibling is added ─────────────────────────────────
+  const prevTidyToken = useRef(autoTidyToken ?? 0);
+  useEffect(() => {
+    if ((autoTidyToken ?? 0) !== prevTidyToken.current) {
+      prevTidyToken.current = autoTidyToken ?? 0;
+      handleTidyUp();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoTidyToken]);
 
   // ── Anchor position helper — reads DOM for pixel-accurate coordinates ──────────
   // (During render, graphContentRef.current holds the DOM from the *previous* commit,
@@ -3139,8 +3372,30 @@ function FlowCanvas({
             >
               {edges.map(edge => {
                 const from = getAnchorCenter(edge.from, 'bottom');
-                const to   = getAnchorCenter(edge.to,   'top');
+                let   to   = getAnchorCenter(edge.to,   'top');
                 if (!from || !to) return null;
+
+                // If the target node belongs to a branch group, redirect the arrow
+                // to the horizontal center of the group AND the vertical center of the cards,
+                // so the arrowhead lands exactly on the dashed sibling connector line.
+                const targetNode = nodes.find(n => n.id === edge.to);
+                if (targetNode?.branchGroupId) {
+                  const groupNodes = nodes.filter(n => n.branchGroupId === targetNode.branchGroupId);
+                  if (groupNodes.length >= 2) {
+                    const sorted = [...groupNodes].sort(
+                      (a, b) => (nodePositions[a.id]?.x ?? 0) - (nodePositions[b.id]?.x ?? 0)
+                    );
+                    const lPos = nodePositions[sorted[0].id];
+                    const rPos = nodePositions[sorted[sorted.length - 1].id];
+                    if (lPos && rPos) {
+                      to = {
+                        x: (lPos.x + rPos.x + NODE_W) / 2,
+                        y: lPos.y + NODE_H / 2,  // vertical center = where the dashed line is drawn
+                      };
+                    }
+                  }
+                }
+
                 const { x: x1, y: y1 } = from;
                 const { x: x2, y: y2 } = to;
                 const dy = Math.abs(y2 - y1) * 0.5;
@@ -3185,6 +3440,39 @@ function FlowCanvas({
                 );
               })}
 
+              {/* Sibling branch connectors — horizontal dashed lines between condition nodes in the same group */}
+              {(() => {
+                const groupMap = new Map<string, GraphNode[]>();
+                nodes.forEach(n => {
+                  if (n.branchGroupId) {
+                    const g = groupMap.get(n.branchGroupId) ?? [];
+                    g.push(n);
+                    groupMap.set(n.branchGroupId, g);
+                  }
+                });
+                return [...groupMap.entries()].map(([groupId, siblings]) => {
+                  if (siblings.length < 2) return null;
+                  const sorted = [...siblings].sort(
+                    (a, b) => (nodePositions[a.id]?.x ?? 0) - (nodePositions[b.id]?.x ?? 0),
+                  );
+                  const leftPos  = nodePositions[sorted[0].id];
+                  const rightPos = nodePositions[sorted[sorted.length - 1].id];
+                  if (!leftPos || !rightPos) return null;
+                  const y  = leftPos.y + NODE_H / 2;
+                  const x1 = leftPos.x + NODE_W / 2;   // horizontal center of leftmost card
+                  const x2 = rightPos.x + NODE_W / 2;  // horizontal center of rightmost card
+                  return (
+                    <line key={`sibling-${groupId}`}
+                      x1={x1} y1={y} x2={x2} y2={y}
+                      stroke="var(--color-slate-border-secondary)"
+                      strokeWidth="1.5"
+                      strokeDasharray="5 4"
+                      style={{ pointerEvents: 'none' }}
+                    />
+                  );
+                });
+              })()}
+
               {/* Pending edge while drawing or reconnecting */}
               {pendingEdge && (() => {
                 const dy = Math.abs(pendingEdge.currentY - pendingEdge.startY) * 0.5;
@@ -3217,40 +3505,6 @@ function FlowCanvas({
               if (!from || !to) return null;
               const midX = (from.x + to.x) / 2;
               const midY = (from.y + to.y) / 2;
-
-              if (edge.booleanBranchId) {
-                // Boolean branch edge — show badge, no insert button
-                const branch = nodes
-                  .find(n => n.booleanBranches?.some(b => b.id === edge.booleanBranchId))
-                  ?.booleanBranches?.find(b => b.id === edge.booleanBranchId);
-                if (!branch) return null;
-                const typeLabel  = branch.type === 'if' ? 'if' : branch.type === 'else_if' ? 'else if' : 'else';
-                const opLabel    = branch.conditionOperator ? (OPERATOR_LABELS[branch.conditionOperator] ?? branch.conditionOperator) : null;
-                const val        = branch.conditionValues?.[0] ?? null;
-                return (
-                  <div
-                    key={`midplus-${edge.id}`}
-                    className={styles.edgeMidpointArea}
-                    style={{ left: midX - 100, top: midY - 14, width: 200, height: 28 }}
-                  >
-                    <span className={styles.booleanEdgeBadge}>
-                      {typeLabel}
-                      {opLabel && (
-                        <>
-                          <span className={styles.booleanEdgeBadgeSep}>·</span>
-                          {opLabel}
-                        </>
-                      )}
-                      {val && (
-                        <>
-                          <span className={styles.booleanEdgeBadgeSep}>·</span>
-                          {val}
-                        </>
-                      )}
-                    </span>
-                  </div>
-                );
-              }
 
               return (
                 <div
@@ -3315,10 +3569,15 @@ function FlowCanvas({
                     onMoveDown={() => {}}
                     editNodeMode={editNodeMode}
                     isEditSelected={editingNodeIds.has(node.id)}
-                    onAddBooleanMode={onAddBooleanMode ? () => onAddBooleanMode(node.id) : undefined}
-                    onUpdateBooleanBranch={onUpdateBooleanBranch ? (branchId, updates) => onUpdateBooleanBranch(node.id, branchId, updates) : undefined}
-                    onAddElseIf={onAddElseIf ? () => onAddElseIf(node.id) : undefined}
-                    onRemoveBooleanBranch={onRemoveBooleanBranch ? (branchId) => onRemoveBooleanBranch(node.id, branchId) : undefined}
+                    onAddBranchSibling={onAddBranchSibling ? () => onAddBranchSibling(node.id) : undefined}
+                    groupSiblings={node.branchGroupId
+                      ? nodes
+                          .filter(n => n.branchGroupId === node.branchGroupId)
+                          .sort((a, b) => (nodePositions[a.id]?.x ?? 0) - (nodePositions[b.id]?.x ?? 0))
+                      : undefined}
+                    onUpdateBranchValues={onUpdateBranchValues}
+                    onUpdateBranchConfig={onUpdateBranchConfig}
+                    onDeleteBranch={nodeId => onDeleteNode(nodeId)}
                   />
 
                   {/* Bottom anchor — all types */}
@@ -3336,12 +3595,32 @@ function FlowCanvas({
               const pos          = nodePositions[selectedId];
               const selectedNode = nodes.find(n => n.id === selectedId);
               if (!pos || !selectedNode) return null;
+
+              // For branch groups: center the AI prompt below the whole group,
+              // not below the individual selected node.
+              let aiLeft = pos.x + NODE_W / 2;
+              let aiTop  = pos.y + selectedNodeH + 8;
+              if (selectedNode.branchGroupId) {
+                const groupNodes = nodes.filter(n => n.branchGroupId === selectedNode.branchGroupId);
+                if (groupNodes.length >= 2) {
+                  const sorted = [...groupNodes].sort(
+                    (a, b) => (nodePositions[a.id]?.x ?? 0) - (nodePositions[b.id]?.x ?? 0)
+                  );
+                  const lPos = nodePositions[sorted[0].id];
+                  const rPos = nodePositions[sorted[sorted.length - 1].id];
+                  if (lPos && rPos) {
+                    aiLeft = (lPos.x + rPos.x + NODE_W) / 2;
+                    aiTop  = lPos.y + selectedNodeH + 8; // all siblings at same Y
+                  }
+                }
+              }
+
               return (
                 <NodeAiFloatingInput
                   key={selectedId}
                   step={selectedNode}
-                  left={pos.x + NODE_W / 2}
-                  top={pos.y + selectedNodeH + 8}
+                  left={aiLeft}
+                  top={aiTop}
                   onSelectSuggestion={v  => onUpdateNode(selectedId, v)}
                   onUpdateConditionConfig={(op, vals) => onUpdateNodeCondition(selectedId, op, vals)}
                   onUpdateConfigField={(key, val)  => onUpdateNodeConfigField(selectedId, key, val)}
@@ -3425,8 +3704,10 @@ export function BuilderPage() {
   const isNew = !id;
 
   const [name, setName] = useState(isNew ? 'Untitled workflow' : 'Candidate Onboarding');
-  const [description] = useState('');
+  const [description, setDescription] = useState('');
+  const [tags, setTags] = useState<string[]>([]);
   const [status] = useState<AutomationStatus>('draft');
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const [nodes, setNodes] = useState<GraphNode[]>(isNew ? INIT_NODES_NEW : INIT_NODES_EDIT);
   const [edges, setEdges] = useState<GraphEdge[]>(isNew ? [] : INIT_EDGES_EDIT);
@@ -3443,6 +3724,7 @@ export function BuilderPage() {
 
   const [selectedId,      setSelectedId]      = useState<string | null>(isNew ? 'trigger-1' : null);
   const [draggingLibNode, setDraggingLibNode] = useState<LibraryItem | null>(null);
+  const [autoTidyToken,   setAutoTidyToken]   = useState(0);
   const [editNodeMode,    setEditNodeMode]    = useState(false);
   const [editingNodeIds,  setEditingNodeIds]  = useState<Set<string>>(new Set());
   const [saveState,       setSaveState]       = useState<SaveState>('idle');
@@ -3467,7 +3749,19 @@ export function BuilderPage() {
       if (saveTimer.current)  clearTimeout(saveTimer.current);
       if (savedTimer.current) clearTimeout(savedTimer.current);
     };
-  }, [name, description, status, nodes, edges]);
+  }, [name, description, status, nodes, edges, tags]);
+
+  // ── Load saved workflow settings from localStorage on mount ──
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!id) return;
+    const entry = loadWorkflowSettings()[id];
+    if (entry) {
+      setName(entry.name);
+      setDescription(entry.description);
+      setTags(entry.tags);
+    }
+  }, []);
 
   const makeNode = (type: StepType): GraphNode => ({
     id: `${type}-${++_nextId}`,
@@ -3522,6 +3816,18 @@ export function BuilderPage() {
     });
   };
 
+  const handleSettingsSave = useCallback((newName: string, newDesc: string, newTags: string[]) => {
+    setName(newName);
+    setDescription(newDesc);
+    setTags(newTags);
+    if (id) {
+      const stored = loadWorkflowSettings();
+      stored[id] = { name: newName, description: newDesc, tags: newTags };
+      saveWorkflowSettings(stored);
+    }
+    setSettingsOpen(false);
+  }, [id]);
+
   /** Toggle a single node in/out of the edit-node selection set. */
   const handleEditNodeToggle = (id: string, multi: boolean) => {
     setEditingNodeIds(prev => {
@@ -3540,27 +3846,53 @@ export function BuilderPage() {
   const addRootTrigger = () => addNodeAfter(null, 'trigger');
 
   const updateNode = (id: string, selectedValue: string) =>
-    setNodes(prev => prev.map(n => {
-      if (n.id !== id) return n;
-      // For condition nodes: if a condition def matches, initialise operator (preserve if already set)
-      const condDef = n.type === 'condition'
-        ? CONDITION_LIBRARY.find(c => c.label === selectedValue) ?? null
-        : null;
-      return {
-        ...n,
-        selectedValue,
-        configured: true,
-        conditionOperator: condDef
-          ? (n.conditionOperator ?? condDef.operators[0])
-          : n.conditionOperator,
-        conditionValues: condDef
-          ? (n.conditionValues ?? [])
-          : n.conditionValues,
-      };
-    }));
+    setNodes(prev => {
+      const target = prev.find(n => n.id === id);
+      const groupId = target?.branchGroupId;
+      return prev.map(n => {
+        // Sync selectedValue / condition init to all sibling nodes in the same branch group
+        if (n.id !== id && !(groupId && n.branchGroupId === groupId)) return n;
+        const condDef = n.type === 'condition'
+          ? CONDITION_LIBRARY.find(c => c.label === selectedValue) ?? null
+          : null;
+        return {
+          ...n,
+          selectedValue,
+          configured: true,
+          conditionOperator: condDef
+            ? (n.conditionOperator ?? condDef.operators[0])
+            : n.conditionOperator,
+          conditionValues: condDef
+            ? (n.conditionValues ?? [])
+            : n.conditionValues,
+        };
+      });
+    });
 
   const updateConditionConfig = (id: string, op: string, vals: string[]) =>
-    setNodes(prev => prev.map(n => n.id === id ? { ...n, conditionOperator: op, conditionValues: vals } : n));
+    setNodes(prev => {
+      const target = prev.find(n => n.id === id);
+      const groupId = target?.branchGroupId;
+      const prevOp  = target?.conditionOperator;
+      return prev.map(n => {
+        if (n.id === id) return { ...n, conditionOperator: op, conditionValues: vals };
+        if (groupId && n.branchGroupId === groupId) {
+          // Sync operator; reset sibling vals only when op actually changes
+          return { ...n, conditionOperator: op, conditionValues: op !== prevOp ? [] : n.conditionValues };
+        }
+        return n;
+      });
+    });
+
+  /** Update a single branch node's conditionValues without touching any sibling. */
+  const updateBranchValues = (nodeId: string, vals: string[]) =>
+    setNodes(prev => prev.map(n => n.id === nodeId ? { ...n, conditionValues: vals } : n));
+
+  /** Update a single branch node's operator+values without syncing across the group. */
+  const updateBranchConfig = (nodeId: string, op: string, vals: string[]) =>
+    setNodes(prev => prev.map(n =>
+      n.id === nodeId ? { ...n, conditionOperator: op, conditionValues: vals } : n
+    ));
 
   const updateConfigField = (id: string, key: string, value: string) =>
     setNodes(prev => prev.map(n => n.id !== id ? n : {
@@ -3568,141 +3900,63 @@ export function BuilderPage() {
       configValues: { ...(n.configValues ?? {}), [key]: value },
     }));
 
-  // ── Boolean branch handlers ─────────────────────────────────────────────────
+  // ── Branch sibling handler ──────────────────────────────────────────────────
 
-  const addBooleanMode = (nodeId: string) => {
+  const addBranchSibling = (nodeId: string) => {
     const condNode = nodes.find(n => n.id === nodeId);
     if (!condNode) return;
-    const parentPos = nodePositions[nodeId] ?? { x: 0, y: 0 };
 
-    const ifBranchId   = `branch-${++_nextId}`;
-    const elseBranchId = `branch-${++_nextId}`;
-    const ifActionNode   = makeNode('action');
-    const elseActionNode = makeNode('action');
+    // Determine or create the group ID
+    const existingGroupId = condNode.branchGroupId;
+    const groupId = existingGroupId ?? `group-${++_nextId}`;
 
-    const pitch = NODE_W * 1.3;
-    const parentCenterX = parentPos.x + NODE_W / 2;
-    const baseY = parentPos.y + V_SPACING;
-    const leftmostX = parentCenterX - pitch / 2 - NODE_W / 2;
+    // Build the new sibling, copying condition name + operator but NOT values
+    const sibling = makeNode('condition');
+    sibling.label             = condNode.label;
+    sibling.configured        = condNode.configured;
+    sibling.selectedValue     = condNode.selectedValue;
+    sibling.conditionOperator = condNode.conditionOperator;
+    sibling.conditionValues   = [];
 
-    const ifBranch: BooleanBranch = {
-      id: ifBranchId,
-      type: 'if',
-      conditionOperator: condNode.conditionOperator,
-      conditionValues: condNode.conditionValues ?? [],
-      actionNodeId: ifActionNode.id,
-    };
-    const elseBranch: BooleanBranch = {
-      id: elseBranchId,
-      type: 'else',
-      actionNodeId: elseActionNode.id,
-    };
+    // Find rightmost X among all group members (or the originating node)
+    const SIBLING_PITCH = NODE_W + 48; // tight side-by-side spacing (48px gap between cards)
+    const groupMemberIds = existingGroupId
+      ? nodes.filter(n => n.branchGroupId === existingGroupId).map(n => n.id)
+      : [nodeId];
+    const rightmostX = Math.max(...groupMemberIds.map(id => (nodePositions[id] ?? { x: 0 }).x));
+    const origPos = nodePositions[nodeId] ?? { x: 0, y: 0 };
+    const origY = origPos.y;
 
     setNodes(prev => [
-      ...prev.map(n => n.id !== nodeId ? n : {
-        ...n,
-        booleanMode: true,
-        booleanBranches: [ifBranch, elseBranch],
-        conditionOperator: undefined,
-        conditionValues: undefined,
+      ...prev.map(n => {
+        // Assign groupId to origin node if it doesn't have one yet
+        if (n.id === nodeId && !existingGroupId) return { ...n, branchGroupId: groupId };
+        return n;
       }),
-      ifActionNode,
-      elseActionNode,
+      { ...sibling, branchGroupId: groupId },
     ]);
-    setNodePositions(prev => ({
-      ...prev,
-      [ifActionNode.id]:   { x: leftmostX,        y: baseY },
-      [elseActionNode.id]: { x: leftmostX + pitch, y: baseY },
-    }));
-    const ifEdge:   GraphEdge = { id: `edge-${++_nextId}`, from: nodeId, to: ifActionNode.id,   booleanBranchId: ifBranchId   };
-    const elseEdge: GraphEdge = { id: `edge-${++_nextId}`, from: nodeId, to: elseActionNode.id, booleanBranchId: elseBranchId };
-    setEdges(prev => [...prev.filter(e => e.from !== nodeId), ifEdge, elseEdge]);
-  };
 
-  const updateBooleanBranch = (nodeId: string, branchId: string, updates: Partial<BooleanBranch>) => {
-    setNodes(prev => prev.map(n => {
-      if (n.id !== nodeId || !n.booleanBranches) return n;
-      return {
-        ...n,
-        booleanBranches: n.booleanBranches.map(b => b.id === branchId ? { ...b, ...updates } : b),
-      };
-    }));
-  };
+    if (!existingGroupId) {
+      // First branch added: center the pair around the original node's X position.
+      // Shift original left by half-pitch, place new sibling to the right.
+      const centerX = origPos.x;
+      setNodePositions(prev => ({
+        ...prev,
+        [nodeId]: { x: centerX - SIBLING_PITCH / 2, y: origY },
+        [sibling.id]: { x: centerX + SIBLING_PITCH / 2, y: origY },
+      }));
+    } else {
+      // Additional branches: append to the right of the rightmost existing sibling
+      setNodePositions(prev => ({
+        ...prev,
+        [sibling.id]: { x: rightmostX + SIBLING_PITCH, y: origY },
+      }));
+    }
 
-  const addElseIf = (nodeId: string) => {
-    const condNode = nodes.find(n => n.id === nodeId);
-    if (!condNode?.booleanBranches) return;
-    const parentPos = nodePositions[nodeId] ?? { x: 0, y: 0 };
-
-    const newBranchId   = `branch-${++_nextId}`;
-    const newActionNode = makeNode('action');
-    const currentBranches = condNode.booleanBranches;
-    const insertIdx = currentBranches.length - 1;
-
-    const newBranch: BooleanBranch = {
-      id: newBranchId,
-      type: 'else_if',
-      conditionOperator: currentBranches[0]?.conditionOperator,
-      conditionValues: [],
-      actionNodeId: newActionNode.id,
-    };
-
-    const updatedBranches: BooleanBranch[] = [
-      ...currentBranches.slice(0, insertIdx),
-      newBranch,
-      currentBranches[insertIdx],
-    ];
-
-    const N = updatedBranches.length;
-    const pitch = NODE_W * 1.3;
-    const parentCenterX = parentPos.x + NODE_W / 2;
-    const leftmostX = parentCenterX - (pitch * (N - 1)) / 2 - NODE_W / 2;
-    const baseY = parentPos.y + V_SPACING;
-
-    const newPositions: Record<string, { x: number; y: number }> = {};
-    updatedBranches.forEach((b, i) => {
-      if (b.actionNodeId) newPositions[b.actionNodeId] = { x: leftmostX + i * pitch, y: baseY };
-    });
-
-    setNodes(prev => [
-      ...prev.map(n => n.id !== nodeId ? n : { ...n, booleanBranches: updatedBranches }),
-      newActionNode,
-    ]);
-    setNodePositions(prev => ({ ...prev, ...newPositions }));
-    setEdges(prev => [...prev, { id: `edge-${++_nextId}`, from: nodeId, to: newActionNode.id, booleanBranchId: newBranchId }]);
-  };
-
-  const removeBooleanBranch = (nodeId: string, branchId: string) => {
-    const condNode = nodes.find(n => n.id === nodeId);
-    if (!condNode?.booleanBranches) return;
-    const branch = condNode.booleanBranches.find(b => b.id === branchId);
-    if (!branch || branch.type === 'if' || branch.type === 'else') return;
-
-    const removedActionNodeId = branch.actionNodeId;
-    const remainingBranches   = condNode.booleanBranches.filter(b => b.id !== branchId);
-    const parentPos = nodePositions[nodeId] ?? { x: 0, y: 0 };
-
-    const N = remainingBranches.length;
-    const pitch = NODE_W * 1.3;
-    const parentCenterX = parentPos.x + NODE_W / 2;
-    const leftmostX = parentCenterX - (pitch * (N - 1)) / 2 - NODE_W / 2;
-    const baseY = parentPos.y + V_SPACING;
-
-    const newPositions: Record<string, { x: number; y: number }> = {};
-    remainingBranches.forEach((b, i) => {
-      if (b.actionNodeId) newPositions[b.actionNodeId] = { x: leftmostX + i * pitch, y: baseY };
-    });
-
-    setNodes(prev => prev
-      .filter(n => n.id !== removedActionNodeId)
-      .map(n => n.id !== nodeId ? n : { ...n, booleanBranches: remainingBranches })
-    );
-    setEdges(prev => prev.filter(e => e.booleanBranchId !== branchId));
-    setNodePositions(prev => {
-      const next = { ...prev, ...newPositions };
-      if (removedActionNodeId) delete next[removedActionNodeId];
-      return next;
-    });
+    // Close the right panel so tidy-up centres within the full visible canvas
+    setSelectedId(null);
+    // Signal FlowCanvas to tidy-up once the new nodes are rendered
+    setAutoTidyToken(t => t + 1);
   };
 
   const duplicateNode = (id: string) => {
@@ -3716,7 +3970,21 @@ export function BuilderPage() {
   };
 
   const deleteNode = (id: string) => {
-    setNodes(prev => prev.filter(n => n.id !== id));
+    setNodes(prev => {
+      const deletedNode = prev.find(n => n.id === id);
+      const remaining   = prev.filter(n => n.id !== id);
+      const groupId     = deletedNode?.branchGroupId;
+      if (groupId) {
+        const groupMembers = remaining.filter(n => n.branchGroupId === groupId);
+        if (groupMembers.length <= 1) {
+          // Dissolve the group — solo node no longer needs a group ID
+          return remaining.map(n =>
+            n.branchGroupId === groupId ? { ...n, branchGroupId: undefined } : n,
+          );
+        }
+      }
+      return remaining;
+    });
     setEdges(prev => prev.filter(e => e.from !== id && e.to !== id));
     setNodePositions(prev => { const next = { ...prev }; delete next[id]; return next; });
     setSelectedId(prev => prev === id ? null : prev);
@@ -3841,6 +4109,16 @@ export function BuilderPage() {
         name={name}
         onNameChange={setName}
         status={status}
+        onSettingsOpen={() => setSettingsOpen(true)}
+      />
+
+      <WorkflowSettingsDialog
+        open={settingsOpen}
+        name={name}
+        description={description}
+        tags={tags}
+        onClose={() => setSettingsOpen(false)}
+        onSave={handleSettingsSave}
       />
 
       <div className={styles.body}>
@@ -3883,10 +4161,10 @@ export function BuilderPage() {
           editNodeMode={editNodeMode}
           editingNodeIds={editingNodeIds}
           onEditNodeToggle={handleEditNodeToggle}
-          onAddBooleanMode={addBooleanMode}
-          onUpdateBooleanBranch={updateBooleanBranch}
-          onAddElseIf={addElseIf}
-          onRemoveBooleanBranch={removeBooleanBranch}
+          onAddBranchSibling={addBranchSibling}
+          onUpdateBranchValues={updateBranchValues}
+          onUpdateBranchConfig={updateBranchConfig}
+          autoTidyToken={autoTidyToken}
         />
       </div>
     </div>

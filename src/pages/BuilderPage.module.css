@@ -1997,9 +1997,9 @@
   flex: 1;
 }
 
-/* ─── Add boolean button ─────────────────────────────────────────────────────── */
+/* ─── Add branch button ──────────────────────────────────────────────────────── */
 
-.addBooleanBtn {
+.addBranchBtn {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2016,113 +2016,79 @@
   cursor: pointer;
   transition: border-color var(--duration-fast), color var(--duration-fast), background var(--duration-fast);
 }
-.addBooleanBtn:hover {
+.addBranchBtn:hover {
   border-color: var(--color-content-secondary);
   border-style: solid;
   color: var(--color-content-primary);
   background: var(--color-bg-secondary);
 }
 
-/* ─── Boolean branch sections ────────────────────────────────────────────────── */
+/* ─── Branch group panel ─────────────────────────────────────────────────────── */
 
-.booleanSection {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.booleanBranch {
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border-opaque);
-  border-radius: var(--radius-md);
-  overflow: hidden;
-  transition: border-color var(--duration-fast);
-}
-.booleanBranch:focus-within {
-  border-color: var(--color-border-focus);
-}
-
-.booleanBranchHeader {
+.branchListHeader {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--space-2) var(--space-2) 0;
-  gap: var(--space-2);
+  padding: var(--space-1) 0 0;
 }
 
-.booleanBranchTypeLabel {
+.branchListTitle {
   font-family: var(--font-sans);
   font-size: var(--text-xs);
   font-weight: var(--font-weight-semibold);
   color: var(--color-content-secondary);
-  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
-.booleanBranchDivider {
-  height: 1px;
-  margin: var(--space-2) 0 0;
-  background: var(--color-border-opaque);
-}
-
-.booleanBranchBody {
-  padding: var(--space-2);
+.branchRow {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-}
-
-.booleanBranchElseLabel {
-  padding: var(--space-2) var(--space-2) var(--space-2);
-  margin: 0;
-  font-size: var(--text-xs);
-  color: var(--color-content-tertiary);
-  font-style: italic;
-}
-
-.booleanBranchRemoveBtn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  flex-shrink: 0;
-  border: none;
-  background: transparent;
-  color: var(--color-content-tertiary);
-  cursor: pointer;
-  border-radius: var(--radius-sm);
-  padding: 0;
-  transition: background var(--duration-fast), color var(--duration-fast);
-}
-.booleanBranchRemoveBtn:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--color-content-primary) 8%, transparent);
-  color: var(--color-content-primary);
-}
-.booleanBranchRemoveBtn:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-}
-
-.booleanAddBtn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-1);
-  width: 100%;
-  padding: var(--space-2) 0;
-  background: transparent;
-  border: none;
+  padding: var(--space-3);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-opaque);
   border-radius: var(--radius-md);
+  transition: border-color var(--duration-fast);
+}
+
+.branchRowCurrent {
+  border-color: var(--color-border-selected);
+  background: color-mix(in srgb, var(--color-bg-primary) 96%, var(--color-border-selected));
+}
+
+.branchRowHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.branchRowLabel {
   font-family: var(--font-sans);
   font-size: var(--text-xs);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-content-tertiary);
-  cursor: pointer;
-  transition: color var(--duration-fast), background var(--duration-fast);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-content-secondary);
 }
-.booleanAddBtn:hover {
+
+.branchRowDeleteBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-content-tertiary);
+  font-size: var(--text-sm);
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--duration-fast), color var(--duration-fast);
+}
+.branchRowDeleteBtn:hover {
+  background: color-mix(in srgb, var(--color-content-primary) 8%, transparent);
   color: var(--color-content-primary);
-  background: var(--color-bg-secondary);
 }
 
 /* Multi-value tag input */
@@ -2214,32 +2180,6 @@
   z-index: 0;
 }
 
-/* Badge shown at midpoint of boolean branch edges */
-.booleanEdgeBadge {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  padding: 0 var(--space-2);
-  height: 20px;
-  max-width: 200px;
-  background: var(--color-bg-inverse-primary);
-  color: var(--color-content-inverse-primary);
-  border-radius: var(--radius-full);
-  font-family: var(--font-sans);
-  font-size: var(--text-xs);
-  font-weight: var(--font-weight-medium);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  box-shadow: var(--shadow-below-low);
-  pointer-events: none;
-  user-select: none;
-}
-
-.booleanEdgeBadgeSep {
-  opacity: 0.45;
-  flex-shrink: 0;
-}
 
 .edgeMidplusBtn {
   width: 20px;
@@ -2355,3 +2295,143 @@
 /* ─── Responsive ─────────────────────────────────────────────────────────────── */
 
 @media (max-width: 480px) { .leftPanel { display: none; } }
+
+/* Settings gear button — honour the icon's own 16px stroke spec (1.25) */
+.settingsGearBtn { --icon-stroke-width: 1.25; }
+
+/* ─── Workflow Settings Dialog ────────────────────────────────────────────────── */
+
+.settingsOverlay {
+  position: fixed;
+  inset: 0;
+  background: color-mix(in srgb, black 30%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: var(--z-modal);
+  pointer-events: all;
+}
+
+.settingsDialog {
+  width: 440px;
+  max-width: calc(100vw - var(--space-8));
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-below-high);
+  overflow: hidden;
+}
+
+.settingsHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--color-border-opaque);
+  flex-shrink: 0;
+}
+
+.settingsTitle {
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-content-primary);
+  letter-spacing: var(--tracking-tight);
+}
+
+.settingsCloseBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: var(--color-content-tertiary);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: background var(--duration-fast), color var(--duration-fast);
+  padding: 0;
+}
+.settingsCloseBtn:hover {
+  background: color-mix(in srgb, var(--color-content-primary) 8%, transparent);
+  color: var(--color-content-primary);
+}
+
+.settingsBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-5);
+  overflow-y: auto;
+  max-height: 60vh;
+}
+
+.settingsFieldGroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.settingsLabel {
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-secondary);
+  letter-spacing: var(--tracking-normal);
+}
+
+.settingsHint {
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-regular);
+  color: var(--color-content-tertiary);
+  margin: 0;
+  line-height: var(--line-height-snug);
+}
+
+.settingsFooter {
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--space-4) var(--space-5);
+  border-top: 1px solid var(--color-border-opaque);
+  flex-shrink: 0;
+}
+
+/* Tag input — matches Alloy outlined TextField */
+.settingsTagInput {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 40px;
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-button);
+  cursor: text;
+  transition: border-color var(--duration-fast), box-shadow var(--duration-fast);
+}
+.settingsTagInput:focus-within {
+  border-color: var(--color-border-focus);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-border-focus) 15%, transparent);
+}
+
+.settingsTagInputField {
+  flex: 1;
+  min-width: 80px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  outline: none;
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  color: var(--color-content-primary);
+  padding: 0 var(--space-1);
+  user-select: text;
+}
+.settingsTagInputField::placeholder {
+  color: var(--color-content-tertiary);
+}

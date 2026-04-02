@@ -20,6 +20,20 @@ import { CheckCircleIcon } from '@alloy/components/icons/CheckCircleIcon';
 import { ListBulletIcon } from '@alloy/components/icons/ListBulletIcon';
 import styles from './AutomationsPage.module.css';
 
+// ─── Workflow settings persistence ────────────────────────────────────────────
+
+const LS_KEY = 'workflow_settings';
+
+type WorkflowSettingsEntry = { name: string; description: string; tags: string[] };
+type WorkflowSettingsStore = Record<string, WorkflowSettingsEntry>;
+
+function loadWorkflowSettings(): WorkflowSettingsStore {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    return raw ? (JSON.parse(raw) as WorkflowSettingsStore) : {};
+  } catch { return {}; }
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type AutomationStatus = 'active' | 'paused' | 'draft';
@@ -41,6 +55,7 @@ interface Automation {
   runsTotal: number;
   category: string;
   stats: AutomationStats;
+  tags?: string[];
 }
 
 // ─── Mock data ────────────────────────────────────────────────────────────────
@@ -184,16 +199,27 @@ export function AutomationsPage() {
   const [filter, setFilter] = useState<AutomationStatus | 'all'>('all');
   const [view, setView] = useState<ViewMode>('card');
 
-  const totalRuns   = MOCK_AUTOMATIONS.reduce((s, a) => s + a.runsTotal, 0);
-  const totalReached = MOCK_AUTOMATIONS.reduce((s, a) => s + a.stats.reached, 0);
-  const totalStats   = MOCK_AUTOMATIONS.reduce((s, a) => s + a.stats.reached + a.stats.pending + a.stats.skipped, 0);
-  const completionRate = totalStats > 0 ? Math.round((totalReached / totalStats) * 100) : 0;
-  const activeCount  = MOCK_AUTOMATIONS.filter((a) => a.status === 'active').length;
+  // Merge localStorage-saved settings over mock data (name, description, tags)
+  const [automations] = useState<Automation[]>(() => {
+    const stored = loadWorkflowSettings();
+    return MOCK_AUTOMATIONS.map(a => {
+      const entry = stored[a.id];
+      return entry ? { ...a, name: entry.name, description: entry.description, tags: entry.tags } : a;
+    });
+  });
 
-  const filtered = MOCK_AUTOMATIONS.filter((a) => {
+  const totalRuns   = automations.reduce((s, a) => s + a.runsTotal, 0);
+  const totalReached = automations.reduce((s, a) => s + a.stats.reached, 0);
+  const totalStats   = automations.reduce((s, a) => s + a.stats.reached + a.stats.pending + a.stats.skipped, 0);
+  const completionRate = totalStats > 0 ? Math.round((totalReached / totalStats) * 100) : 0;
+  const activeCount  = automations.filter((a) => a.status === 'active').length;
+
+  const q = search.toLowerCase();
+  const filtered = automations.filter((a) => {
     const matchesSearch =
-      a.name.toLowerCase().includes(search.toLowerCase()) ||
-      a.description.toLowerCase().includes(search.toLowerCase());
+      a.name.toLowerCase().includes(q) ||
+      a.description.toLowerCase().includes(q) ||
+      (a.tags ?? []).some(t => t.toLowerCase().includes(q));
     const matchesFilter = filter === 'all' || a.status === filter;
     return matchesSearch && matchesFilter;
   });
@@ -206,7 +232,7 @@ export function AutomationsPage() {
           color="slate"
           icon={<Grid01Icon size={24} />}
           label="Automations"
-          value={MOCK_AUTOMATIONS.length}
+          value={automations.length}
           tag={`${activeCount} active`}
           tagColor="green"
         />
@@ -223,7 +249,7 @@ export function AutomationsPage() {
           icon={<Users03Icon size={24} />}
           label="People reached"
           value={totalReached}
-          tag={`${MOCK_AUTOMATIONS.reduce((s, a) => s + a.stats.pending, 0)} pending`}
+          tag={`${automations.reduce((s, a) => s + a.stats.pending, 0)} pending`}
           tagColor="blue"
         />
         <DataCard
@@ -231,7 +257,7 @@ export function AutomationsPage() {
           icon={<CheckCircleIcon size={24} />}
           label="Completion rate"
           value={`${completionRate}%`}
-          tag={`${MOCK_AUTOMATIONS.reduce((s, a) => s + a.stats.skipped, 0)} skipped`}
+          tag={`${automations.reduce((s, a) => s + a.stats.skipped, 0)} skipped`}
           tagColor="yellow"
         />
       </div>
@@ -320,6 +346,13 @@ export function AutomationsPage() {
               </div>
               <span className={styles.cardName}>{automation.name}</span>
               <p className={styles.cardDesc}>{automation.description}</p>
+              {(automation.tags ?? []).length > 0 && (
+                <div className={styles.cardTags}>
+                  {(automation.tags ?? []).map(tag => (
+                    <Tag key={tag} color="slate" size="sm" variant="subtle">{tag}</Tag>
+                  ))}
+                </div>
+              )}
               <AutomationBar stats={automation.stats} />
               <div className={styles.cardMeta}>
                 {automation.lastRun && (

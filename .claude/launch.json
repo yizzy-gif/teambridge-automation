@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "Automation 2.0",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeExecutable": "/Users/unassignedlaptop9/.nvm/versions/node/v22.22.1/bin/node",
+      "runtimeArgs": ["/Users/unassignedlaptop9/Documents/MyClaudeFolder/Automation_2.0/node_modules/.bin/vite"],
       "port": 5173,
       "autoPort": true
     }
