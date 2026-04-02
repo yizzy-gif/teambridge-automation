@@ -3,10 +3,11 @@ import react from '@vitejs/plugin-react';
 import { resolve } from 'path';
 
 export default defineConfig({
+  base: '/teambridge-automation/',
   plugins: [react()],
   resolve: {
     alias: {
-      '@alloy': resolve(__dirname, '../Alloy/src'),
+      '@alloy': resolve(__dirname, 'node_modules/alloy-design-system/src'),
       '@': resolve(__dirname, 'src'),
     },
   },

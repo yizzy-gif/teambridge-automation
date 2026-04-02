@@ -8,7 +8,7 @@ import { TemplatesPage } from './pages/TemplatesPage';
 
 export function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={import.meta.env.BASE_URL}>
       <Routes>
         {/* ── Full-screen builder — no app shell ── */}
         <Route path="/automations/new" element={<BuilderPage />} />
