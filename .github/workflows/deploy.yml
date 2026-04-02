@@ -21,6 +21,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Clone Alloy Design System (sibling)
+        run: git clone https://github.com/yizzy-gif/alloy-design-system.git ../Alloy
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -33,7 +36,7 @@ jobs:
       - name: Build
         env:
           VITE_ANTHROPIC_API_KEY: ''
-        run: npm run build
+        run: npx vite build
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

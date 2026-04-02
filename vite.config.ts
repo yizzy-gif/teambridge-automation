@@ -7,7 +7,7 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
-      '@alloy': resolve(__dirname, 'node_modules/alloy-design-system/src'),
+      '@alloy': resolve(__dirname, '../Alloy/src'),
       '@': resolve(__dirname, 'src'),
     },
   },
