@@ -16,7 +16,6 @@ A modern, AI-powered automation builder built with React, TypeScript, and the [A
 | **Automations** | List all workflows in card or table view. Filter by status (active, paused, draft). Search by name, description, or tag. View per-automation run stats with a segmented progress bar. |
 | **Flow Builder** | Build step-based automation flows visually. Add trigger, condition, action, and AI nodes. Configure each step in a right-side panel. Use the inline AI prompt below any selected node to generate or modify steps with natural language. |
 | **Templates** | Browse pre-built automation templates by category. Filter by trigger type, tag, and keyword. Launch any template directly into the builder with steps pre-loaded. |
-| **Integrations** | Connect external services — Slack, Gmail, Gusto, ADP, When I Work, BambooHR. Toggle connections per integration. |
 | **Settings** | Configure run limits, timezone, notification behavior, and AI feature preferences. |
 
 ### AI Features
@@ -101,13 +100,15 @@ teambridge-automation/
 │   └── workflows/
 │       └── deploy.yml            # GitHub Pages auto-deploy on push to main
 ├── src/
+│   ├── components/
+│   │   ├── PrimaryNav.tsx        # Collapsible primary navigation sidebar
+│   │   └── PrimaryNav.module.css
 │   ├── layouts/
 │   │   ├── AppShell.tsx          # Main layout — sidebar, top bar, page outlet
 │   │   └── AppShell.module.css
 │   ├── pages/
 │   │   ├── AutomationsPage.tsx   # Automation list with search & filters
 │   │   ├── BuilderPage.tsx       # Step-based flow builder + inline AI prompt
-│   │   ├── IntegrationsPage.tsx  # Connected apps marketplace
 │   │   ├── TemplatesPage.tsx     # Pre-built automation templates
 │   │   └── SettingsPage.tsx      # General, notifications & AI settings
 │   ├── features/

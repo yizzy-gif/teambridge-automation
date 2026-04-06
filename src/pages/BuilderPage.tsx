@@ -12,6 +12,7 @@ import type { DropdownMenuGroup } from '@alloy/components/DropdownMenu';
 import { SearchField, TextField, TextArea, NumberField } from '@alloy/components/Input';
 import inputStyles from '@alloy/components/Input/Input.module.css';
 import dropdownStyles from '@alloy/components/DropdownMenu/DropdownMenu.module.css';
+import tooltipStyles from '@alloy/components/Tooltip/Tooltip.module.css';
 import { Target04Icon } from '@alloy/components/icons/Target04Icon';
 import { GitBranch01Icon } from '@alloy/components/icons/GitBranch01Icon';
 import { ArrowCircleBrokenRightIcon } from '@alloy/components/icons/ArrowCircleBrokenRightIcon';
@@ -1154,10 +1155,10 @@ function computeLayout(
   }
 
   // ── Post-process: fix sibling branch groups ──────────────────────────────────
-  // Sibling nodes share a branchGroupId but have no edges between them, so the
-  // base layout places them at different depths. Correct this by centering all
-  // group members side-by-side at the same Y as the deepest (anchor) member.
-  const SIBLING_PITCH = NODE_W + 48;
+  // Process ALL children of a branch parent together (not per branch group) so
+  // that multiple branch groups from the same parent don't overlap each other.
+  const SIBLING_PITCH = NODE_W + 24;
+
   const branchGroups = new Map<string, GraphNode[]>();
   nodes.forEach(n => {
     if (n.branchGroupId) {
@@ -1166,24 +1167,64 @@ function computeLayout(
       branchGroups.set(n.branchGroupId, g);
     }
   });
+
+  // Build set of all branch-sibling IDs so recentre skips them
+  const isBranchSibling = new Set<string>();
   branchGroups.forEach(siblings => {
-    if (siblings.length < 2) return;
-    // Anchor = deepest member (the one connected into the main graph)
-    const anchorNode = siblings.reduce((best, n) =>
-      (depth.get(n.id) ?? 0) > (depth.get(best.id) ?? 0) ? n : best,
-      siblings[0]
+    if (siblings.length >= 2) siblings.forEach(s => isBranchSibling.add(s.id));
+  });
+
+  // Recursively re-centre a subtree rooted at `id` around `centreX`,
+  // preserving each node's existing Y (depth row). Skips branch siblings —
+  // those are handled by the outer parentsToProcess loop.
+  const recentre = (id: string, centreX: number, seen = new Set<string>()) => {
+    if (seen.has(id)) return;
+    seen.add(id);
+    const pos = positions.get(id);
+    if (!pos) return;
+    positions.set(id, { x: centreX - NODE_W / 2, y: pos.y });
+    const children = (out.get(id) ?? []).filter(c => !isBranchSibling.has(c));
+    if (children.length === 0) return;
+    const totalW = children.reduce((s, c) => s + (subtreeW.get(c) ?? H_SPACING), 0);
+    let childX = centreX - totalW / 2;
+    for (const c of children) {
+      const w = subtreeW.get(c) ?? H_SPACING;
+      recentre(c, childX + w / 2, seen);
+      childX += w;
+    }
+  };
+
+  // Find every parent whose child list contains at least one branch sibling,
+  // sorted by depth so ancestors are processed before descendants.
+  const parentsToProcess = nodes
+    .filter(n => (out.get(n.id) ?? []).some(c => isBranchSibling.has(c)))
+    .sort((a, b) => (depth.get(a.id) ?? 0) - (depth.get(b.id) ?? 0));
+
+  parentsToProcess.forEach(parent => {
+    const parentPos = positions.get(parent.id);
+    if (!parentPos) return;
+    const parentCentreX = parentPos.x + NODE_W / 2;
+
+    const allChildren = out.get(parent.id) ?? [];
+    if (allChildren.length < 2) return;
+
+    // Sort by current DFS X to preserve left-to-right visual order
+    const sorted = [...allChildren].sort(
+      (a, b) => (positions.get(a)?.x ?? 0) - (positions.get(b)?.x ?? 0),
     );
-    const anchorPos = positions.get(anchorNode.id);
-    if (!anchorPos) return;
-    // Sort siblings by their order in the nodes array (creation order)
-    const sorted = [...siblings].sort(
-      (a, b) => nodes.findIndex(n => n.id === a.id) - nodes.findIndex(n => n.id === b.id)
-    );
+
+    const yPos = positions.get(sorted[0])?.y ?? (CANVAS_TOP + V_SPACING);
     const totalWidth = (sorted.length - 1) * SIBLING_PITCH;
-    const anchorCentreX = anchorPos.x + NODE_W / 2;
-    const startX = anchorCentreX - totalWidth / 2 - NODE_W / 2;
-    sorted.forEach((n, i) => {
-      positions.set(n.id, { x: startX + i * SIBLING_PITCH, y: anchorPos.y });
+    const startX = parentCentreX - totalWidth / 2 - NODE_W / 2;
+
+    sorted.forEach((childId, i) => {
+      const childCentreX = startX + i * SIBLING_PITCH + NODE_W / 2;
+      positions.set(childId, { x: startX + i * SIBLING_PITCH, y: yPos });
+      // Re-centre this child's own (non-branch) subtree under its new position
+      const grandchildren = (out.get(childId) ?? []).filter(c => !isBranchSibling.has(c));
+      for (const gc of grandchildren) {
+        recentre(gc, childCentreX, new Set([childId]));
+      }
     });
   });
 
@@ -1488,6 +1529,217 @@ function PopoverSelect({
   );
 }
 
+// ─── AI Specialist config components ─────────────────────────────────────────────
+
+const AI_SPEC_READ_FIELDS  = ['First Name', 'Last Name', 'DOB', 'Notes', 'Role', 'Preferred Location'] as const;
+const AI_SPEC_WRITE_FIELDS = ['SSN', 'Preferred Name', 'Last Name', 'DOB', 'Notes', 'Role', 'Preferred Location'] as const;
+const AI_SPEC_CHANNELS     = ['SMS', 'Text', 'Voice'] as const;
+const AI_ENGAGE_TARGETS    = [
+  { value: 'Policy Matches (Users for Shift)', label: 'Policy Matches (Users for Shift)' },
+  { value: 'All Users',                        label: 'All Users' },
+  { value: 'Specific Group',                   label: 'Specific Group' },
+];
+
+/** Action + Specialist Persona rows — rendered above the Configuration divider */
+function AiSpecialistMeta({
+  step,
+  onUpdateConfigField,
+}: {
+  step: FlowStep;
+  onUpdateConfigField: (key: string, value: string) => void;
+}) {
+  void onUpdateConfigField; // persona change not wired yet
+  return (
+    <div className={styles.aiSpecRows}>
+      {/* Action row */}
+      <div className={styles.aiSpecRow}>
+        <span className={styles.aiSpecRowLabel}>Action</span>
+        <div className={styles.aiSpecRowValue}>
+          <span>{step.selectedValue}</span>
+          <span className={styles.aiSpecRowValueChevron}>
+            <ChevronDownIcon size={13} />
+          </span>
+        </div>
+      </div>
+
+      {/* Specialist Persona row */}
+      <div className={styles.aiSpecRow}>
+        <span className={styles.aiSpecRowLabel}>Specialist Persona</span>
+        <div className={styles.aiSpecPersonaCard}>
+          <div className={styles.aiSpecPersonaAvatar}>
+            {/* Diamond shape */}
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
+              <path d="M8 2L13 8L8 14L3 8L8 2Z" fill="white" fillOpacity="0.92" />
+            </svg>
+          </div>
+          <div className={styles.aiSpecPersonaInfo}>
+            <div className={styles.aiSpecPersonaName}>
+              Corvus
+              <span className={styles.aiSpecPersonaBy}>by Ana</span>
+            </div>
+            <div className={styles.aiSpecPersonaRole}>Scheduler</div>
+          </div>
+          <Button variant="ghost" size="xs" onClick={() => {}}>
+            Change
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Triggering record + Engage cards — rendered inside the Configuration section */
+function AiSpecialistCards({
+  step,
+  onUpdateConfigField,
+}: {
+  step: FlowStep;
+  onUpdateConfigField: (key: string, value: string) => void;
+}) {
+  const vals        = step.configValues ?? {};
+  const engageTarget  = vals.ai_engage_target  ?? 'Policy Matches (Users for Shift)';
+  const maxTargets    = vals.ai_max_targets    ?? '10';
+  const channels      = (vals.ai_channels ?? 'SMS,Text,Voice').split(',').filter(Boolean);
+
+  const toggleChannel = (ch: string) => {
+    const next = channels.includes(ch)
+      ? channels.filter(c => c !== ch)
+      : [...channels, ch];
+    onUpdateConfigField('ai_channels', next.join(','));
+  };
+
+  return (
+    <div className={styles.aiSpecCards}>
+
+      {/* ── Triggering record card ── */}
+      <div className={styles.aiSpecDataCard}>
+        <div className={styles.aiSpecDataCardHeader}>
+          <div className={styles.aiSpecDataCardHeaderIcon}>
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+              <circle cx="7" cy="4.5" r="2.5" stroke="currentColor" strokeWidth="1.2" />
+              <path d="M1.5 13c0-2.761 2.462-4.5 5.5-4.5s5.5 1.739 5.5 4.5"
+                stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+              <path d="M10 6.5l1.5 1.5L10 9.5"
+                stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </div>
+          <div className={styles.aiSpecDataCardHeaderText}>
+            <div className={styles.aiSpecDataCardTitle}>Triggering record</div>
+            <div className={styles.aiSpecDataCardSubtitle}>Shift (3 fields)</div>
+          </div>
+          <div className={styles.aiSpecDataCardActions}>
+            <button type="button" className={styles.aiSpecDataCardActionBtn} aria-label="Options">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" aria-hidden>
+                <circle cx="3.5" cy="7" r="1.1" />
+                <circle cx="7"   cy="7" r="1.1" />
+                <circle cx="10.5" cy="7" r="1.1" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <div className={styles.aiSpecDataCardBody}>
+          <div className={styles.aiSpecDataFieldRow}>
+            <span className={styles.aiSpecDataFieldLabel}>User</span>
+            <div className={styles.aiSpecDataFieldContent}>
+              <div className={styles.aiSpecFieldPillRow}>
+                <Tag variant="subtle" size="sm" color="green">Read ({AI_SPEC_READ_FIELDS.length})</Tag>
+                {AI_SPEC_READ_FIELDS.map(f => (
+                  <span key={f} className={styles.aiSpecFieldPill}>{f}</span>
+                ))}
+              </div>
+              <div className={styles.aiSpecFieldPillRow}>
+                <Tag variant="subtle" size="sm" color="purple">Write ({AI_SPEC_WRITE_FIELDS.length})</Tag>
+                {AI_SPEC_WRITE_FIELDS.map(f => (
+                  <span key={f} className={styles.aiSpecFieldPill}>{f}</span>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Engage card ── */}
+      <div className={styles.aiSpecDataCard}>
+        <div className={styles.aiSpecDataCardHeader}>
+          <div className={styles.aiSpecDataCardHeaderIcon}>
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+              <path d="M8 1.5L3.5 7.5H7.5L5.5 12.5L10.5 6.5H6.5L8 1.5Z"
+                stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+            </svg>
+          </div>
+          <div className={styles.aiSpecDataCardHeaderText}>
+            <div className={styles.aiSpecDataCardTitle}>Engage</div>
+            <div className={styles.aiSpecDataCardSubtitle}>Communication</div>
+          </div>
+          <div className={styles.aiSpecDataCardActions}>
+            <button type="button" className={styles.aiSpecDataCardActionBtn} aria-label="Options">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" aria-hidden>
+                <circle cx="3.5" cy="7" r="1.1" />
+                <circle cx="7"   cy="7" r="1.1" />
+                <circle cx="10.5" cy="7" r="1.1" />
+              </svg>
+            </button>
+            <button type="button" className={styles.aiSpecDataCardActionBtn} aria-label="Remove">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+                <path d="M2 3.5h10M5.5 3.5V2h3v1.5M4.5 3.5l.5 8.5h4l.5-8.5"
+                  stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <div className={styles.aiSpecDataCardBody}>
+
+          {/* Message */}
+          <div className={styles.aiSpecDataFieldRow}>
+            <span className={styles.aiSpecDataFieldLabel}>Message</span>
+            <div className={styles.aiSpecChannelRow}>
+              {AI_SPEC_CHANNELS.map(ch => (
+                <button
+                  key={ch}
+                  type="button"
+                  className={clsx(styles.aiSpecChannelTag, channels.includes(ch) && styles.aiSpecChannelTagActive)}
+                  onClick={() => toggleChannel(ch)}
+                >
+                  {ch}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Target */}
+          <div className={styles.aiSpecDataFieldRow}>
+            <span className={styles.aiSpecDataFieldLabel}>Target</span>
+            <div className={styles.aiSpecTargetWrap}>
+              <PopoverSelect
+                value={engageTarget}
+                onChange={v => onUpdateConfigField('ai_engage_target', v)}
+                options={AI_ENGAGE_TARGETS}
+              />
+            </div>
+          </div>
+
+          {/* Max Targets */}
+          <div className={styles.aiSpecDataFieldRow}>
+            <span className={styles.aiSpecDataFieldLabel}>Max Targets</span>
+            <NumberField
+              size="sm"
+              value={maxTargets}
+              onChange={e => onUpdateConfigField('ai_max_targets', e.target.value)}
+              min={1}
+              aria-label="Max Targets"
+              className={styles.aiSpecMaxTargetsInput}
+            />
+          </div>
+
+        </div>
+      </div>
+
+    </div>
+  );
+}
+
 // ─── NodePopover ─────────────────────────────────────────────────────────────────
 
 interface NodePopoverProps {
@@ -1629,6 +1881,15 @@ function NodePopover({ step, groupSiblings, onSelectSuggestion, onUpdateConditio
       {/* ── 4. Configuration — only when node is configured ── */}
       {!isEmpty && (
         <>
+          {/* AI Specialist: Action + Persona rows above the Configuration divider */}
+          {step.type === 'ai' && step.selectedValue === 'AI Specialist' && (
+            <>
+              <div className={styles.popoverDivider} />
+              <div className={styles.popoverSection}>
+                <AiSpecialistMeta step={step} onUpdateConfigField={onUpdateConfigField} />
+              </div>
+            </>
+          )}
           <div className={styles.popoverDivider} />
           <div className={styles.popoverSection}>
             <p className={styles.popoverSectionLabel}>Configuration</p>
@@ -1992,11 +2253,11 @@ function NodePopover({ step, groupSiblings, onSelectSuggestion, onUpdateConditio
               );
             })()}
 
-            {/* ── AI — no config ────────────────────────────────────────── */}
+            {/* ── AI config ─────────────────────────────────────────────── */}
             {step.type === 'ai' && (
-              <p className={styles.popoverConfigPlaceholder}>
-                No additional configuration for this AI step.
-              </p>
+              step.selectedValue === 'AI Specialist'
+                ? <AiSpecialistCards step={step} onUpdateConfigField={onUpdateConfigField} />
+                : <p className={styles.popoverConfigPlaceholder}>No additional configuration for this AI step.</p>
             )}
           </div>
         </>
@@ -2277,10 +2538,12 @@ interface NodePaletteCardProps {
 function NodePaletteCard({ onDragStart, onDragEnd, onNodeSelect }: NodePaletteCardProps) {
   const [search, setSearch] = useState('');
 
-  const filteredItems = search.trim() === '' ? [] : ALL_LIBRARY_ITEMS.filter((item) =>
-    item.label.toLowerCase().includes(search.trim().toLowerCase()) ||
-    item.category.toLowerCase().includes(search.trim().toLowerCase())
-  );
+  const filteredItems = search.trim() === '' ? [] : ALL_LIBRARY_ITEMS.filter((item) => {
+    const q = search.trim().toLowerCase();
+    return item.label.toLowerCase().includes(q) ||
+      item.category.toLowerCase().includes(q) ||
+      item.type.toLowerCase().includes(q);
+  });
 
   const hasResults = search.trim() !== '';
 
@@ -2339,6 +2602,12 @@ function NodePaletteCard({ onDragStart, onDragEnd, onNodeSelect }: NodePaletteCa
 
 // ─── LeftPanel ───────────────────────────────────────────────────────────────────
 
+interface Message {
+  id:      string;
+  role:    'user' | 'assistant';
+  content: string;
+}
+
 interface LeftPanelProps {
   onLibNodeDragStart: (item: LibraryItem) => void;
   onLibNodeDragEnd: () => void;
@@ -2349,16 +2618,21 @@ interface LeftPanelProps {
   aiPrompt: string;
   onAiPromptChange: (v: string) => void;
   aiLoading: boolean;
-  aiResult: string | null;
+  messages: Message[];
   onAiSend: () => void;
 }
 
 function LeftPanel({
   onLibNodeDragStart, onLibNodeDragEnd, onLibNodeSelect,
   editNodeMode, editingCount, onToggleEditMode,
-  aiPrompt, onAiPromptChange, aiLoading, aiResult, onAiSend,
+  aiPrompt, onAiPromptChange, aiLoading, messages, onAiSend,
 }: LeftPanelProps) {
   const [showEditTooltip, setShowEditTooltip] = useState(false);
+  const chatBottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
   return (
     <aside className={styles.leftPanel}>
@@ -2382,7 +2656,26 @@ function LeftPanel({
             </div>
           )}
 
-          <div className={styles.aiComposerCard}>
+          {/* ── Shell: unified card wrapping chat thread + input ── */}
+          <div className={styles.aiComposerShell}>
+
+            {/* Chat thread — always present; input stays pinned at bottom */}
+            <div className={styles.aiChatWindow}>
+              {messages.map(msg => (
+                <div
+                  key={msg.id}
+                  className={clsx(
+                    styles.aiChatBubble,
+                    msg.role === 'user' ? styles.aiChatBubbleUser : styles.aiChatBubbleAssistant,
+                  )}
+                >
+                  {msg.content}
+                </div>
+              ))}
+              <div ref={chatBottomRef} aria-hidden="true" />
+            </div>
+
+            <div className={styles.aiComposerCard}>
             <textarea
               className={styles.aiComposerTextarea}
               value={aiPrompt}
@@ -2439,7 +2732,7 @@ function LeftPanel({
               </div>
             </div>
           </div>
-          {aiResult && <p className={styles.aiComposerResult}>{aiResult}</p>}
+          </div>{/* end aiComposerShell */}
         </div>
       </div>
     </aside>
@@ -2622,20 +2915,22 @@ function FlowNode({
       <div
         className={styles.nodeDotsDropdown}
         onClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
       >
         <DropdownMenu
           trigger={
-            <button
-              className={styles.nodeDotsBtn}
+            <Button
+              variant="ghost"
+              size="sm"
+              iconOnly
               aria-label="Node actions"
             >
               <DotsHorizontalIcon />
-            </button>
+            </Button>
           }
           groups={dotsMenuGroups}
           placement="bottom-end"
-          width={168}
-          size="sm"
+          width="max-content"
         />
       </div>
 
@@ -2753,10 +3048,9 @@ function EmptyCanvasState({ onAddTrigger }: { onAddTrigger: () => void }) {
       <p className={styles.emptyStateDesc}>
         Choose the event that kicks off this automation
       </p>
-      <button className={styles.emptyStateCta} onClick={onAddTrigger}>
-        <PlusIcon />
+      <Button variant="primary" size="md" leadingArtwork={<PlusIcon />} onClick={onAddTrigger} className={styles.emptyStateCta}>
         Add trigger
-      </button>
+      </Button>
     </div>
   );
 }
@@ -2796,6 +3090,8 @@ interface PendingEdge {
   startY: number;
   currentX: number;
   currentY: number;
+  screenX?: number;
+  screenY?: number;
 }
 
 interface TypePickerPos {
@@ -2803,6 +3099,17 @@ interface TypePickerPos {
   screenY: number;
   canvasX: number;
   canvasY: number;
+}
+
+interface EdgeDragDrop {
+  fromNodeId: string;
+  fromNodeType: StepType;
+  anchorX: number;
+  anchorY: number;
+  canvasX: number;
+  canvasY: number;
+  screenX: number;
+  screenY: number;
 }
 
 // ─── NodeAiFloatingInput ──────────────────────────────────────────────────────
@@ -2928,6 +3235,7 @@ interface FlowCanvasProps {
   onAddEdge: (fromNodeId: string, toNodeId: string) => void;
   onDeleteEdge: (edgeId: string) => void;
   onCreateNodeAt: (type: StepType, x: number, y: number) => void;
+  onCreateNodeAndConnect: (fromId: string, type: StepType, x: number, y: number) => void;
   onCanvasDropAtPos: (item: LibraryItem, x: number, y: number) => void;
   editNodeMode: boolean;
   editingNodeIds: Set<string>;
@@ -2942,7 +3250,7 @@ function FlowCanvas({
   nodes, edges, nodePositions, selectedId, draggingLibNode,
   onSelectNode, onDeselectNode, onUpdateNode, onUpdateNodeCondition, onUpdateNodeConfigField,
   onDuplicateNode, onDeleteNode, onAddRootTrigger,
-  onInsertOnEdge, onPositionChange, onSetAllPositions, onAddEdge, onDeleteEdge, onCreateNodeAt, onCanvasDropAtPos,
+  onInsertOnEdge, onPositionChange, onSetAllPositions, onAddEdge, onDeleteEdge, onCreateNodeAt, onCreateNodeAndConnect, onCanvasDropAtPos,
   editNodeMode, editingNodeIds, onEditNodeToggle,
   onAddBranchSibling,
   onUpdateBranchValues,
@@ -2960,6 +3268,7 @@ function FlowCanvas({
   const [edgeInsert, setEdgeInsert] = useState<{ edge: GraphEdge; anchorRect: DOMRect } | null>(null);
   const [pendingEdge, setPendingEdge] = useState<PendingEdge | null>(null);
   const [typePickerPos, setTypePickerPos] = useState<TypePickerPos | null>(null);
+  const [edgeDragDrop, setEdgeDragDrop] = useState<EdgeDragDrop | null>(null);
   const [paletteDragPos, setPaletteDragPos] = useState<{ x: number; y: number } | null>(null);
 
   // Refs so mousemove/mouseup callbacks don't go stale
@@ -2991,6 +3300,19 @@ function FlowCanvas({
     return () => document.removeEventListener('mousedown', handler);
   }, [typePickerPos]);
 
+  // Close edge drag-drop picker when clicking outside
+  useEffect(() => {
+    if (!edgeDragDrop) return;
+    const handler = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest('[class*="typePicker"]')) {
+        setEdgeDragDrop(null);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [edgeDragDrop]);
+
   // ── Measure actual selected-node height for consistent AI input gap ──
   useEffect(() => {
     if (!selectedId || !graphContentRef.current) { setSelectedNodeH(NODE_H); return; }
@@ -3019,8 +3341,14 @@ function FlowCanvas({
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement;
 
-    // Never start drag/pan from interactive controls or popovers
-    if (target.closest('button, input, textarea, select, [data-popover]')) return;
+    // If the click is on an interactive control inside a node, still select the node
+    // (so the right panel opens) but skip drag/pan setup.
+    const isInteractive = !!target.closest('button, input, textarea, select, [data-popover]');
+    if (isInteractive) {
+      const nodeEl = target.closest('[data-node-id]') as HTMLElement | null;
+      if (nodeEl && !editNodeMode) onSelectNode(nodeEl.dataset.nodeId!);
+      return;
+    }
 
     // Check for edge drag FIRST (drag anywhere on a line to reconnect / disconnect)
     const edgeHandleEl = (target as Element).closest('[data-edge-endpoint]') as Element | null;
@@ -3107,7 +3435,7 @@ function FlowCanvas({
       const gc = graphContentRef.current.getBoundingClientRect();
       const currentX = (e.clientX - gc.left) / zoomRef.current;
       const currentY = (e.clientY - gc.top) / zoomRef.current;
-      pendingEdgeRef.current = { ...pendingEdgeRef.current, currentX, currentY };
+      pendingEdgeRef.current = { ...pendingEdgeRef.current, currentX, currentY, screenX: e.clientX, screenY: e.clientY };
       setPendingEdge({ ...pendingEdgeRef.current });
 
       // Track which node the cursor is over so we can show its anchors and use it as the target
@@ -3178,6 +3506,13 @@ function FlowCanvas({
       // Released on empty canvas during reconnect → just delete the original edge
       if (isReconnect && !connectedSuccessfully) {
         onDeleteEdge(reconnectingEdgeIdRef.current!);
+      }
+
+      // Released on empty canvas while drawing a new edge → show static type picker at drop point
+      if (!connectedSuccessfully && !isReconnect && pendingEdgeRef.current?.screenX != null) {
+        const { fromNodeId: dropFromId, startX, startY, currentX, currentY, screenX, screenY } = pendingEdgeRef.current;
+        const fromNodeType = nodes.find(n => n.id === dropFromId)?.type ?? 'action';
+        setEdgeDragDrop({ fromNodeId: dropFromId, fromNodeType, anchorX: startX, anchorY: startY, canvasX: currentX, canvasY: currentY, screenX: screenX!, screenY: screenY! });
       }
 
       pendingEdgeRef.current        = null;
@@ -3375,27 +3710,6 @@ function FlowCanvas({
                 let   to   = getAnchorCenter(edge.to,   'top');
                 if (!from || !to) return null;
 
-                // If the target node belongs to a branch group, redirect the arrow
-                // to the horizontal center of the group AND the vertical center of the cards,
-                // so the arrowhead lands exactly on the dashed sibling connector line.
-                const targetNode = nodes.find(n => n.id === edge.to);
-                if (targetNode?.branchGroupId) {
-                  const groupNodes = nodes.filter(n => n.branchGroupId === targetNode.branchGroupId);
-                  if (groupNodes.length >= 2) {
-                    const sorted = [...groupNodes].sort(
-                      (a, b) => (nodePositions[a.id]?.x ?? 0) - (nodePositions[b.id]?.x ?? 0)
-                    );
-                    const lPos = nodePositions[sorted[0].id];
-                    const rPos = nodePositions[sorted[sorted.length - 1].id];
-                    if (lPos && rPos) {
-                      to = {
-                        x: (lPos.x + rPos.x + NODE_W) / 2,
-                        y: lPos.y + NODE_H / 2,  // vertical center = where the dashed line is drawn
-                      };
-                    }
-                  }
-                }
-
                 const { x: x1, y: y1 } = from;
                 const { x: x2, y: y2 } = to;
                 const dy = Math.abs(y2 - y1) * 0.5;
@@ -3408,26 +3722,12 @@ function FlowCanvas({
                 // captures the actual visual approach direction for any node arrangement.
                 //   Cubic B(t) = Σ C(3,k) · (1-t)^(3-k) · t^k · P_k
                 //   P0=(x1,y1)  P1=(x1,y1+dy)  P2=(x2,y2-dy)  P3=(x2,y2)
-                const ST = 0.85, SM = 1 - ST;
-                const bx = SM*SM*SM*x1 + 3*SM*SM*ST*x1 + 3*SM*ST*ST*x2 + ST*ST*ST*x2;
-                const by = SM*SM*SM*y1 + 3*SM*SM*ST*(y1+dy) + 3*SM*ST*ST*(y2-dy) + ST*ST*ST*y2;
-                // angle of chord B(0.85)→B(1) in degrees; default caret points south (90°)
-                const caretRotate = Math.atan2(y2 - by, x2 - bx) * (180 / Math.PI) - 90;
-                const dArrow = `M ${x2 - 4} ${y2 - 8} L ${x2} ${y2} L ${x2 + 4} ${y2 - 8}`;
-
                 return (
                   <g key={edge.id}>
                     {/* Visual path */}
                     <path d={d}
                       stroke="var(--color-slate-border-secondary)" strokeWidth="1.5"
                       fill="none" strokeLinecap="round"
-                      style={{ pointerEvents: 'none' }}
-                    />
-                    {/* Caret — tip pinned to anchor (x2,y2), rotated around it */}
-                    <path d={dArrow}
-                      stroke="var(--color-slate-border-secondary)" strokeWidth="1.5"
-                      fill="none" strokeLinecap="round" strokeLinejoin="round"
-                      transform={`rotate(${caretRotate}, ${x2}, ${y2})`}
                       style={{ pointerEvents: 'none' }}
                     />
                     {/* Boolean branch edge — no inline SVG pill; badge is in HTML layer below */}
@@ -3440,38 +3740,6 @@ function FlowCanvas({
                 );
               })}
 
-              {/* Sibling branch connectors — horizontal dashed lines between condition nodes in the same group */}
-              {(() => {
-                const groupMap = new Map<string, GraphNode[]>();
-                nodes.forEach(n => {
-                  if (n.branchGroupId) {
-                    const g = groupMap.get(n.branchGroupId) ?? [];
-                    g.push(n);
-                    groupMap.set(n.branchGroupId, g);
-                  }
-                });
-                return [...groupMap.entries()].map(([groupId, siblings]) => {
-                  if (siblings.length < 2) return null;
-                  const sorted = [...siblings].sort(
-                    (a, b) => (nodePositions[a.id]?.x ?? 0) - (nodePositions[b.id]?.x ?? 0),
-                  );
-                  const leftPos  = nodePositions[sorted[0].id];
-                  const rightPos = nodePositions[sorted[sorted.length - 1].id];
-                  if (!leftPos || !rightPos) return null;
-                  const y  = leftPos.y + NODE_H / 2;
-                  const x1 = leftPos.x + NODE_W / 2;   // horizontal center of leftmost card
-                  const x2 = rightPos.x + NODE_W / 2;  // horizontal center of rightmost card
-                  return (
-                    <line key={`sibling-${groupId}`}
-                      x1={x1} y1={y} x2={x2} y2={y}
-                      stroke="var(--color-slate-border-secondary)"
-                      strokeWidth="1.5"
-                      strokeDasharray="5 4"
-                      style={{ pointerEvents: 'none' }}
-                    />
-                  );
-                });
-              })()}
 
               {/* Pending edge while drawing or reconnecting */}
               {pendingEdge && (() => {
@@ -3480,6 +3748,20 @@ function FlowCanvas({
                 return (
                   <path d={d} stroke="var(--color-border-selected)" strokeWidth="2" fill="none"
                     strokeLinecap="round" style={{ pointerEvents: 'none' }} />
+                );
+              })()}
+
+              {/* Dotted connector from source node anchor to edge drag-drop picker */}
+              {edgeDragDrop && (() => {
+                const x1 = edgeDragDrop.anchorX;
+                const y1 = edgeDragDrop.anchorY;
+                const x2 = edgeDragDrop.canvasX;
+                const y2 = edgeDragDrop.canvasY;
+                const dy = Math.abs(y2 - y1) * 0.5;
+                const d  = `M ${x1} ${y1} C ${x1} ${y1 + dy}, ${x2} ${y2 - dy}, ${x2} ${y2}`;
+                return (
+                  <path d={d} stroke="var(--color-content-disabled)" strokeWidth="1.5" fill="none"
+                    strokeDasharray="5 4" strokeLinecap="round" style={{ pointerEvents: 'none' }} />
                 );
               })()}
             </svg>
@@ -3591,7 +3873,7 @@ function FlowCanvas({
             })}
 
             {/* ── Floating AI input below selected node ── */}
-            {selectedId && (() => {
+            {selectedId && !pendingEdge && (() => {
               const pos          = nodePositions[selectedId];
               const selectedNode = nodes.find(n => n.id === selectedId);
               if (!pos || !selectedNode) return null;
@@ -3658,7 +3940,7 @@ function FlowCanvas({
           style={{ position: 'fixed', left: typePickerPos.screenX, top: typePickerPos.screenY, zIndex: 900 }}
           onMouseDown={e => e.stopPropagation()}
         >
-          {(['trigger', 'condition', 'action'] as StepType[]).map(type => {
+          {(['trigger', 'condition', 'action', 'ai'] as StepType[]).map(type => {
             const cfg = STEP_CONFIG[type];
             return (
               <button
@@ -3667,6 +3949,55 @@ function FlowCanvas({
                 onClick={() => {
                   onCreateNodeAt(type, typePickerPos.canvasX, typePickerPos.canvasY);
                   setTypePickerPos(null);
+                }}
+                title={cfg.label}
+              >
+                {cfg.icon}
+              </button>
+            );
+          })}
+        </div>,
+        document.body,
+      )}
+
+      {/* Drag tooltip — follows arrow tip while dragging, hides when over a node */}
+      {pendingEdge?.screenX != null && createPortal(
+        <span
+          className={tooltipStyles.tooltip}
+          data-visible={!draggingOverNodeId || undefined}
+          style={{
+            position: 'fixed',
+            left: (pendingEdge.screenX ?? 0) - 12,
+            top: (pendingEdge.screenY ?? 0) - 10,
+            transform: 'translateX(-100%)',
+            pointerEvents: 'none',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          Drag and drop anywhere to add a node
+        </span>,
+        document.body,
+      )}
+
+      {/* Edge drag-drop type picker — appears at release point after dragging an edge to empty canvas */}
+      {edgeDragDrop && createPortal(
+        <div
+          className={styles.typePicker}
+          style={{ position: 'fixed', left: edgeDragDrop.screenX, top: edgeDragDrop.screenY, zIndex: 1000 }}
+          onMouseDown={e => e.stopPropagation()}
+        >
+          {(edgeDragDrop.fromNodeType === 'action'
+            ? ['action'] as StepType[]
+            : ['condition', 'action', 'ai'] as StepType[]
+          ).map(type => {
+            const cfg = STEP_CONFIG[type];
+            return (
+              <button
+                key={type}
+                className={clsx(styles.typePickerBtn, cfg.bgClass)}
+                onClick={() => {
+                  onCreateNodeAndConnect(edgeDragDrop.fromNodeId, type, edgeDragDrop.canvasX, edgeDragDrop.canvasY);
+                  setEdgeDragDrop(null);
                 }}
                 title={cfg.label}
               >
@@ -3730,7 +4061,7 @@ export function BuilderPage() {
   const [saveState,       setSaveState]       = useState<SaveState>('idle');
   const [globalAiPrompt,  setGlobalAiPrompt]  = useState('');
   const [globalAiLoading, setGlobalAiLoading] = useState(false);
-  const [globalAiResult,  setGlobalAiResult]  = useState<string | null>(null);
+  const [globalAiMessages, setGlobalAiMessages] = useState<Message[]>([]);
   const saveTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -3919,13 +4250,29 @@ export function BuilderPage() {
     sibling.conditionValues   = [];
 
     // Find rightmost X among all group members (or the originating node)
-    const SIBLING_PITCH = NODE_W + 48; // tight side-by-side spacing (48px gap between cards)
+    const SIBLING_PITCH = NODE_W + 24; // tight side-by-side spacing (48px gap between cards)
     const groupMemberIds = existingGroupId
       ? nodes.filter(n => n.branchGroupId === existingGroupId).map(n => n.id)
       : [nodeId];
     const rightmostX = Math.max(...groupMemberIds.map(id => (nodePositions[id] ?? { x: 0 }).x));
     const origPos = nodePositions[nodeId] ?? { x: 0, y: 0 };
     const origY = origPos.y;
+
+    // Find the parent node(s) that connect into this branch group so we can
+    // wire a new edge from the same parent(s) to the new sibling.
+    const groupMemberIdsForEdge = existingGroupId
+      ? nodes.filter(n => n.branchGroupId === existingGroupId).map(n => n.id)
+      : [nodeId];
+    const parentIds = new Set(
+      edges
+        .filter(e => groupMemberIdsForEdge.includes(e.to))
+        .map(e => e.from)
+    );
+    const newEdges: GraphEdge[] = [...parentIds].map(parentId => ({
+      id: `edge-${++_nextId}`,
+      from: parentId,
+      to: sibling.id,
+    }));
 
     setNodes(prev => [
       ...prev.map(n => {
@@ -3935,6 +4282,7 @@ export function BuilderPage() {
       }),
       { ...sibling, branchGroupId: groupId },
     ]);
+    setEdges(prev => [...prev, ...newEdges]);
 
     if (!existingGroupId) {
       // First branch added: center the pair around the original node's X position.
@@ -4030,8 +4378,10 @@ export function BuilderPage() {
 
   const handleGlobalAiSend = useCallback(async () => {
     if (!globalAiPrompt.trim() || globalAiLoading) return;
+    const userMsg: Message = { id: crypto.randomUUID(), role: 'user', content: globalAiPrompt.trim() };
+    setGlobalAiMessages(prev => [...prev, userMsg]);
+    setGlobalAiPrompt('');
     setGlobalAiLoading(true);
-    setGlobalAiResult(null);
     try {
       const promptNodes = nodes.map(n => ({
         id: n.id, type: n.type, selectedValue: n.selectedValue,
@@ -4068,10 +4418,10 @@ export function BuilderPage() {
         }
       }
       const text = result.textBlocks.join(' ').trim();
-      setGlobalAiResult(text || `Applied ${changes} change${changes !== 1 ? 's' : ''}.`);
-      setGlobalAiPrompt('');
+      const responseText = text || `Applied ${changes} change${changes !== 1 ? 's' : ''}.`;
+      setGlobalAiMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: responseText }]);
     } catch (err) {
-      setGlobalAiResult(`Error: ${err instanceof Error ? err.message : 'Something went wrong'}`);
+      setGlobalAiMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: `Error: ${err instanceof Error ? err.message : 'Something went wrong'}` }]);
     } finally {
       setGlobalAiLoading(false);
     }
@@ -4082,6 +4432,15 @@ export function BuilderPage() {
     const n = makeNode(type);
     setNodePositions(prev => ({ ...prev, [n.id]: { x: x - NODE_W / 2, y: y - NODE_H / 2 } }));
     setNodes(prev => [...prev, n]);
+    setSelectedId(n.id);
+  };
+
+  const createNodeAndConnect = (fromId: string, type: StepType, x: number, y: number) => {
+    const n = makeNode(type);
+    setNodePositions(prev => ({ ...prev, [n.id]: { x: x - NODE_W / 2, y: y - NODE_H / 2 } }));
+    setNodes(prev => [...prev, n]);
+    const edge: GraphEdge = { id: `edge-${++_nextId}`, from: fromId, to: n.id };
+    setEdges(prev => [...prev, edge]);
     setSelectedId(n.id);
   };
 
@@ -4132,7 +4491,7 @@ export function BuilderPage() {
           aiPrompt={globalAiPrompt}
           onAiPromptChange={setGlobalAiPrompt}
           aiLoading={globalAiLoading}
-          aiResult={globalAiResult}
+          messages={globalAiMessages}
           onAiSend={handleGlobalAiSend}
         />
 
@@ -4157,6 +4516,7 @@ export function BuilderPage() {
           onAddEdge={addEdge}
           onDeleteEdge={deleteEdge}
           onCreateNodeAt={createNodeAt}
+          onCreateNodeAndConnect={createNodeAndConnect}
           onCanvasDropAtPos={handleCanvasDropAtPos}
           editNodeMode={editNodeMode}
           editingNodeIds={editingNodeIds}

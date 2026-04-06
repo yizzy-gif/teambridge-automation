@@ -1,0 +1,286 @@
+/* ─── Root ───────────────────────────────────────────────────────────────────── */
+
+.root {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 48px;
+  box-shadow: inset -1px 0 0 var(--color-border-opaque);
+  background: var(--color-bg-secondary);
+  overflow: hidden;
+  transition: width 200ms ease;
+}
+
+.rootExpanded {
+  width: 240px;
+  border-right: 1px solid var(--color-border-opaque);
+  box-shadow: none;
+  background: var(--color-bg-primary);
+}
+
+/* ─── Inner ───────────────────────────────────────────────────────────────────── */
+
+.inner {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 8px;
+  background: transparent;
+  overflow: hidden;
+}
+
+.innerExpanded {
+  background: var(--color-bg-secondary);
+  border-radius: 0 6px 6px 0;
+}
+
+/* ─── Top / Bottom sections ──────────────────────────────────────────────────── */
+
+.top {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.top::-webkit-scrollbar {
+  display: none;
+}
+
+.bottom {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* ─── Workspace selector ─────────────────────────────────────────────────────── */
+
+.workspaceSelector {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 32px;
+  background: var(--color-bg-primary);
+  border: 0.5px solid var(--color-border-opaque);
+  border-radius: 6px;
+  cursor: pointer;
+  overflow: hidden;
+  flex-shrink: 0;
+  transition: background 150ms ease-in-out;
+}
+
+.workspaceSelector:hover {
+  background: var(--color-bg-secondary);
+}
+
+.workspaceSelector:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 1px;
+}
+
+.workspaceLogo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+}
+
+.workspaceName {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  letter-spacing: -0.084px;
+  color: var(--color-content-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chevronWrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  color: var(--color-content-secondary);
+  opacity: 0.6;
+}
+
+/* ─── Nav group & items ──────────────────────────────────────────────────────── */
+
+.navGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.navItemWrapper {
+  border-radius: 6px;
+  transition: background 150ms ease-in-out, box-shadow 150ms ease-in-out;
+}
+
+.navItemWrapperActive {
+  background: var(--color-bg-primary);
+  box-shadow:
+    0px 2px 4px rgba(0, 0, 0, 0.03),
+    0px 12px 32px rgba(0, 0, 0, 0.06),
+    inset 0 0 0 0.5px rgba(21, 21, 21, 0.05);
+}
+
+.navItemWrapperAiActive {
+  background: var(--gradient-ai);
+  box-shadow:
+    0px 2px 4px rgba(0, 0, 0, 0.03),
+    0px 12px 32px rgba(0, 0, 0, 0.06),
+    inset 0 0 0 0.5px rgba(140, 79, 226, 0.25);
+}
+
+.navItemBtn {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 32px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--color-content-primary);
+  opacity: 0.6;
+  transition: background 150ms ease-in-out, opacity 150ms ease-in-out, color 150ms ease-in-out;
+}
+
+.navItemBtn:hover {
+  background: rgba(21, 21, 21, 0.05);
+  opacity: 1;
+}
+
+.navItemBtn:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 1px;
+}
+
+.navItemBtnActive {
+  opacity: 1;
+}
+
+.navItemBtnAiActive {
+  color: var(--color-content-inverse);
+}
+
+.navItemBtnAiActive:hover {
+  background: transparent;
+}
+
+.navItemIcon {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+}
+
+.unreadDot {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--color-content-link, #1969fe);
+  pointer-events: none;
+}
+
+.navItemLabel {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  letter-spacing: -0.084px;
+  color: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ─── Divider ────────────────────────────────────────────────────────────────── */
+
+.divider {
+  all: unset;
+  display: block;
+  width: 100%;
+  height: 1px;
+  background: var(--color-border-opaque);
+  flex-shrink: 0;
+}
+
+/* ─── User row ───────────────────────────────────────────────────────────────── */
+
+.userRow {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  height: 32px;
+  border-radius: 6px;
+  cursor: pointer;
+  overflow: hidden;
+  transition: background 150ms ease-in-out;
+}
+
+.userRow:hover {
+  background: rgba(21, 21, 21, 0.05);
+}
+
+.userRow:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 1px;
+}
+
+.userAvatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: #ee9c2d;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 16px;
+  color: var(--color-content-primary);
+  flex-shrink: 0;
+  margin: 0 4px;
+}
+
+.userName {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  letter-spacing: -0.084px;
+  color: var(--color-content-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
