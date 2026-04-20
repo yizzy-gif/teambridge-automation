@@ -33,6 +33,15 @@ const primaryNav = [
 
 const bottomNav = [
   {
+    to: '/usage',
+    label: 'Usage',
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
+        <path d="M2 13.5V9M6 13.5V5M10 13.5V7.5M14 13.5V2.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+      </svg>
+    ),
+  },
+  {
     to: '/settings',
     label: 'Settings',
     icon: (
@@ -54,6 +63,7 @@ export function AppShell() {
     if (location.pathname.match(/^\/automations\/.+/)) return 'Edit Automation';
     if (location.pathname.startsWith('/automations')) return 'Manage';
     if (location.pathname.startsWith('/templates')) return 'Templates';
+    if (location.pathname.startsWith('/usage')) return 'Usage';
     if (location.pathname.startsWith('/settings')) return 'Settings';
     return 'Automation';
   })();

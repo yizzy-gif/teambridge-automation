@@ -1,0 +1,176 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   PolicyMatchingModal — folder / policy / sub-policy tree selector.
+   Rendered inside an Alloy Dialog (lg).
+   ───────────────────────────────────────────────────────────────────────────── */
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-height: 420px;
+  max-height: 60vh;
+}
+
+.filters {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.searchField {
+  flex: 1;
+  min-width: 200px;
+}
+
+.tagFilter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.tagChip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 24px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-primary);
+  color: var(--color-content-secondary);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition:
+    background var(--duration-fast),
+    border-color var(--duration-fast),
+    color var(--duration-fast);
+}
+
+.tagChip:hover {
+  background: var(--color-bg-secondary);
+}
+
+.tagChipSelected {
+  background: var(--step-policy-bg);
+  border-color: var(--step-policy-fg);
+  color: var(--step-policy-fg);
+}
+
+.tree {
+  flex: 1;
+  overflow-y: auto;
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-md);
+  padding: var(--space-2);
+  min-height: 280px;
+}
+
+.treeEmpty {
+  padding: var(--space-6);
+  text-align: center;
+  color: var(--color-content-tertiary);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+}
+
+.folder {
+  margin-bottom: var(--space-2);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--duration-fast);
+}
+
+.row:hover {
+  background: var(--color-bg-secondary);
+}
+
+.rowFolder {
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-content-primary);
+}
+
+.rowPolicy {
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-primary);
+  padding-left: var(--space-6);
+}
+
+.rowSubPolicy {
+  font-weight: var(--font-weight-regular);
+  color: var(--color-content-secondary);
+  padding-left: calc(var(--space-6) + var(--space-6));
+}
+
+.disclosure {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--color-content-tertiary);
+  transition: transform var(--duration-fast);
+  flex-shrink: 0;
+}
+
+.disclosureOpen {
+  transform: rotate(90deg);
+}
+
+.checkbox {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--step-policy-fg);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.rowLabel {
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  line-height: var(--line-height-relaxed);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rowTags {
+  display: inline-flex;
+  gap: var(--space-1);
+  flex-shrink: 0;
+}
+
+.rowTag {
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: var(--font-weight-medium);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-xs);
+  background: var(--color-bg-tertiary);
+  color: var(--color-content-tertiary);
+}
+
+.countBadge {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-content-tertiary);
+}
+
+.footerSummary {
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  color: var(--color-content-secondary);
+  margin-right: auto;
+}

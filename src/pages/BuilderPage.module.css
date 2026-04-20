@@ -131,6 +131,11 @@
   pointer-events: none;
   display: flex;
   flex-direction: column;
+  transition: width var(--duration-base) var(--ease-default);
+}
+
+.leftPanel[data-collapsed="true"] {
+  width: 52px;
 }
 
 .leftPanelInner {
@@ -143,11 +148,61 @@
   pointer-events: none;
 }
 
+.leftPanel[data-collapsed="true"] .leftPanelInner {
+  padding: 0 var(--space-4);
+  align-items: flex-start;
+  gap: var(--space-2);
+  overflow: visible;
+}
+
 /* Each card re-enables pointer events */
 .infoCard,
 .paletteCard,
 .aiComposer {
   pointer-events: auto;
+}
+
+/* Panel collapse toggle pill — right edge of left panel */
+.leftPanelHandle {
+  position: absolute;
+  right: -7px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 40px;
+  cursor: pointer;
+  pointer-events: auto;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.leftPanelHandle::after {
+  content: '';
+  display: block;
+  width: 6px;
+  height: 40px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border-opaque);
+  transition: border-color var(--duration-fast);
+  pointer-events: none;
+}
+
+.leftPanelHandle:hover::after {
+  border-color: var(--color-border-focus);
+}
+
+.leftPanel[data-collapsed="true"] .leftPanelHandle {
+  display: none;
+}
+
+/* Collapsed panel icon buttons */
+.panelSearchIconBtn,
+.panelAiIconBtn {
+  pointer-events: auto;
+  flex-shrink: 0;
 }
 
 /* ── Info card ── */
@@ -549,7 +604,31 @@
   border: 1px solid var(--color-border-opaque);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-below-md);
-  overflow: hidden;
+  overflow: visible;
+}
+
+/* ── Add-new-tool toolbar inside the palette card ── */
+.paletteToolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+}
+
+.paletteToolbarLabel {
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-tertiary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.paletteToolbarBtns {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: 1;
 }
 
 /* Results list — shown when search is active */
@@ -891,6 +970,312 @@
   will-change: transform;
 }
 
+/* ─── Condition group container ───────────────────────────────────────────────── */
+
+.groupContainer {
+  position: absolute;
+  background: var(--color-blue-bg-tertiary);
+  border: 1px solid var(--color-blue-border-tertiary);
+  border-radius: 16px;
+  z-index: 0;
+  cursor: grab;
+}
+.groupContainer:active { cursor: grabbing; }
+.groupContainer:hover .anchor { opacity: 1; }
+
+.groupContainerAtLimit {
+  opacity: 0.7;
+}
+
+.groupContainerSelected {
+  /* Selected state: darker blue border only (Alloy primary/active border token).
+     Background fill stays the same — no box-shadow, no glow. */
+  border-color: var(--color-blue-border-primary);
+}
+
+/* ─── Group slot placeholders (empty dashed cells inside a condition group) ──────── */
+
+.groupSlot {
+  position: absolute;
+  border: 1px dashed var(--color-blue-border-tertiary);
+  border-radius: 16px;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-blue-bg-primary);
+  cursor: pointer;
+  transition: border-color var(--duration-fast) var(--ease-default),
+              background   var(--duration-fast) var(--ease-default),
+              color         var(--duration-fast) var(--ease-default);
+}
+.groupSlot:hover {
+  border-color: var(--color-blue-border-secondary);
+  background: color-mix(in srgb, var(--color-blue-bg-secondary) 40%, transparent);
+  color: var(--color-blue-content-secondary);
+}
+
+.groupSlotHover {
+  border-color: var(--color-blue-border-secondary);
+}
+
+/* ── AND/OR badge between adjacent condition nodes ── */
+.groupAndOrBadge {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  background: var(--color-blue-bg-primary);
+  color: var(--color-content-inverse-primary);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-semibold);
+  font-family: var(--font-sans);
+  width: 39px;
+  height: 20px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 2;
+  white-space: nowrap;
+  user-select: none;
+}
+
+
+/* Group container highlighted as a drop target */
+.groupContainerDropTarget {
+  border-color: var(--color-blue-border-secondary);
+  background: color-mix(in srgb, var(--color-blue-bg-tertiary) 80%, transparent);
+}
+
+.groupAddBtn {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border-opaque);
+  background: var(--color-bg-primary);
+  color: var(--color-content-secondary);
+  cursor: pointer;
+  transition: background var(--duration-fast), border-color var(--duration-fast), color var(--duration-fast);
+}
+.groupAddBtn:hover {
+  background: var(--color-bg-secondary);
+  border-color: var(--color-border-focus);
+  color: var(--color-content-primary);
+}
+
+/* ── Group right panel ── */
+.groupPanel {
+  flex: 1;
+  min-height: 0;
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-below-md);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  pointer-events: auto;
+}
+
+.groupPanelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-border-opaque);
+}
+
+.groupPanelHeaderTitle {
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-semibold);
+  font-family: var(--font-sans);
+  color: var(--color-content-primary);
+}
+
+.groupPanelCloseBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: transparent;
+  color: var(--color-content-secondary);
+  cursor: pointer;
+  transition: background var(--duration-fast), color var(--duration-fast);
+}
+.groupPanelCloseBtn:hover {
+  background: var(--color-bg-secondary);
+  color: var(--color-content-primary);
+}
+
+.groupPanelBody {
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.groupPanelLabel {
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  font-family: var(--font-sans);
+  color: var(--color-content-secondary);
+}
+
+.groupPanelSelect {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border-opaque);
+  background: var(--color-bg-primary);
+  color: var(--color-content-primary);
+  font-size: var(--text-sm);
+  font-family: var(--font-sans);
+  cursor: pointer;
+  outline: none;
+  appearance: auto;
+}
+.groupPanelSelect:focus {
+  border-color: var(--color-border-focus);
+}
+
+.groupPanelDeleteBtn {
+  margin-top: var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-error-border-secondary);
+  background: transparent;
+  color: var(--color-error-content-primary);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+  font-family: var(--font-sans);
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--duration-fast), border-color var(--duration-fast);
+}
+.groupPanelDeleteBtn:hover {
+  background: var(--color-error-bg-secondary);
+}
+
+.groupPanelSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.groupPanelList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.groupPanelEmpty {
+  font-size: var(--text-xs);
+  font-family: var(--font-sans);
+  color: var(--color-content-tertiary);
+  padding: var(--space-2) var(--space-3);
+}
+
+.groupPanelListItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-default);
+  width: 100%;
+}
+.groupPanelListItem:hover {
+  background: var(--color-bg-secondary);
+}
+
+.groupPanelListIndex {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-full);
+  background: var(--color-blue-bg-secondary);
+  color: var(--color-blue-content-primary);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-semibold);
+  font-family: var(--font-sans);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.groupPanelListLabel {
+  font-size: var(--text-sm);
+  font-family: var(--font-sans);
+  color: var(--color-content-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.groupPanelAddBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px dashed var(--color-border-opaque);
+  background: transparent;
+  color: var(--color-content-secondary);
+  font-size: var(--text-sm);
+  font-family: var(--font-sans);
+  cursor: pointer;
+  width: 100%;
+  transition: background var(--duration-fast) var(--ease-default),
+              border-color var(--duration-fast) var(--ease-default),
+              color var(--duration-fast) var(--ease-default);
+}
+.groupPanelAddBtn:hover {
+  background: var(--color-bg-secondary);
+  border-color: var(--color-border-focus);
+  color: var(--color-content-primary);
+}
+
+.groupPanelLimitNote {
+  font-size: var(--text-xs);
+  font-family: var(--font-sans);
+  color: var(--color-content-tertiary);
+  margin: 0;
+  padding: var(--space-1) var(--space-3);
+}
+
+/* ── Output port handle (condition node yes/no / multi-value handles) ──
+   Intentionally does NOT extend .anchor — avoids CSS cascade conflicts
+   since .anchor is defined later in this file with equal specificity. ── */
+.outputPortHandle {
+  position: relative; /* sits in flex flow of .outputPortWrap */
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  background: var(--color-content-primary);
+  border: 2px solid var(--color-border-selected);
+  border-radius: 50%;
+  z-index: 10;
+  cursor: crosshair;
+  opacity: 0;
+  box-shadow: var(--shadow-below-low);
+  pointer-events: all;
+  transition: opacity var(--duration-fast) var(--ease-default),
+              transform var(--duration-fast) var(--ease-default);
+}
+
 /* ─── Node wrapper (absolute shell for each node + its ports) ─────────────────── */
 
 .nodeWrapper {
@@ -910,25 +1295,23 @@
 
 .nodeOutputPorts {
   position: absolute;
-  top: 80px; /* NODE_H */
+  /* Place the top of this container at (card bottom - half anchor height).
+     100% = nodeWrapper height = card height.
+     outputPortAnchor is 8px tall → half = 4px.
+     Result: anchor centers land exactly on the card's bottom edge. */
+  top: calc(100% - 4px);
   left: 0;
   width: 100%;
   display: flex;
   justify-content: center;
-  gap: var(--space-4);
+  gap: var(--space-8);
 }
 
 .outputPortWrap {
   display: flex;
   flex-direction: column;
   align-items: center;
-  position: relative;
-}
-
-.outputPortLine {
-  width: 1.5px;
-  height: 20px;
-  background: var(--color-border-opaque);
+  gap: var(--space-1);
 }
 
 .outputPortLabel {
@@ -936,9 +1319,10 @@
   font-family: var(--font-sans);
   font-weight: var(--font-weight-medium);
   color: var(--color-content-tertiary);
-  margin-top: var(--space-1);
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  user-select: none;
+  pointer-events: none;
 }
 
 /* ─── Add workflow button ─────────────────────────────────────────────────────── */
@@ -1171,6 +1555,10 @@
   border-color: var(--step-ai-fg);
   background: color-mix(in srgb, var(--step-ai-fg) 7%, transparent);
 }
+.dropPlaceholderPolicy {
+  border-color: var(--step-policy-fg);
+  background: color-mix(in srgb, var(--step-policy-fg) 7%, transparent);
+}
 
 @keyframes placeholderFadeIn {
   from { opacity: 0; transform: translateY(6px); }
@@ -1191,40 +1579,6 @@
   gap: var(--space-1);
 }
 
-/* Drag-to-reorder grip handle — floats left of the card */
-.nodeDragHandle {
-  position: absolute;
-  left: -24px;
-  top: 50%;
-  transform: translateY(-50%);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  border-radius: var(--radius-xs);
-  color: var(--color-content-tertiary);
-  opacity: 0;
-  cursor: grab;
-  transition:
-    color var(--duration-fast),
-    background var(--duration-fast);
-}
-
-.flowNodeOuter:hover .nodeDragHandle,
-.flowNodeOuterSelected .nodeDragHandle {
-  opacity: 1;
-}
-
-.nodeDragHandle:hover {
-  background: color-mix(in srgb, var(--color-content-primary) 7%, transparent);
-  color: var(--color-content-secondary);
-}
-
-.flowNodeOuterDragging .nodeDragHandle {
-  cursor: grabbing;
-  opacity: 1;
-}
 
 /* Badge — 24×24 icon square, mirrors dots button size */
 .nodeTypeBadge {
@@ -1259,6 +1613,8 @@
 .iconCondition { background: var(--step-condition-bg);  color: var(--step-condition-fg); }
 .iconAction    { background: var(--step-action-bg);     color: var(--step-action-fg); }
 .iconAi        { background: var(--step-ai-bg);         color: var(--step-ai-fg); }
+.iconDelay     { background: var(--step-delay-bg);      color: var(--step-delay-fg); }
+.iconPolicy    { background: var(--step-policy-bg);     color: var(--step-policy-fg); }
 
 .nodeBody {
   padding: 0 var(--space-2) var(--space-2);
@@ -1325,13 +1681,45 @@
   top: calc(48px + 16px);
   right: 0;
   bottom: calc(60px + var(--space-4)); /* clear zoom/tidy controls (60px tall, space-4 gap) */
-  width: 360px;
+  width: 360px; /* overridden by inline style when resized */
   padding: 0 var(--space-4) var(--space-4);
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-  z-index: var(--z-raised);
+  z-index: var(--z-sticky);
   pointer-events: none;
+}
+
+.rightPanelResizeHandle {
+  position: absolute;
+  left: -7px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 40px;
+  cursor: ew-resize;
+  pointer-events: auto;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Visual pill indicator — 6×40px, white fill, border */
+.rightPanelResizeHandle::after {
+  content: '';
+  display: block;
+  width: 6px;
+  height: 40px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border-opaque);
+  transition: border-color var(--duration-fast);
+  pointer-events: none;
+}
+
+.rightPanelResizeHandle:hover::after {
+  border-color: var(--color-border-focus);
 }
 
 /* ─── Node popover ───────────────────────────────────────────────────────────── */
@@ -1538,11 +1926,14 @@
 }
 
 .popoverSectionLabel {
-  font-size: var(--text-xs);
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-content-tertiary);
+  font-family:    var(--font-sans);
+  font-size:      var(--text-xs);
+  font-weight:    var(--font-weight-medium);
+  line-height:    var(--line-height-normal);
+  letter-spacing: var(--tracking-wider);
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  color: var(--color-content-tertiary);
+  display: block;
 }
 
 .popoverDivider {
@@ -1861,6 +2252,31 @@
 
 /* ─── Bottom bar ─────────────────────────────────────────────────────────────── */
 
+/* ─── Invalid connection error indicator ──────────────────────────────────── */
+
+.invalidConnectionError {
+  position: fixed;
+  transform: translate(-50%, -120%);
+  background: var(--color-error-bg-primary);
+  color: var(--color-error-content-primary);
+  border: 1px solid var(--color-error-border-secondary);
+  border-radius: var(--radius-md);
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  font-family: var(--font-sans);
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 9999;
+  box-shadow: var(--shadow-below-md);
+  animation: invalidConnectionFadeIn var(--duration-fast) var(--ease-out);
+}
+
+@keyframes invalidConnectionFadeIn {
+  from { opacity: 0; transform: translate(-50%, -100%); }
+  to   { opacity: 1; transform: translate(-50%, -120%); }
+}
+
 .canvasBottomBar {
   position: absolute;
   bottom: var(--space-2);
@@ -1905,6 +2321,24 @@
   font-size: var(--text-xs);
   font-weight: var(--font-weight-medium);
   white-space: nowrap;
+}
+
+/* Add group button — shares tidyBtn shape, blue accent */
+.addGroupBtn {
+  width: auto;
+  padding: 0 var(--space-2);
+  gap: var(--space-1);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+  color: var(--color-blue-content-secondary);
+  border-color: var(--color-blue-border-tertiary);
+}
+.addGroupBtn:hover {
+  background: var(--color-blue-bg-tertiary);
+  color: var(--color-blue-content-primary);
+  border-color: var(--color-blue-border-secondary);
 }
 
 /* Divider between zoom buttons and tidy button */
@@ -2001,6 +2435,23 @@
 }
 .conditionWithinNextUnit {
   flex: 1;
+}
+
+/* ─── Delay node configurator ────────────────────────────────────────────────── */
+.delayDurationRow {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+.delayAmountInput {
+  width: 96px !important; /* overrides 100% width */
+  flex-shrink: 0;
+}
+.delayUnitSelect {
+  flex: 1;
+}
+.delayCustomUnitRow {
+  margin-top: var(--space-2);
 }
 
 /* ─── Add branch button ──────────────────────────────────────────────────────── */
@@ -2176,6 +2627,15 @@
 
 /* ─── Edge midpoint + button ─────────────────────────────────────────────────── */
 
+/* Branch edge label badge — non-interactive, centered on bezier midpoint */
+.edgeBranchBadge {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 1;
+  user-select: none;
+}
+
 .edgeMidpointArea {
   position: absolute;
   display: flex;
@@ -2230,12 +2690,23 @@
   to   { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
 
+/* ── AND edge mid-label — pill shown at midpoint of horizontal and-edges ── */
+.andEdgeMidLabel {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 /* ── Connector anchors ── */
 .anchor {
   position: absolute;
   width: 10px;
   height: 10px;
-  background: var(--color-bg-primary);
+  background: var(--color-content-primary);
   border: 2px solid var(--color-border-selected);
   border-radius: 50%;
   left: 50%;
@@ -2265,6 +2736,49 @@
 
 .anchor:hover {
   transform: scale(1.3);
+}
+
+/* Same visibility rules for output port handles (separate class — see .outputPortHandle) */
+.nodeWrapper:hover .outputPortHandle,
+.nodeWrapper[data-selected] .outputPortHandle,
+.nodeWrapper[data-drag-target] .outputPortHandle {
+  opacity: 1;
+}
+
+.outputPortHandle:hover {
+  transform: scale(1.3);
+}
+
+.groupContainer[data-drag-target] .anchor {
+  opacity: 1;
+}
+
+/* ── Condition node cards inside a condition group ── */
+
+/* Override box-shadow: use border + top inner shadow instead of bottom shadow */
+.nodeWrapper[data-in-group] .flowNode {
+  box-shadow:
+    inset 0 0 0 1px var(--color-border-opaque),
+    inset 0 3px 5px color-mix(in srgb, var(--color-bg-always-dark) 6%, transparent);
+}
+.nodeWrapper[data-in-group]:hover:not([data-selected]) .flowNode {
+  box-shadow:
+    inset 0 0 0 1px var(--color-border-opaque),
+    inset 0 3px 5px color-mix(in srgb, var(--color-bg-always-dark) 6%, transparent);
+}
+
+/* Selected card inside a group: darker blue border (Alloy primary/active border token).
+   Overrides both the default in-group border and the generic flowNodeOuterSelected ring. */
+.nodeWrapper[data-in-group][data-selected] .flowNode {
+  box-shadow:
+    inset 0 0 0 2px var(--color-blue-border-primary),
+    inset 0 3px 5px color-mix(in srgb, var(--color-bg-always-dark) 6%, transparent);
+}
+
+/* Condition icon inside a group: blue-150 bg, blue-700 stroke */
+.nodeWrapper[data-in-group] .iconCondition {
+  background: var(--color-blue-border-tertiary);
+  color: var(--color-blue-content-secondary);
 }
 
 /* ── Canvas type picker (double-click to add node) ── */
@@ -2451,18 +2965,13 @@
 }
 
 .aiSpecRow {
-  display: grid;
-  grid-template-columns: 110px 1fr;
-  gap: var(--space-3);
-  align-items: start;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  width: 100%;
 }
 
-.aiSpecRowLabel {
-  font-size: var(--text-sm);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-content-secondary);
-  padding-top: 7px;
-}
 
 .aiSpecRowValue {
   display: flex;
@@ -2487,13 +2996,14 @@
   background: var(--color-bg-primary);
   border: 1px solid var(--color-border-opaque);
   border-radius: var(--radius-md);
+  width: 100%;
 }
 
 .aiSpecPersonaAvatar {
   width: 32px;
   height: 32px;
   border-radius: var(--radius-sm);
-  background: linear-gradient(135deg, #5bc8c8 0%, #3aa8b8 100%);
+  background: var(--color-brand);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2508,14 +3018,43 @@
   gap: 1px;
 }
 
+.aiSpecVoicePill {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.aiSpecVoicePillIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  color: var(--color-content-secondary);
+}
+
+.aiSpecVoicePillLabel {
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-regular);
+  color: var(--color-content-secondary);
+  padding-right: var(--space-2);
+  white-space: nowrap;
+}
+
 .aiSpecPersonaName {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: var(--space-1);
-  font-size: var(--text-sm);
-  font-weight: var(--font-weight-medium);
+  font-family:    var(--font-sans);
+  font-size:      var(--text-base);
+  font-weight:    var(--font-weight-medium);
+  line-height:    var(--line-height-relaxed);
+  letter-spacing: var(--tracking-normal);
   color: var(--color-content-primary);
-  line-height: 1.4;
 }
 
 .aiSpecPersonaBy {
@@ -2534,6 +3073,60 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+}
+
+/* ── Add card popup — portaled to body ── */
+.aiSpecAddMenu {
+  position: fixed;
+  transform: translateY(calc(-100% - var(--space-1)));
+  min-width: 180px;
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-below-md);
+  padding: var(--space-1);
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  z-index: var(--z-overlay);
+}
+
+.aiSpecAddMenuItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2) var(--space-2);
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-regular);
+  color: var(--color-content-primary);
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--duration-fast);
+}
+
+.aiSpecAddMenuItem:hover:not(:disabled) {
+  background: var(--color-bg-secondary);
+}
+
+.aiSpecAddMenuItem:disabled {
+  color: var(--color-content-tertiary);
+  cursor: not-allowed;
+}
+
+.aiSpecAddMenuIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-content-secondary);
+  flex-shrink: 0;
+}
+
+.aiSpecAddMenuItem:disabled .aiSpecAddMenuIcon {
+  color: var(--color-content-tertiary);
 }
 
 .aiSpecDataCard {
@@ -2589,24 +3182,6 @@
   flex-shrink: 0;
 }
 
-.aiSpecDataCardActionBtn {
-  all: unset;
-  box-sizing: border-box;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: var(--radius-xs);
-  color: var(--color-content-tertiary);
-  transition: background var(--duration-fast), color var(--duration-fast);
-}
-
-.aiSpecDataCardActionBtn:hover {
-  background: rgba(21, 21, 21, 0.06);
-  color: var(--color-content-secondary);
-}
 
 .aiSpecDataCardBody {
   display: flex;
@@ -2650,19 +3225,6 @@
   align-items: center;
 }
 
-.aiSpecFieldPill {
-  display: inline-flex;
-  align-items: center;
-  height: 20px;
-  padding: 0 6px;
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border-opaque);
-  border-radius: var(--radius-xs);
-  font-size: 11px;
-  font-weight: var(--font-weight-medium);
-  color: var(--color-content-secondary);
-  white-space: nowrap;
-}
 
 .aiSpecChannelRow {
   display: flex;
@@ -2670,32 +3232,6 @@
   flex-wrap: wrap;
 }
 
-.aiSpecChannelTag {
-  all: unset;
-  box-sizing: border-box;
-  display: inline-flex;
-  align-items: center;
-  height: 24px;
-  padding: 0 var(--space-2);
-  border: 1px solid var(--color-border-opaque);
-  border-radius: var(--radius-xs);
-  font-size: var(--text-xs);
-  font-weight: var(--font-weight-medium);
-  background: var(--color-bg-secondary);
-  color: var(--color-content-secondary);
-  cursor: pointer;
-  transition: background var(--duration-fast), border-color var(--duration-fast), color var(--duration-fast);
-}
-
-.aiSpecChannelTagActive {
-  background: color-mix(in srgb, var(--color-brand) 8%, var(--color-bg-primary));
-  border-color: var(--color-brand);
-  color: var(--color-brand);
-}
-
-.aiSpecChannelTag:hover:not(.aiSpecChannelTagActive) {
-  background: var(--color-bg-tertiary);
-}
 
 .aiSpecTargetWrap {
   flex: 1;
@@ -2704,4 +3240,183 @@
 
 .aiSpecMaxTargetsInput {
   width: 80px;
+}
+
+/* ─── Branch output config (right panel, standalone condition nodes) ── */
+
+.branchModeSelect {
+  width: 100%;
+  height: 32px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  color: var(--color-content-primary);
+  cursor: pointer;
+  outline: none;
+  transition: border-color var(--duration-fast);
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right var(--space-3) center;
+  padding-right: var(--space-7);
+}
+
+.branchModeSelect:focus {
+  border-color: var(--color-border-focus);
+}
+
+/* Inline mode-switch confirmation */
+.branchConfirmPanel {
+  padding: var(--space-3);
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.branchConfirmText {
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  color: var(--color-content-secondary);
+  margin: 0;
+  line-height: 1.4;
+}
+
+.branchConfirmActions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.branchConfirmYes {
+  height: 26px;
+  padding: 0 var(--space-3);
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--color-bg-inverse-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-inverse-primary);
+  cursor: pointer;
+  transition: opacity var(--duration-fast);
+}
+
+.branchConfirmYes:hover {
+  opacity: 0.85;
+}
+
+.branchConfirmNo {
+  height: 26px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-secondary);
+  cursor: pointer;
+  transition: background var(--duration-fast);
+}
+
+.branchConfirmNo:hover {
+  background: var(--color-bg-secondary);
+}
+
+/* ─── Policy node card ──────────────────────────────────────────────────────── */
+
+.policyNodeSummary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  width: 100%;
+}
+
+.policyNodeSummaryLine {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--step-policy-fg);
+  line-height: var(--line-height-relaxed);
+  word-break: break-word;
+}
+
+.policyNodeSummaryPlaceholder {
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-placeholder);
+  line-height: var(--line-height-relaxed);
+}
+
+.policyNodeThresholdLine {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-secondary);
+  line-height: var(--line-height-relaxed);
+}
+
+/* ─── Policy configurator (right panel) ─────────────────────────────────────── */
+
+.policySummaryRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border-opaque);
+}
+
+.policySummaryText {
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-primary);
+  line-height: var(--line-height-relaxed);
+  flex: 1;
+  min-width: 0;
+}
+
+.policySummaryTextEmpty {
+  color: var(--color-content-placeholder);
+}
+
+.policyThresholdRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.policyThresholdLabel {
+  flex: 1;
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-primary);
+}
+
+.policyThresholdInputWrap {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.policyThresholdInput {
+  width: 72px;
+}
+
+.policyThresholdUnit {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-secondary);
+  min-width: 32px;
 }

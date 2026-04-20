@@ -82,6 +82,10 @@ body {
   --step-action-fg:    var(--Alloy-green-700,  #15803d);
   --step-ai-bg:        var(--Alloy-purple-100, #ede9fe);
   --step-ai-fg:        var(--Alloy-purple-600, #7c3aed);
+  --step-delay-bg:     var(--Alloy-yellow-150, #fff0b2);
+  --step-delay-fg:     var(--Alloy-yellow-700, #997a00);
+  --step-policy-bg:    var(--Alloy-coral-100,  #ffe1d6);
+  --step-policy-fg:    var(--Alloy-coral-600,  #c2410c);
 
   /* Canvas dot-grid */
   --canvas-bg:         #fafafa;
@@ -92,6 +96,8 @@ body {
   --tag-condition-color: #75a5fe;  /* alloy-blue-300   */
   --tag-action-color:    #7acd82;  /* alloy-green-300  */
   --tag-ai-color:        #a78bfa;  /* alloy-purple-300 */
+  --tag-delay-color:     #ffd900;  /* alloy-yellow-300   */
+  --tag-policy-color:    #fb9273;  /* alloy-coral-300    */
 
   /* Muted placeholder text inside node Select field — Figma --content/inversesecondary */
   --color-content-placeholder: #cbd0d7;

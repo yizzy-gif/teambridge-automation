@@ -13,7 +13,7 @@ export const GLOBAL_TOOLS: Anthropic.Tool[] = [
       properties: {
         type: {
           type: 'string',
-          enum: ['trigger', 'condition', 'action', 'ai'],
+          enum: ['trigger', 'condition', 'action', 'ai', 'delay'],
           description: 'The step type to add.',
         },
         parent_node_id: {

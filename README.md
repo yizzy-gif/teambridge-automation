@@ -13,9 +13,10 @@ A modern, AI-powered automation builder built with React, TypeScript, and the [A
 
 | Surface | What it does |
 |---|---|
-| **Automations** | List all workflows in card or table view. Filter by status (active, paused, draft). Search by name, description, or tag. View per-automation run stats with a segmented progress bar. |
+| **Automations** | List all workflows in card or table view. Filter by status (active, paused, draft). Search by name, description, or tag. Expand any row for a detailed workflow preview with inline Edit / View runs / Pause / Resume actions. |
 | **Flow Builder** | Build step-based automation flows visually. Add trigger, condition, action, and AI nodes. Configure each step in a right-side panel. Use the inline AI prompt below any selected node to generate or modify steps with natural language. |
 | **Templates** | Browse pre-built automation templates by category. Filter by trigger type, tag, and keyword. Launch any template directly into the builder with steps pre-loaded. |
+| **Usage** | Global dashboard aggregating run data across every workflow. Filter by workflow, category, or status; toggle the time range (24h / 7d / 30d / All). Stat cards show total runs, success rate, and people reached with period-over-period deltas. A full-width matcha-gradient chart plots runs over time. |
 | **Settings** | Configure run limits, timezone, notification behavior, and AI feature preferences. |
 
 ### AI Features
@@ -102,7 +103,9 @@ teambridge-automation/
 ├── src/
 │   ├── components/
 │   │   ├── PrimaryNav.tsx        # Collapsible primary navigation sidebar
-│   │   └── PrimaryNav.module.css
+│   │   ├── WorkflowPreview.tsx   # Expandable workflow preview (card + row)
+│   │   ├── PolicyMatchingModal.tsx  # Tree picker for folders → policies → sub-policies
+│   │   └── RunsRangeChart.tsx    # SVG step-line chart for the Usage page
 │   ├── layouts/
 │   │   ├── AppShell.tsx          # Main layout — sidebar, top bar, page outlet
 │   │   └── AppShell.module.css
@@ -110,9 +113,12 @@ teambridge-automation/
 │   │   ├── AutomationsPage.tsx   # Automation list with search & filters
 │   │   ├── BuilderPage.tsx       # Step-based flow builder + inline AI prompt
 │   │   ├── TemplatesPage.tsx     # Pre-built automation templates
+│   │   ├── UsagePage.tsx         # Global usage dashboard
 │   │   └── SettingsPage.tsx      # General, notifications & AI settings
 │   ├── features/
-│   │   └── ai/                   # Anthropic SDK client, tools, and system prompts
+│   │   ├── ai/                   # Anthropic SDK client, tools, and system prompts
+│   │   ├── usage/                # Normalized run data + window/bucket helpers
+│   │   └── workflows/            # Typed client for workflow-runs API (mock)
 │   ├── styles/
 │   │   └── app.css               # Imports Alloy tokens, typography, and resets
 │   ├── App.tsx                   # Route configuration (React Router v7)

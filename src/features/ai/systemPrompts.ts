@@ -1,6 +1,6 @@
 export interface PromptNode {
   id: string;
-  type: 'trigger' | 'condition' | 'action' | 'ai';
+  type: 'trigger' | 'condition' | 'action' | 'ai' | 'delay';
   selectedValue?: string;
   conditionOperator?: string;
   conditionValues?: string[];
@@ -11,7 +11,7 @@ export interface PromptNode {
 export interface PromptEdge {
   from: string;
   to: string;
-  branch?: 'yes' | 'no';
+  branch?: string;
 }
 
 export interface PromptLibraryItem {
@@ -79,7 +79,7 @@ After making changes, provide a brief one-sentence summary of what you did.`,
   }
 
   // 4. Available library items grouped by type
-  const byType: Record<string, string[]> = { trigger: [], condition: [], action: [], ai: [] };
+  const byType: Record<string, string[]> = { trigger: [], condition: [], action: [], ai: [], delay: [] };
   for (const item of libraryItems) {
     byType[item.type]?.push(item.label);
   }

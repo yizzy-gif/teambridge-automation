@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { Fragment, useCallback, useEffect, useId, useState } from 'react';
+import type { ComponentType } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { Tabs } from '@alloy/components/Tabs';
@@ -9,6 +10,7 @@ import type { TagColor } from '@alloy/components/Tag';
 import { ToggleButton } from '@alloy/components/ToggleButton';
 import { DataCard } from '@alloy/components/DataCard';
 import { Divider } from '@alloy/components/Divider';
+import { Switch } from '@alloy/components/Switch';
 import {
   Table, TableHeader, TableBody, TableRow, TableHead, TableCell,
   CellStack, CellStatusTag, CellTag, CellText,
@@ -18,6 +20,18 @@ import { BarChart02Icon } from '@alloy/components/icons/BarChart02Icon';
 import { Users03Icon } from '@alloy/components/icons/Users03Icon';
 import { CheckCircleIcon } from '@alloy/components/icons/CheckCircleIcon';
 import { ListBulletIcon } from '@alloy/components/icons/ListBulletIcon';
+import { ChevronDownIcon } from '@alloy/components/icons/ChevronDownIcon';
+import { ChevronRightIcon } from '@alloy/components/icons/ChevronRightIcon';
+import { ClockIcon } from '@alloy/components/icons/ClockIcon';
+import { Mail01Icon } from '@alloy/components/icons/Mail01Icon';
+import { Bell01Icon } from '@alloy/components/icons/Bell01Icon';
+import { ClipboardCheckIcon } from '@alloy/components/icons/ClipboardCheckIcon';
+import { MessageNotificationCircleIcon } from '@alloy/components/icons/MessageNotificationCircleIcon';
+import { RefreshCw04Icon } from '@alloy/components/icons/RefreshCw04Icon';
+import { BankIcon } from '@alloy/components/icons/BankIcon';
+import { PackageIcon } from '@alloy/components/icons/PackageIcon';
+import { TeambridgeAIIcon } from '@alloy/components/icons/TeambridgeAIIcon';
+import { WorkflowPreview } from '@/components/WorkflowPreview';
 import styles from './AutomationsPage.module.css';
 
 // ─── Workflow settings persistence ────────────────────────────────────────────
@@ -36,7 +50,22 @@ function loadWorkflowSettings(): WorkflowSettingsStore {
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+/**
+ * Workflow-level lifecycle status — tracks whether the workflow accepts new
+ * triggers. Drives the Active/Paused toggle on the card and the preview's
+ * Resume/Pause button. Independent of run-level status below.
+ */
 type AutomationStatus = 'active' | 'paused' | 'draft';
+
+/**
+ * Run-level status — the outcome of the most recent execution. Four terminal
+ * / ongoing states per product spec:
+ *   - ongoing:   currently executing
+ *   - completed: finished successfully (workflow turned off after purpose)
+ *   - failed:    errored out or system-stopped due to error
+ *   - exited:    soft stop — user stopped mid-run, or flow hit a dead end
+ */
+type RunStatus = 'ongoing' | 'completed' | 'failed' | 'exited';
 type ViewMode = 'card' | 'table';
 
 interface AutomationStats {
@@ -45,65 +74,138 @@ interface AutomationStats {
   skipped: number;  // condition unmet / filtered out (yellow)
 }
 
+/** Keys for the action-node icons shown in the card cluster. Each maps to an
+ * Alloy icon in ACTION_ICON_MAP below. Derive this list from the workflow's
+ * action nodes once the graph is wired to the backend. */
+type ActionIconKey =
+  | 'mail' | 'bell' | 'task' | 'message' | 'sync' | 'people'
+  | 'finance' | 'package' | 'ai';
+
 interface Automation {
   id: string;
   name: string;
   description: string;
   status: AutomationStatus;
+  /** Status of the most recent run (separate from workflow-level `status`).
+   *  Undefined when the workflow has never run (draft). */
+  lastRunStatus?: RunStatus;
   trigger: string;
   lastRun: string | null;
   runsTotal: number;
+  runsSuccessful: number;
   category: string;
   stats: AutomationStats;
   tags?: string[];
+  /** Icons for action nodes used in the workflow, in graph order. */
+  actionIcons?: ActionIconKey[];
+  /** When true, the card shows a subtle warning indicator. */
+  hasErrors?: boolean;
+  // Preview-only metadata. TODO(api): populate from the workflow endpoint once wired.
+  owner: { name: string; avatarUrl?: string };
+  createdAt: string;  // ISO
+  updatedAt: string;  // ISO
 }
+
+const ACTION_ICON_MAP: Record<ActionIconKey, ComponentType<{ size?: number }>> = {
+  mail:    Mail01Icon,
+  bell:    Bell01Icon,
+  task:    ClipboardCheckIcon,
+  message: MessageNotificationCircleIcon,
+  sync:    RefreshCw04Icon,
+  people:  Users03Icon,
+  finance: BankIcon,
+  package: PackageIcon,
+  ai:      TeambridgeAIIcon,
+};
 
 // ─── Mock data ────────────────────────────────────────────────────────────────
 
 const MOCK_AUTOMATIONS: Automation[] = [
   {
-    id: '1',
+    id: 'wf_01HGXZ7K3QN4A2MB',
     name: 'New hire onboarding',
     description: 'Sends welcome email and sets up first-week schedule when a new employee is added.',
     status: 'active',
+    lastRunStatus: 'ongoing',
     trigger: 'Employee created',
     lastRun: '2 hours ago',
     runsTotal: 48,
+    runsSuccessful: 44,
     category: 'HR',
     stats: { reached: 38, pending: 5, skipped: 5 },
+    actionIcons: ['mail', 'people', 'task'],
+    owner: { name: 'Alex Rivera', avatarUrl: 'https://i.pravatar.cc/80?u=alex-rivera' },
+    createdAt: '2025-11-03T10:12:00Z',
+    updatedAt: '2026-03-28T14:02:00Z',
   },
   {
-    id: '2',
+    id: 'wf_01HGY2F9PW4VRJ8N',
     name: 'Timesheet approval reminder',
     description: 'Notifies managers to approve pending timesheets every Friday at 3pm.',
     status: 'active',
+    lastRunStatus: 'failed',
     trigger: 'Schedule — weekly',
     lastRun: '3 days ago',
     runsTotal: 120,
+    runsSuccessful: 115,
     category: 'Finance',
     stats: { reached: 98, pending: 12, skipped: 10 },
+    actionIcons: ['bell', 'mail', 'finance', 'ai'],
+    hasErrors: true,
+    owner: { name: 'Priya Shah', avatarUrl: 'https://i.pravatar.cc/80?u=priya-shah' },
+    createdAt: '2025-08-17T09:00:00Z',
+    updatedAt: '2026-04-10T16:30:00Z',
   },
   {
-    id: '3',
+    id: 'wf_01HGYH6CXD3TZ5QK',
     name: 'Shift swap notification',
     description: 'Alerts team members when an open shift becomes available in their role.',
     status: 'paused',
+    lastRunStatus: 'completed',
     trigger: 'Shift updated',
     lastRun: '1 week ago',
     runsTotal: 31,
+    runsSuccessful: 27,
     category: 'Scheduling',
     stats: { reached: 24, pending: 3, skipped: 4 },
+    actionIcons: ['bell', 'message'],
+    owner: { name: 'Jordan Lee', avatarUrl: 'https://i.pravatar.cc/80?u=jordan-lee' },
+    createdAt: '2026-01-22T11:45:00Z',
+    updatedAt: '2026-04-02T08:15:00Z',
   },
   {
-    id: '4',
+    id: 'wf_01HGZM4P8BKFYTR7',
     name: 'Overtime alert',
     description: 'Flags employees who are approaching their weekly overtime threshold.',
     status: 'draft',
+    // lastRunStatus omitted — draft workflows have never run.
     trigger: 'Hours logged',
     lastRun: null,
     runsTotal: 0,
+    runsSuccessful: 0,
     category: 'HR',
     stats: { reached: 0, pending: 0, skipped: 0 },
+    actionIcons: ['bell'],
+    owner: { name: 'Sam Chen', avatarUrl: 'https://i.pravatar.cc/80?u=sam-chen' },
+    createdAt: '2026-04-11T17:20:00Z',
+    updatedAt: '2026-04-15T12:00:00Z',
+  },
+  {
+    id: 'wf_01HH01VQY7JN4E5M',
+    name: 'Contractor offboarding',
+    description: 'Cleans up access and notifies finance when a contractor contract ends.',
+    status: 'active',
+    lastRunStatus: 'exited',
+    trigger: 'Contract end date',
+    lastRun: '5 hours ago',
+    runsTotal: 18,
+    runsSuccessful: 14,
+    category: 'HR',
+    stats: { reached: 12, pending: 2, skipped: 4 },
+    actionIcons: ['mail', 'task', 'people'],
+    owner: { name: 'Morgan Patel', avatarUrl: 'https://i.pravatar.cc/80?u=morgan-patel' },
+    createdAt: '2025-09-09T09:30:00Z',
+    updatedAt: '2026-04-16T11:00:00Z',
   },
 ];
 
@@ -122,18 +224,81 @@ const CATEGORY_COLOR: Record<string, TagColor> = {
 };
 
 const STATUS_TAG_STATUS: Record<AutomationStatus, StatusTagStatus> = {
-  active: 'success',
-  paused: 'warning',
-  draft: 'neutral',
+  active: 'success', // green
+  paused: 'neutral', // gray
+  draft:  'info',    // blue
 };
 
-// ─── Status badge ─────────────────────────────────────────────────────────────
+/** Run-level status → Alloy StatusTag mapping. */
+const RUN_STATUS_LABEL: Record<RunStatus, string> = {
+  ongoing:   'Ongoing',
+  completed: 'Completed',
+  failed:    'Failed',
+  exited:    'Exited',
+};
 
+const RUN_STATUS_TAG_STATUS: Record<RunStatus, StatusTagStatus> = {
+  ongoing:   'info',    // primary/info blue
+  completed: 'success', // success green
+  failed:    'error',   // error / danger red
+  exited:    'warning', // warning orange / amber
+};
+
+// ─── Status badges ────────────────────────────────────────────────────────────
+
+/** Workflow-level status badge (Active / Paused / Draft). Currently unused on
+ *  the card surface — kept available for workflow-lifecycle affordances. */
 function StatusBadge({ status }: { status: AutomationStatus }) {
   return (
     <StatusTag status={STATUS_TAG_STATUS[status]} size="sm">
       {STATUS_LABEL[status]}
     </StatusTag>
+  );
+}
+
+/** Run-level status badge — Ongoing / Completed / Failed / Exited. Drives the
+ *  card's status pill and the table's Status column (most-recent run). */
+function RunStatusBadge({ status }: { status: RunStatus }) {
+  return (
+    <StatusTag status={RUN_STATUS_TAG_STATUS[status]} size="sm">
+      {RUN_STATUS_LABEL[status]}
+    </StatusTag>
+  );
+}
+
+// ─── Action icon cluster ─────────────────────────────────────────────────────
+// Up to 3 icons stacked/overlapped; a +N pip appears when more exist. A
+// placeholder is rendered when the workflow has no action nodes at all.
+
+const MAX_CLUSTER_ICONS = 3;
+
+function ActionIconCluster({ icons }: { icons: ActionIconKey[] | undefined }) {
+  const list = icons ?? [];
+  if (list.length === 0) {
+    return (
+      <div className={clsx(styles.iconCluster, styles.iconClusterEmpty)} aria-hidden>
+        <span className={styles.iconDot}>
+          <PackageIcon size={14} />
+        </span>
+      </div>
+    );
+  }
+  const visible = list.slice(0, MAX_CLUSTER_ICONS);
+  const overflow = list.length - visible.length;
+  return (
+    <div className={styles.iconCluster} aria-hidden>
+      {visible.map((key, i) => {
+        const Icon = ACTION_ICON_MAP[key];
+        return (
+          <span key={`${key}-${i}`} className={styles.iconDot}>
+            <Icon size={14} />
+          </span>
+        );
+      })}
+      {overflow > 0 && (
+        <span className={clsx(styles.iconDot, styles.iconOverflow)}>+{overflow}</span>
+      )}
+    </div>
   );
 }
 
@@ -196,17 +361,50 @@ function EmptyState({ onNew }: { onNew: () => void }) {
 export function AutomationsPage() {
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState<AutomationStatus | 'all'>('all');
+  const [filter, setFilter] = useState<RunStatus | 'all'>('all');
   const [view, setView] = useState<ViewMode>('card');
 
   // Merge localStorage-saved settings over mock data (name, description, tags)
-  const [automations] = useState<Automation[]>(() => {
+  const [automations, setAutomations] = useState<Automation[]>(() => {
     const stored = loadWorkflowSettings();
     return MOCK_AUTOMATIONS.map(a => {
       const entry = stored[a.id];
       return entry ? { ...a, name: entry.name, description: entry.description, tags: entry.tags } : a;
     });
   });
+
+  // ── Expanded-row state (single-expand) ───────────────────────────────────
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const previewRegionBaseId = useId();
+
+  const setStatus = useCallback((id: string, status: AutomationStatus) => {
+    setAutomations(prev => prev.map(a => a.id === id ? { ...a, status } : a));
+  }, []);
+
+  const toggleExpanded = useCallback((id: string) => {
+    setExpandedId(curr => (curr === id ? null : id));
+  }, []);
+
+  // Escape collapses the open preview
+  useEffect(() => {
+    if (expandedId === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setExpandedId(null);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [expandedId]);
+
+  // Pause/Resume toggle invoked from the preview
+  const toggleStatus = useCallback((id: string) => {
+    setAutomations(prev =>
+      prev.map(a =>
+        a.id === id
+          ? { ...a, status: a.status === 'paused' ? 'active' : 'paused' }
+          : a,
+      ),
+    );
+  }, []);
 
   const totalRuns   = automations.reduce((s, a) => s + a.runsTotal, 0);
   const totalReached = automations.reduce((s, a) => s + a.stats.reached, 0);
@@ -220,7 +418,7 @@ export function AutomationsPage() {
       a.name.toLowerCase().includes(q) ||
       a.description.toLowerCase().includes(q) ||
       (a.tags ?? []).some(t => t.toLowerCase().includes(q));
-    const matchesFilter = filter === 'all' || a.status === filter;
+    const matchesFilter = filter === 'all' || a.lastRunStatus === filter;
     return matchesSearch && matchesFilter;
   });
 
@@ -319,11 +517,12 @@ export function AutomationsPage() {
           </button>
         </div>
 
-        <Tabs value={filter} onChange={(v) => setFilter(v as AutomationStatus | 'all')}>
+        <Tabs value={filter} onChange={(v) => setFilter(v as RunStatus | 'all')}>
           <Tabs.Tab value="all">All</Tabs.Tab>
-          <Tabs.Tab value="active">Active</Tabs.Tab>
-          <Tabs.Tab value="paused">Paused</Tabs.Tab>
-          <Tabs.Tab value="draft">Draft</Tabs.Tab>
+          <Tabs.Tab value="ongoing">Ongoing</Tabs.Tab>
+          <Tabs.Tab value="completed">Completed</Tabs.Tab>
+          <Tabs.Tab value="failed">Failed</Tabs.Tab>
+          <Tabs.Tab value="exited">Exited</Tabs.Tab>
         </Tabs>
       </div>
 
@@ -332,40 +531,114 @@ export function AutomationsPage() {
         <EmptyState onNew={() => navigate('/automations/new')} />
       ) : view === 'card' ? (
         <div className={styles.list}>
-          {filtered.map((automation) => (
-            <button
-              key={automation.id}
-              className={styles.card}
-              onClick={() => navigate(`/automations/${automation.id}`)}
-            >
-              <div className={styles.cardTop}>
-                <StatusBadge status={automation.status} />
-                <Tag color={CATEGORY_COLOR[automation.category]} size="sm" variant="subtle">
-                  {automation.category}
-                </Tag>
+          {filtered.map((automation) => {
+            const isDraft    = automation.status === 'draft';
+            const isOpen     = expandedId === automation.id;
+            const regionId   = `${previewRegionBaseId}-card-${automation.id}`;
+            const openEditor = () => navigate(`/automations/${automation.id}`);
+            const handleCardClick = (e: React.MouseEvent<HTMLDivElement>) => {
+              // Let nested interactive elements (switch, chevron) handle their
+              // own clicks without navigating.
+              if ((e.target as HTMLElement).closest('[data-card-action]')) return;
+              openEditor();
+            };
+            const handleKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                openEditor();
+              }
+            };
+            return (
+              <Fragment key={automation.id}>
+              <div
+                className={clsx(styles.card, isOpen && styles.cardActive)}
+                role="button"
+                tabIndex={0}
+                aria-expanded={isOpen}
+                aria-controls={regionId}
+                onClick={handleCardClick}
+                onKeyDown={handleKey}
+              >
+                {automation.hasErrors && (
+                  <span className={styles.cardWarningDot} aria-label="Has recent errors" />
+                )}
+
+                {/* ── Top row: most-recent run status · spacer · last run · expand ── */}
+                <div className={styles.cardTop}>
+                  {automation.lastRunStatus && (
+                    <RunStatusBadge status={automation.lastRunStatus} />
+                  )}
+                  <span className={styles.cardTopSpacer} />
+                  <span className={styles.cardLastRun}>
+                    <ClockIcon size={12} />
+                    {automation.lastRun ?? 'Never'}
+                  </span>
+                  <button
+                    type="button"
+                    data-card-action
+                    className={clsx(styles.cardChevronBtn, isOpen && styles.cardChevronBtnOpen)}
+                    onClick={e => {
+                      e.stopPropagation();
+                      toggleExpanded(automation.id);
+                    }}
+                    aria-label={isOpen ? 'Collapse preview' : 'Expand preview'}
+                    aria-expanded={isOpen}
+                    aria-controls={regionId}
+                  >
+                    <ChevronDownIcon size={14} />
+                  </button>
+                </div>
+
+                {/* ── Body: workflow name (up to 3 lines, ellipsis) ── */}
+                <span className={styles.cardName}>{automation.name}</span>
+
+                {/* ── Bottom row: action icon cluster · run count · success count · toggle ── */}
+                <div className={styles.cardFooter}>
+                  <div className={styles.cardStats}>
+                    <ActionIconCluster icons={automation.actionIcons} />
+                    <span className={styles.cardStat} title="Total runs">
+                      <ListBulletIcon size={12} />
+                      {automation.runsTotal}
+                    </span>
+                    <span className={styles.cardStat} title="Successful runs">
+                      <CheckCircleIcon size={12} />
+                      {automation.runsSuccessful}
+                    </span>
+                  </div>
+                  <span data-card-action onClick={e => e.stopPropagation()}>
+                    <Switch
+                      size="sm"
+                      checked={automation.status === 'active'}
+                      disabled={isDraft}
+                      onChange={(on) => setStatus(automation.id, on ? 'active' : 'paused')}
+                      aria-label={`${automation.status === 'active' ? 'Pause' : 'Activate'} ${automation.name}`}
+                    />
+                  </span>
+                </div>
               </div>
-              <span className={styles.cardName}>{automation.name}</span>
-              <p className={styles.cardDesc}>{automation.description}</p>
-              {(automation.tags ?? []).length > 0 && (
-                <div className={styles.cardTags}>
-                  {(automation.tags ?? []).map(tag => (
-                    <Tag key={tag} color="slate" size="sm" variant="subtle">{tag}</Tag>
-                  ))}
+              {isOpen && (
+                <div className={styles.cardExpanded}>
+                  <WorkflowPreview
+                    layout="card"
+                    regionId={regionId}
+                    workflow={{
+                      id: automation.id,
+                      status: automation.status,
+                      description: automation.description,
+                      owner: automation.owner,
+                      createdAt: automation.createdAt,
+                      updatedAt: automation.updatedAt,
+                      reached: automation.stats.reached,
+                    }}
+                    onEdit={() => navigate(`/automations/${automation.id}`)}
+                    onViewRuns={() => navigate(`/automations/${automation.id}/runs`)}
+                    onToggleStatus={() => toggleStatus(automation.id)}
+                  />
                 </div>
               )}
-              <AutomationBar stats={automation.stats} />
-              <div className={styles.cardMeta}>
-                {automation.lastRun && (
-                  <span className={styles.metaItem}>
-                    Last run {automation.lastRun}
-                  </span>
-                )}
-                <span className={styles.metaItem}>
-                  {automation.runsTotal} runs
-                </span>
-              </div>
-            </button>
-          ))}
+              </Fragment>
+            );
+          })}
         </div>
       ) : (
         <div className={styles.tableWrap}>
@@ -378,48 +651,105 @@ export function AutomationsPage() {
                 <TableHead>Trigger</TableHead>
                 <TableHead>Runs</TableHead>
                 <TableHead>Last run</TableHead>
-                <TableHead>Stats</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filtered.map((automation) => (
-                <TableRow
-                  key={automation.id}
-                  onClick={() => navigate(`/automations/${automation.id}`)}
-                  style={{ cursor: 'pointer' }}
-                >
-                  <TableCell>
-                    <CellStack
-                      primary={automation.name}
-                      secondary={automation.description}
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <CellStatusTag status={STATUS_TAG_STATUS[automation.status]}>
-                      {STATUS_LABEL[automation.status]}
-                    </CellStatusTag>
-                  </TableCell>
-                  <TableCell>
-                    <CellTag color={CATEGORY_COLOR[automation.category]} variant="subtle">
-                      {automation.category}
-                    </CellTag>
-                  </TableCell>
-                  <TableCell>
-                    <CellText variant="secondary">{automation.trigger}</CellText>
-                  </TableCell>
-                  <TableCell>
-                    <CellText>{automation.runsTotal}</CellText>
-                  </TableCell>
-                  <TableCell>
-                    <CellText variant="secondary">
-                      {automation.lastRun ?? '—'}
-                    </CellText>
-                  </TableCell>
-                  <TableCell>
-                    <AutomationBar stats={automation.stats} compact />
-                  </TableCell>
-                </TableRow>
-              ))}
+              {filtered.map((automation) => {
+                const isOpen = expandedId === automation.id;
+                const regionId = `${previewRegionBaseId}-${automation.id}`;
+                const goToEditor = () => navigate(`/automations/${automation.id}`);
+
+                return (
+                  <Fragment key={automation.id}>
+                    <TableRow
+                      aria-expanded={isOpen}
+                      aria-controls={regionId}
+                      onClick={() => toggleExpanded(automation.id)}
+                      style={{ cursor: 'pointer' }}
+                    >
+                      <TableCell>
+                        <div className={styles.nameCell}>
+                          <button
+                            type="button"
+                            className={styles.expandToggle}
+                            aria-label={isOpen ? 'Collapse preview' : 'Expand preview'}
+                            aria-expanded={isOpen}
+                            aria-controls={regionId}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleExpanded(automation.id);
+                            }}
+                          >
+                            {isOpen ? (
+                              <ChevronDownIcon size={14} />
+                            ) : (
+                              <ChevronRightIcon size={14} />
+                            )}
+                          </button>
+                          <CellStack
+                            primary={
+                              <button
+                                type="button"
+                                className={styles.nameBtn}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  goToEditor();
+                                }}
+                              >
+                                {automation.name}
+                              </button>
+                            }
+                          />
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        {automation.lastRunStatus ? (
+                          <CellStatusTag status={RUN_STATUS_TAG_STATUS[automation.lastRunStatus]}>
+                            {RUN_STATUS_LABEL[automation.lastRunStatus]}
+                          </CellStatusTag>
+                        ) : (
+                          <CellText variant="secondary">—</CellText>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <CellTag color={CATEGORY_COLOR[automation.category]} variant="subtle">
+                          {automation.category}
+                        </CellTag>
+                      </TableCell>
+                      <TableCell>
+                        <CellText variant="secondary">{automation.trigger}</CellText>
+                      </TableCell>
+                      <TableCell>
+                        <CellText>{automation.runsTotal}</CellText>
+                      </TableCell>
+                      <TableCell>
+                        <CellText variant="secondary">
+                          {automation.lastRun ?? '—'}
+                        </CellText>
+                      </TableCell>
+                    </TableRow>
+
+                    {isOpen && (
+                      <WorkflowPreview
+                        regionId={regionId}
+                        totalColumns={6}
+                        workflow={{
+                          id: automation.id,
+                          status: automation.status,
+                          description: automation.description,
+                          owner: automation.owner,
+                          createdAt: automation.createdAt,
+                          updatedAt: automation.updatedAt,
+                          reached: automation.stats.reached,
+                        }}
+                        onEdit={goToEditor}
+                        onViewRuns={() => navigate(`/automations/${automation.id}/runs`)}
+                        onToggleStatus={() => toggleStatus(automation.id)}
+                      />
+                    )}
+                  </Fragment>
+                );
+              })}
             </TableBody>
           </Table>
         </div>

@@ -4,6 +4,26 @@ All notable changes to Teambridge Automation are documented in this file.
 
 ---
 
+## [0.3.0] — 2026-04-20
+
+### Features
+
+- **Global Usage page** — new dashboard accessible from the secondary nav (above Settings) showing aggregated run data across every workflow. Includes filters (Workflow / Category / Status), a 24h / 7d / 30d / All time-range control, three DataCard stats (Total runs, Success rate, People reached) with period-over-period delta badges, and a full-width Runs-over-time chart.
+  - Matcha → green gradient applied consistently across stat badges and chart fill/stroke.
+  - Deterministic mock run stream generated from `USAGE_WORKFLOWS`, anchored to a fixed `MOCK_NOW` so windows produce stable output during dev.
+- **Workflow preview** — expandable preview panel attached to each row/card in the Automations list. Shows description, owner, timestamps, reached count, and inline Edit / View runs / Pause / Resume actions.
+- **Policy matching modal** — tree-of-checkboxes picker (folders → policies → sub-policies) with free-text search and tag filtering, used by the Policy node in the Builder.
+- **Builder improvements** — major expansion of the flow builder including new node configuration affordances, layout refinements, and additional AI-generated step types.
+- **Automations list enhancements** — per-card action-icon cluster, run-level status badges (Ongoing / Completed / Failed / Exited), workflow-settings persistence to `localStorage`, and expandable row previews.
+
+### Internal
+
+- `src/features/usage/data.ts` — normalized usage data layer with window/bucketing helpers and a seeded PRNG for deterministic mock runs.
+- `src/features/workflows/api.ts` — typed client interface for the (pending) `/api/workflows/:id/runs/daily` route with a mock implementation.
+- `src/components/RunsRangeChart.tsx` — SVG step-line chart with morph animation between time ranges.
+
+---
+
 ## [0.2.0] — 2026-04-02
 
 ### Features
