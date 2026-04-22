@@ -80,7 +80,7 @@ export function AppShell() {
         <aside className={styles.sidebar}>
           {/* Heading row */}
           <div className={styles.navHeadingRow}>
-            <h2 className={styles.navHeading}>Automation</h2>
+            <h2 className={styles.navHeading}>Workflow</h2>
           </div>
 
           <Divider />

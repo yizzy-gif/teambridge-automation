@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, Fragment } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useParams } from 'react-router-dom';
 import { clsx } from 'clsx';
@@ -14,6 +14,8 @@ import inputStyles from '@alloy/components/Input/Input.module.css';
 import dropdownStyles from '@alloy/components/DropdownMenu/DropdownMenu.module.css';
 import { Tooltip } from '@alloy/components/Tooltip';
 import tooltipStyles from '@alloy/components/Tooltip/Tooltip.module.css';
+import { Tabs } from '@alloy/components/Tabs';
+import { FilterPill, FilterPillGroup } from '@alloy/components/FilterPill';
 import { Target04Icon } from '@alloy/components/icons/Target04Icon';
 import { GitBranch01Icon } from '@alloy/components/icons/GitBranch01Icon';
 import { ArrowCircleBrokenRightIcon } from '@alloy/components/icons/ArrowCircleBrokenRightIcon';
@@ -32,6 +34,7 @@ import { Bell01Icon } from '@alloy/components/icons/Bell01Icon';
 import { Announcement02Icon } from '@alloy/components/icons/Announcement02Icon';
 import { Microphone02Icon } from '@alloy/components/icons/Microphone02Icon';
 import { ArrowNarrowUpIcon } from '@alloy/components/icons/ArrowNarrowUpIcon';
+import { ArrowNarrowRightIcon } from '@alloy/components/icons/ArrowNarrowRightIcon';
 import { TeambridgeAIIcon } from '@alloy/components/icons/TeambridgeAIIcon';
 import { SettingsGearIcon } from '@alloy/components/icons/SettingsGearIcon';
 import { ChevronLeftIcon } from '@alloy/components/icons/ChevronLeftIcon';
@@ -41,8 +44,14 @@ import { Divider } from '@alloy/components/Divider';
 import { AILoader } from '@alloy/components/ai/AILoader';
 import { ToggleButton } from '@alloy/components/ToggleButton';
 import { Trash03Icon } from '@alloy/components/icons/Trash03Icon';
+import { RefreshCw04Icon } from '@alloy/components/icons/RefreshCw04Icon';
 import { Eyebrow } from '@alloy/components/Eyebrow';
 import { VolumeMaxIcon } from '@alloy/components/icons/VolumeMaxIcon';
+import { SearchSmIcon } from '@alloy/components/icons/SearchSmIcon';
+import { PlayIcon } from '@alloy/components/icons/PlayIcon';
+import { FilterLinesIcon } from '@alloy/components/icons/FilterLinesIcon';
+import { CircularArrowIcon } from '@alloy/components/icons/CircularArrowIcon';
+import { TriangleUpIcon } from '@alloy/components/icons/TriangleUpIcon';
 import { AreaButton } from '@alloy/components/AreaButton';
 import styles from './BuilderPage.module.css';
 import { callFlowAgent } from '@/features/ai/client';
@@ -385,6 +394,53 @@ const ACTION_CATEGORY_ICON: Record<string, React.ReactNode> = {
   user_actions:     <Users03Icon size={12} />,
   update_data:      <File04Icon size={12} />,
   notifications:    <Bell01Icon size={12} />,
+};
+
+// Human-readable labels and sort order for action category section headers.
+const ACTION_CATEGORY_LABEL: Record<string, string> = {
+  shift_actions:    'Shift Actions',
+  geofence_actions: 'Geofence Actions',
+  user_actions:     'User Actions',
+  update_data:      'Update Data',
+  notifications:    'Notifications',
+};
+
+const ACTION_CATEGORY_ORDER = [
+  'shift_actions',
+  'geofence_actions',
+  'user_actions',
+  'update_data',
+  'notifications',
+] as const;
+
+// Short descriptions surfaced under each action in the selector list.
+const ACTION_DESCRIPTION: Record<string, string> = {
+  shift_actions_deny_shift_request:          'Decline a shift request from a user.',
+  shift_actions_approve_shift_group_request: 'Approve a request to join a shift group.',
+  shift_actions_approve_release_shift_request: 'Approve a user releasing their shift.',
+  geofence_actions_start_next_shift:         'Start the next scheduled shift automatically.',
+  geofence_actions_end_ongoing_shift:        'End the user\u2019s current shift.',
+  user_actions_clock_in:                     'Clock the user in to their shift.',
+  user_actions_clock_out:                    'Clock the user out of their shift.',
+  user_actions_start_break:                  'Start a break for the current shift.',
+  user_actions_end_break:                    'End the active break for the shift.',
+  user_actions_approve_shift_request:        'Approve a shift request from a user.',
+  update_data_delete_entry:                  'Delete an existing record.',
+  update_data_assign_task_group:             'Assign an entire task group to a user.',
+  update_data_assign_task:                   'Assign a single task to a user.',
+  update_data_split_shift:                   'Split a shift into two separate segments.',
+  update_data_lock_record:                   'Lock a record to prevent edits.',
+  update_data_unlock_record:                 'Unlock a record so it can be edited.',
+  update_data_modify:                        'Modify a column value on a record.',
+  update_data_create_new_entry:              'Create a new record in a collection.',
+  notifications_export_document:             'Export a document as a file.',
+  notifications_send_esign_document:         'Send a document for e-signature.',
+  notifications_webhook_notification:        'Send a webhook payload to a URL.',
+  notifications_send_email:                  'Send an email to one or more recipients.',
+  notifications_send_one_way_sms:            'Send an SMS without expecting a reply.',
+  notifications_send_feed_message:           'Post a message to an activity feed.',
+  notifications_send_chat_message:           'Send a chat message to a user or channel.',
+  notifications_send_report:                 'Send a formatted report to recipients.',
 };
 
 function getLibraryItemIcon(item: LibraryItem): React.ReactNode {
@@ -1848,14 +1904,22 @@ const AI_CARD_ICON: Record<AiAddCardOption, React.ReactNode> = {
 function AiSpecialistCards({
   step,
   onUpdateConfigField,
+  triggerLabel,
 }: {
   step: FlowStep;
   onUpdateConfigField: (key: string, value: string) => void;
+  /** Selected label of the workflow's trigger step — drives the "Triggering record" subtitle. */
+  triggerLabel?: string;
 }) {
   const vals         = step.configValues ?? {};
   const engageTarget = vals.ai_engage_target ?? 'Policy Matches (Users for Shift)';
   const maxTargets   = vals.ai_max_targets   ?? '10';
   const channels     = (vals.ai_channels ?? 'SMS,Text,Voice').split(',').filter(Boolean);
+
+  // Resolve the record noun from the upstream trigger (falls back to "Record"
+  // when no trigger is configured yet) so the card reflects whatever flows in.
+  const recordNoun = getTriggerRecordType(triggerLabel).noun;
+  const fieldCount = AI_SPEC_READ_FIELDS.length + AI_SPEC_WRITE_FIELDS.length;
 
   const [activeCards, setActiveCards] = useState<AiAddCardOption[]>(['Engage']);
   const [showAddMenu, setShowAddMenu] = useState(false);
@@ -1916,7 +1980,7 @@ function AiSpecialistCards({
           </div>
           <div className={styles.aiSpecDataCardHeaderText}>
             <div className={styles.aiSpecDataCardTitle}>Triggering record</div>
-            <div className={styles.aiSpecDataCardSubtitle}>Shift (3 fields)</div>
+            <div className={styles.aiSpecDataCardSubtitle}>{recordNoun} ({fieldCount} fields)</div>
           </div>
           <div className={styles.aiSpecDataCardActions}>
             <Button variant="ghost" size="xs" iconOnly aria-label="Options">
@@ -2080,6 +2144,459 @@ function AiSpecialistCards({
   );
 }
 
+// ─── AI Specialist Test tab ───────────────────────────────────────────────────
+
+/** Maps a trigger's selected label to a record-type descriptor used by the Test tab. */
+function getTriggerRecordType(label: string | undefined): {
+  noun: string;
+  plural: string;
+  samples: string[];
+} {
+  const shiftDefaults = {
+    noun: 'Shift',
+    plural: 'Shifts',
+    samples: [
+      'Morning Shift — Dec 5, 2024 (John D.)',
+      'Evening Shift — Dec 6, 2024 (Sarah M.)',
+      'Night Shift — Dec 7, 2024 (Alex R.)',
+    ],
+  };
+  if (!label) {
+    // No trigger configured yet — neutral record noun.
+    return {
+      noun: 'Record',
+      plural: 'Records',
+      samples: shiftDefaults.samples,
+    };
+  }
+  const l = label.toLowerCase();
+  // Generic data-workflow triggers operate on an arbitrary record type —
+  // the user picks the data source in the trigger's own config. Use a
+  // neutral noun here until we can surface that downstream.
+  if (l.includes('something is') || l.includes('button clicked') || l.includes('scheduled time')) {
+    return {
+      noun: 'Record',
+      plural: 'Records',
+      samples: shiftDefaults.samples,
+    };
+  }
+  if (l.includes('shift') || l.includes('break') || l.includes('clock')) return shiftDefaults;
+  if (l.includes('task')) return {
+    noun: 'Task',
+    plural: 'Tasks',
+    samples: [
+      'Inventory Count — Dec 5, 2024 (Priya K.)',
+      'Equipment Check — Dec 6, 2024 (Marcus T.)',
+      'Cleaning Round — Dec 7, 2024 (Leah W.)',
+    ],
+  };
+  if (l.includes('document')) return {
+    noun: 'Document',
+    plural: 'Documents',
+    samples: [
+      'W-4 Form — Dec 5, 2024 (John D.)',
+      'Training Acknowledgement — Dec 6, 2024 (Sarah M.)',
+      'Handbook Receipt — Dec 7, 2024 (Alex R.)',
+    ],
+  };
+  if (l.includes('comment')) return {
+    noun: 'Comment',
+    plural: 'Comments',
+    samples: [
+      'Shift feedback — Dec 5, 2024 (John D.)',
+      'Policy question — Dec 6, 2024 (Sarah M.)',
+      'Schedule note — Dec 7, 2024 (Alex R.)',
+    ],
+  };
+  if (l.includes('geofence')) return {
+    noun: 'Location event',
+    plural: 'Location events',
+    samples: [
+      'Entered Site A — Dec 5, 2024 (John D.)',
+      'Left Site B — Dec 6, 2024 (Sarah M.)',
+      'Entered Site C — Dec 7, 2024 (Alex R.)',
+    ],
+  };
+  if (l.includes('user') || l.includes('job')) return {
+    noun: 'User',
+    plural: 'Users',
+    samples: [
+      'John D. — Warehouse Associate',
+      'Sarah M. — Shift Lead',
+      'Alex R. — Driver',
+    ],
+  };
+  return shiftDefaults;
+}
+
+interface TestChatMessage {
+  id: string;
+  sender: 'specialist' | 'user';
+  text: string;
+}
+
+/** Builds a mock specialist response referencing the configured name + role. */
+function buildSpecialistReply(
+  userText: string,
+  specialistName: string,
+  specialistRole: string,
+  messageIndex: number,
+): string {
+  const t = userText.trim().toLowerCase();
+  if (messageIndex === 0) {
+    return `Hi, I'm ${specialistName}, your ${specialistRole}. I've loaded the selected record — ask me anything about it or tell me what you'd like to test.`;
+  }
+  if (t.includes('hello') || t.includes('hi ') || t === 'hi') {
+    return `Hey there — ${specialistName} here. What would you like me to do with this record?`;
+  }
+  if (t.includes('who')) {
+    return `I'm ${specialistName}, acting as the ${specialistRole} for this workflow.`;
+  }
+  if (t.includes('?')) {
+    return `Based on the trigger record, here's what I'd do as your ${specialistRole}: reach out to the matched user, confirm intent, and log the outcome. Want me to walk through that?`;
+  }
+  return `Understood. As your ${specialistRole}, I'll treat that as the next step and update you once I've acted on the record. (This is a simulated response from ${specialistName}.)`;
+}
+
+interface AiSpecialistTestProps {
+  specialistName: string;
+  specialistRole: string;
+  triggerLabel: string | undefined;
+}
+
+function AiSpecialistTest({ specialistName, specialistRole, triggerLabel }: AiSpecialistTestProps) {
+  const record = getTriggerRecordType(triggerLabel);
+
+  const [selectedRecord, setSelectedRecord] = useState<string>('');
+  const [started, setStarted] = useState<boolean>(false);
+  const [messages, setMessages] = useState<TestChatMessage[]>([]);
+  const [inputText, setInputText] = useState<string>('');
+  const [isTyping, setIsTyping] = useState<boolean>(false);
+
+  const threadRef = useRef<HTMLDivElement>(null);
+  const typingTimerRef = useRef<number | null>(null);
+  const userMessageCountRef = useRef<number>(0);
+
+  // Auto-scroll to bottom whenever messages/typing changes
+  useEffect(() => {
+    const el = threadRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [messages, isTyping]);
+
+  // Clear any pending typing timer on unmount
+  useEffect(() => () => {
+    if (typingTimerRef.current != null) {
+      window.clearTimeout(typingTimerRef.current);
+    }
+  }, []);
+
+  const startTest = () => {
+    if (!selectedRecord) return;
+    setStarted(true);
+    setMessages([]);
+    userMessageCountRef.current = 0;
+
+    // Kick off with an opening specialist message (simulated typing delay)
+    setIsTyping(true);
+    typingTimerRef.current = window.setTimeout(() => {
+      setMessages([{
+        id: `m-${Date.now()}`,
+        sender: 'specialist',
+        text: buildSpecialistReply('', specialistName, specialistRole, 0),
+      }]);
+      setIsTyping(false);
+    }, 1200);
+  };
+
+  const sendMessage = () => {
+    const text = inputText.trim();
+    if (!text || isTyping) return;
+
+    const userMsg: TestChatMessage = {
+      id: `u-${Date.now()}`,
+      sender: 'user',
+      text,
+    };
+    setMessages(prev => [...prev, userMsg]);
+    setInputText('');
+
+    const currentIndex = userMessageCountRef.current + 1;
+    userMessageCountRef.current = currentIndex;
+
+    setIsTyping(true);
+    const delay = 900 + Math.random() * 900;
+    typingTimerRef.current = window.setTimeout(() => {
+      setMessages(prev => [...prev, {
+        id: `m-${Date.now()}`,
+        sender: 'specialist',
+        text: buildSpecialistReply(text, specialistName, specialistRole, currentIndex),
+      }]);
+      setIsTyping(false);
+    }, delay);
+  };
+
+  const resetChat = () => {
+    if (typingTimerRef.current != null) {
+      window.clearTimeout(typingTimerRef.current);
+      typingTimerRef.current = null;
+    }
+    setMessages([]);
+    setInputText('');
+    setIsTyping(false);
+    userMessageCountRef.current = 0;
+
+    // Re-open with a fresh opening message — stay in chat view
+    setIsTyping(true);
+    typingTimerRef.current = window.setTimeout(() => {
+      setMessages([{
+        id: `m-${Date.now()}`,
+        sender: 'specialist',
+        text: buildSpecialistReply('', specialistName, specialistRole, 0),
+      }]);
+      setIsTyping(false);
+    }, 1000);
+  };
+
+  const specialistHeaderCard = (
+    <div className={styles.aiTestSpecHeaderCard}>
+      <div className={styles.aiTestSpecHeaderAvatar} aria-hidden>
+        <svg width="20" height="20" viewBox="0 0 16 16" fill="none">
+          <path d="M8 2L13 8L8 14L3 8L8 2Z" fill="white" fillOpacity="0.95" />
+        </svg>
+      </div>
+      <div className={styles.aiTestSpecHeaderText}>
+        <div className={styles.aiTestSpecHeaderName}>{specialistName}</div>
+        <div className={styles.aiTestSpecHeaderRole}>{specialistRole}</div>
+      </div>
+    </div>
+  );
+
+  // ── Record selection screen ────────────────────────────────────────────────
+  if (!started) {
+    const options = [
+      { value: '', label: `Select a ${record.noun.toLowerCase()}…` },
+      ...record.samples.map(s => ({ value: s, label: s })),
+    ];
+    return (
+      <div className={styles.aiTestRoot}>
+        {specialistHeaderCard}
+
+        <div className={styles.aiTestRecordSection}>
+          <div className={styles.aiTestRecordTitle}>
+            Select a {record.plural} record
+          </div>
+          <p className={styles.aiTestRecordDescription}>
+            Choose a record to mimic the automation trigger and test how your
+            specialist responds.
+          </p>
+
+          <SelectField
+            size="md"
+            options={options}
+            value={selectedRecord}
+            onChange={v => setSelectedRecord(v)}
+            placeholder={`Select a ${record.noun.toLowerCase()}…`}
+            aria-label={`Select a ${record.noun} record`}
+          />
+
+          <button
+            type="button"
+            className={styles.aiTestStartBtn}
+            onClick={startTest}
+            disabled={!selectedRecord}
+            aria-label="Start Test"
+          >
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+              <path d="M3.5 2.5L11 7L3.5 11.5V2.5Z" fill="currentColor" />
+            </svg>
+            <span>Start Test</span>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Chat view ──────────────────────────────────────────────────────────────
+  // Determine when to show specialist avatar + name (start of a specialist sequence)
+  const shouldShowSpecialistHeader = (idx: number): boolean => {
+    if (messages[idx].sender !== 'specialist') return false;
+    if (idx === 0) return true;
+    return messages[idx - 1].sender !== 'specialist';
+  };
+
+  return (
+    <div className={clsx(styles.aiTestRoot, styles.aiTestRootChat)}>
+      {specialistHeaderCard}
+
+      <div className={styles.aiTestThread} ref={threadRef}>
+        {messages.map((msg, idx) => {
+          if (msg.sender === 'specialist') {
+            return (
+              <div key={msg.id} className={styles.aiTestSpecialistBlock}>
+                {shouldShowSpecialistHeader(idx) && (
+                  <div className={styles.aiTestSpecialistLabel}>
+                    <div className={styles.aiTestSpecialistLabelAvatar} aria-hidden>
+                      <svg width="10" height="10" viewBox="0 0 16 16" fill="none">
+                        <path d="M8 2L13 8L8 14L3 8L8 2Z" fill="white" fillOpacity="0.95" />
+                      </svg>
+                    </div>
+                    <span>{specialistName}</span>
+                  </div>
+                )}
+                <div className={styles.aiTestBubbleSpecialist}>{msg.text}</div>
+              </div>
+            );
+          }
+          return (
+            <div key={msg.id} className={styles.aiTestUserBlock}>
+              <div className={styles.aiTestUserLabel}>You</div>
+              <div className={styles.aiTestBubbleUser}>{msg.text}</div>
+            </div>
+          );
+        })}
+
+        {isTyping && (
+          <div className={styles.aiTestSpecialistBlock}>
+            <div className={styles.aiTestBubbleSpecialist} aria-label={`${specialistName} is typing`}>
+              <span className={styles.aiTestTypingDots} aria-hidden>
+                <span /><span /><span />
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className={styles.aiTestComposer}>
+        <input
+          type="text"
+          className={styles.aiTestComposerInput}
+          value={inputText}
+          placeholder={`Message ${specialistName}…`}
+          onChange={e => setInputText(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              sendMessage();
+            }
+          }}
+          aria-label={`Message ${specialistName}`}
+        />
+        <button
+          type="button"
+          className={styles.aiTestComposerSend}
+          onClick={sendMessage}
+          disabled={!inputText.trim() || isTyping}
+          aria-label="Send message"
+        >
+          <ArrowNarrowRightIcon size={14} />
+        </button>
+      </div>
+
+      <button
+        type="button"
+        className={styles.aiTestResetBtn}
+        onClick={resetChat}
+      >
+        <RefreshCw04Icon size={14} />
+        <span>End Chat &amp; Reset</span>
+      </button>
+    </div>
+  );
+}
+
+// ─── ActionSelector ─────────────────────────────────────────────────────────
+// Searchable, browsable list of available actions, shown in the right panel
+// when an Action node has no selected value yet.
+
+interface ActionSelectorProps {
+  onSelect: (label: string) => void;
+}
+
+function ActionSelector({ onSelect }: ActionSelectorProps) {
+  const [search, setSearch] = useState('');
+
+  const actions = ALL_LIBRARY_ITEMS.filter(i => i.type === 'action');
+  const q = search.trim().toLowerCase();
+  const filtered = q
+    ? actions.filter(a =>
+        a.label.toLowerCase().includes(q) ||
+        a.category.toLowerCase().includes(q) ||
+        (ACTION_CATEGORY_LABEL[a.category] ?? '').toLowerCase().includes(q) ||
+        (ACTION_DESCRIPTION[a.id] ?? '').toLowerCase().includes(q)
+      )
+    : actions;
+
+  // While searching, flatten results across all categories.
+  // With no search, show the default category-grouped view.
+  const showFlat = q !== '';
+
+  const flatSorted = [...filtered].sort((a, b) => a.label.localeCompare(b.label));
+
+  const grouped = ACTION_CATEGORY_ORDER
+    .map(cat => ({
+      category: cat,
+      label: ACTION_CATEGORY_LABEL[cat] ?? cat,
+      items: filtered.filter(i => i.category === cat),
+    }))
+    .filter(group => group.items.length > 0);
+
+  const renderRow = (item: LibraryItem) => {
+    const icon = ACTION_ITEM_ICON[item.id]
+      ?? ACTION_CATEGORY_ICON[item.category]
+      ?? STEP_CONFIG.action.icon;
+    const description = ACTION_DESCRIPTION[item.id]
+      ?? ACTION_CATEGORY_LABEL[item.category]
+      ?? item.category.replace(/_/g, ' ');
+    return (
+      <button
+        key={item.id}
+        type="button"
+        className={styles.actionSelectorRow}
+        onClick={() => onSelect(item.label)}
+      >
+        <span className={clsx(styles.actionSelectorRowIcon, styles.iconAction)} aria-hidden>
+          {icon}
+        </span>
+        <span className={styles.actionSelectorRowText}>
+          <span className={styles.actionSelectorRowLabel}>{item.label}</span>
+          <span className={styles.actionSelectorRowDesc}>{description}</span>
+        </span>
+      </button>
+    );
+  };
+
+  return (
+    <div className={styles.actionSelectorRoot}>
+      <div className={styles.actionSelectorSearch}>
+        <SearchField
+          size="sm"
+          placeholder="Search actions..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          onClear={() => setSearch('')}
+          aria-label="Search actions"
+        />
+      </div>
+
+      <div className={styles.actionSelectorList}>
+        {filtered.length === 0 ? (
+          <p className={styles.actionSelectorEmpty}>No actions match "{search}"</p>
+        ) : showFlat ? (
+          flatSorted.map(renderRow)
+        ) : (
+          grouped.map(group => (
+            <div key={group.category} className={styles.actionSelectorGroup}>
+              <div className={styles.actionSelectorGroupHeader}>{group.label}</div>
+              {group.items.map(renderRow)}
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── NodePopover ─────────────────────────────────────────────────────────────────
 
 interface NodePopoverProps {
@@ -2094,6 +2611,9 @@ interface NodePopoverProps {
   onUpdateBranchConfig?: (nodeId: string, op: string, vals: string[]) => void;
   onUpdateConfigField: (key: string, value: string) => void;
   onClose: () => void;
+  /** Fired when the user clicks the footer "Save" button — commits the
+   *  current step configuration as a single activity entry in the thread. */
+  onSave?: () => void;
   onDeleteBranch?: (nodeId: string) => void;
   /** Update the output branch mode for a standalone condition node */
   onUpdateBranchMode?: (mode: 'yes-no' | 'multi-value' | '') => void;
@@ -2105,9 +2625,11 @@ interface NodePopoverProps {
   onUpdateConditionBranch?: (index: number, operator: string, value: string) => void;
   /** Whether this node currently has any outgoing edges */
   hasOutgoingConnections?: boolean;
+  /** The selected label of the workflow's trigger step, used by the AI Specialist Test tab. */
+  triggerLabel?: string;
 }
 
-function NodePopover({ step, groupSiblings, onSelectSuggestion, onUpdateConditionConfig, onUpdateBranchValues, onUpdateBranchConfig, onUpdateConfigField, onClose, onDeleteBranch, onUpdateBranchMode, onAddBranchValue, onRemoveBranchValue, onUpdateConditionBranch, hasOutgoingConnections }: NodePopoverProps) {
+function NodePopover({ step, groupSiblings, onSelectSuggestion, onUpdateConditionConfig, onUpdateBranchValues, onUpdateBranchConfig, onUpdateConfigField, onClose, onSave, onDeleteBranch, onUpdateBranchMode, onAddBranchValue, onRemoveBranchValue, onUpdateConditionBranch, hasOutgoingConnections, triggerLabel }: NodePopoverProps) {
   const cfg = STEP_CONFIG[step.type];
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
@@ -2118,6 +2640,15 @@ function NodePopover({ step, groupSiblings, onSelectSuggestion, onUpdateConditio
 
   // Policy modal state (policy nodes only)
   const [policyModalOpen, setPolicyModalOpen] = useState(false);
+
+  // AI Specialist tab state (Configure / Test) — only relevant for AI Specialist nodes.
+  const [aiSpecTab, setAiSpecTab] = useState<'configure' | 'test'>('configure');
+  const isAiSpecialist = step.type === 'ai' && step.selectedValue === 'AI Specialist';
+  // A specialist is "configured" when the AI Specialist library item is selected.
+  const specialistConfigured = isAiSpecialist;
+  // Specialist identity — currently a hardcoded default, overridable via configValues when wired.
+  const specialistName = step.configValues?.ai_specialist_name ?? 'Corvus';
+  const specialistRole = step.configValues?.ai_specialist_role ?? 'Scheduler';
 
   const handleAiSend = async () => {
     if (!aiPrompt.trim() || aiLoading) return;
@@ -2212,8 +2743,8 @@ function NodePopover({ step, groupSiblings, onSelectSuggestion, onUpdateConditio
       {/* ── scrollable body ── */}
       <div className={styles.popoverBody}>
 
-      {/* ── 2. Name + Suggested ── */}
-      {step.type !== 'ai' && step.type !== 'delay' && step.type !== 'policy' && (
+      {/* ── 2. Name + Suggested ── (skipped for action — handled by ActionSelector / action header below) */}
+      {step.type !== 'ai' && step.type !== 'delay' && step.type !== 'policy' && step.type !== 'action' && (
         <div className={styles.popoverSection}>
           <NodeNameSelect step={step} onSelect={onSelectSuggestion} />
           {isEmpty && (
@@ -2234,6 +2765,40 @@ function NodePopover({ step, groupSiblings, onSelectSuggestion, onUpdateConditio
           )}
         </div>
       )}
+
+      {/* ══════════════════════════════════════════════════════════════════
+          ACTION NODE — searchable/browsable list (empty) OR back-header (selected)
+          ══════════════════════════════════════════════════════════════════ */}
+      {step.type === 'action' && isEmpty && (
+        <ActionSelector onSelect={onSelectSuggestion} />
+      )}
+      {step.type === 'action' && !isEmpty && (() => {
+        const libItem = ALL_LIBRARY_ITEMS.find(
+          i => i.label === step.selectedValue && i.type === 'action',
+        );
+        const icon = libItem
+          ? (ACTION_ITEM_ICON[libItem.id]
+              ?? ACTION_CATEGORY_ICON[libItem.category]
+              ?? STEP_CONFIG.action.icon)
+          : STEP_CONFIG.action.icon;
+        return (
+          <div className={styles.actionSelectedHeader}>
+            <Button
+              variant="ghost"
+              size="xs"
+              iconOnly
+              onClick={() => onSelectSuggestion('')}
+              aria-label="Back to actions"
+            >
+              <ChevronLeftIcon />
+            </Button>
+            <span className={clsx(styles.actionSelectedIcon, styles.iconAction)} aria-hidden>
+              {icon}
+            </span>
+            <span className={styles.actionSelectedTitle}>{step.selectedValue}</span>
+          </div>
+        );
+      })()}
 
       {/* ══════════════════════════════════════════════════════════════════
           POLICY NODE — Selected policies + Matching threshold
@@ -2619,9 +3184,44 @@ function NodePopover({ step, groupSiblings, onSelectSuggestion, onUpdateConditio
       )}
 
       {/* ══════════════════════════════════════════════════════════════════
+          AI SPECIALIST — tabs (Configure | Test) at the top of the panel
+          ══════════════════════════════════════════════════════════════════ */}
+      {isAiSpecialist && (
+        <div className={styles.aiSpecTabsWrap}>
+          <Tabs
+            variant="underline"
+            size="md"
+            value={aiSpecTab}
+            onChange={(v) => setAiSpecTab(v as 'configure' | 'test')}
+          >
+            <Tabs.Tab value="configure">Configure</Tabs.Tab>
+            {specialistConfigured ? (
+              <Tabs.Tab value="test">Test</Tabs.Tab>
+            ) : (
+              <Tooltip content="Configure a specialist first" placement="bottom">
+                <Tabs.Tab value="test" disabled>Test</Tabs.Tab>
+              </Tooltip>
+            )}
+          </Tabs>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════════
+          AI SPECIALIST · TEST TAB — mounts only while the Test tab is active
+          so chat state resets on every tab switch.
+          ══════════════════════════════════════════════════════════════════ */}
+      {isAiSpecialist && aiSpecTab === 'test' && (
+        <AiSpecialistTest
+          specialistName={specialistName}
+          specialistRole={specialistRole}
+          triggerLabel={triggerLabel}
+        />
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════════
           TRIGGER / ACTION / AI NODE — existing configuration structure
           ══════════════════════════════════════════════════════════════════ */}
-      {step.type !== 'condition' && step.type !== 'delay' && !isEmpty && (
+      {(!isAiSpecialist || aiSpecTab === 'configure') && step.type !== 'condition' && step.type !== 'delay' && !isEmpty && (
         <>
           {/* AI Specialist: Action + Persona rows above the Configuration divider */}
           {step.type === 'ai' && step.selectedValue === 'AI Specialist' && (
@@ -2765,7 +3365,7 @@ function NodePopover({ step, groupSiblings, onSelectSuggestion, onUpdateConditio
             {/* ── AI config ─────────────────────────────────────────────── */}
             {step.type === 'ai' && (
               step.selectedValue === 'AI Specialist'
-                ? <AiSpecialistCards step={step} onUpdateConfigField={onUpdateConfigField} />
+                ? <AiSpecialistCards step={step} onUpdateConfigField={onUpdateConfigField} triggerLabel={triggerLabel} />
                 : <p className={styles.popoverConfigPlaceholder}>No additional configuration for this AI step.</p>
             )}
           </div>
@@ -2774,12 +3374,18 @@ function NodePopover({ step, groupSiblings, onSelectSuggestion, onUpdateConditio
 
       </div>{/* end popoverBody */}
 
-      {/* ── 6. Footer — Save ── */}
-      <div className={styles.popoverFooter}>
-        <Button variant="primary" size="sm" onClick={onClose}>
-          Save
-        </Button>
-      </div>
+      {/* ── 6. Footer — Save (hidden on AI Specialist Test tab) ── */}
+      {!(isAiSpecialist && aiSpecTab === 'test') && (
+        <div className={styles.popoverFooter}>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => { onSave?.(); onClose(); }}
+          >
+            Save
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -3042,111 +3648,528 @@ interface NodePaletteCardProps {
   onDragStart: (item: LibraryItem) => void;
   onDragEnd: () => void;
   onNodeSelect: (item: LibraryItem) => void;
-  onAddConditionGroup: () => void;
-  collapsed?: boolean;
-  onExpand?: () => void;
 }
 
-function NodePaletteCard({ onDragStart, onDragEnd, onNodeSelect, onAddConditionGroup, collapsed, onExpand }: NodePaletteCardProps) {
-  if (collapsed) {
-    return (
-      <Button
-        variant="tertiary"
-        size="md"
-        iconOnly
-        className={styles.panelSearchIconBtn}
-        onClick={onExpand}
-        aria-label="Add new tool"
-      >
-        <PlusIcon size={16} />
-      </Button>
-    );
+// New order per design — search comes first, AI and delay swap positions.
+const TOOLBAR_NODE_ORDER: StepType[] = ['trigger', 'condition', 'action', 'delay', 'ai', 'policy'];
+
+// Standalone toolbar icons (20px artwork inside a 36×36 button).
+const TOOLBAR_NODE_ICON: Record<StepType, React.ReactNode> = {
+  trigger:   <PlayIcon          size={20} />,
+  condition: <FilterLinesIcon   size={20} />,
+  action:    <CircularArrowIcon size={20} />,
+  delay:     <ClockIcon         size={20} />,
+  ai:        <TeambridgeAIIcon  size={20} />,
+  policy:    <TriangleUpIcon    size={20} />,
+};
+
+// Smaller variant used inside the search popup's 36×36 icon wrappers. Falls
+// back to the base-type icon for anything without a per-item/category mapping.
+const SEARCH_RESULT_BASE_ICON: Record<StepType, React.ReactNode> = {
+  trigger:   <PlayIcon          size={16} />,
+  condition: <FilterLinesIcon   size={16} />,
+  action:    <CircularArrowIcon size={16} />,
+  delay:     <ClockIcon         size={16} />,
+  ai:        <TeambridgeAIIcon  size={16} />,
+  policy:    <TriangleUpIcon    size={16} />,
+};
+
+// 16px action icons — mirrors ACTION_ITEM_ICON (which is sized for 12px badges
+// used elsewhere in the flow card), at the size the search popup expects.
+const SEARCH_ACTION_ITEM_ICON: Record<string, React.ReactNode> = {
+  user_actions_clock_in:              <ClockIcon size={16} />,
+  user_actions_clock_out:             <ClockIcon size={16} />,
+  update_data_modify:                 <Edit03Icon size={16} />,
+  notifications_send_email:           <Mail01Icon size={16} />,
+  notifications_webhook_notification: <Bell01Icon size={16} />,
+  notifications_send_one_way_sms:     <Announcement02Icon size={16} />,
+  notifications_send_feed_message:    <Announcement02Icon size={16} />,
+  notifications_send_chat_message:    <Announcement02Icon size={16} />,
+  notifications_send_report:          <Announcement02Icon size={16} />,
+};
+
+const SEARCH_ACTION_CATEGORY_ICON: Record<string, React.ReactNode> = {
+  shift_actions:    <CheckCircleIcon size={16} />,
+  geofence_actions: <Home02Icon size={16} />,
+  user_actions:     <Users03Icon size={16} />,
+  update_data:      <File04Icon size={16} />,
+  notifications:    <Bell01Icon size={16} />,
+};
+
+function getSearchResultIcon(item: { id: string; type: StepType; category: string }): React.ReactNode {
+  if (item.type === 'action') {
+    return SEARCH_ACTION_ITEM_ICON[item.id]
+      ?? SEARCH_ACTION_CATEGORY_ICON[item.category]
+      ?? SEARCH_RESULT_BASE_ICON.action;
   }
+  return SEARCH_RESULT_BASE_ICON[item.type];
+}
+
+// Order used by the filter tabs (and the grouped results list).
+type SearchTabValue = 'all' | StepType;
+const SEARCH_TAB_ORDER: SearchTabValue[] = ['all', 'trigger', 'condition', 'action', 'delay', 'ai', 'policy'];
+const SEARCH_TAB_LABEL: Record<SearchTabValue, string> = {
+  all:       'All',
+  trigger:   'Trigger',
+  condition: 'Condition',
+  action:    'Action',
+  delay:     'Delay',
+  ai:        'AI Specialist',
+  policy:    'Policy',
+};
+
+// Human-readable plural headers for grouped result sections.
+const STEP_GROUP_HEADING: Record<StepType, string> = {
+  trigger:   'Triggers',
+  condition: 'Conditions',
+  action:    'Actions',
+  delay:     'Delays',
+  ai:        'AI Specialists',
+  policy:    'Policies',
+};
+
+const RECENTS_STORAGE_KEY = 'automation.nodePaletteRecents';
+const RECENTS_LIMIT = 5;
+
+// Persist a minimal LibraryItem shape — enough to rehydrate an add-to-canvas
+// payload without relying on ALL_LIBRARY_ITEMS being stable across builds.
+type StoredRecent = Pick<LibraryItem, 'id' | 'type' | 'label' | 'category'>;
+
+function loadRecents(): StoredRecent[] {
+  try {
+    const raw = window.localStorage.getItem(RECENTS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((r): r is StoredRecent =>
+      r && typeof r.id === 'string' && typeof r.type === 'string' && typeof r.label === 'string' && typeof r.category === 'string'
+    ).slice(0, RECENTS_LIMIT);
+  } catch {
+    return [];
+  }
+}
+
+function saveRecents(items: StoredRecent[]) {
+  try { window.localStorage.setItem(RECENTS_STORAGE_KEY, JSON.stringify(items)); } catch { /* noop */ }
+}
+
+// The palette toolbar is always rendered as the floating bottom-center bar;
+// the previous "collapsed → + button" affordance has been removed because
+// the bar no longer lives inside the collapsible left panel.
+function NodePaletteCard({ onDragStart, onDragEnd, onNodeSelect }: NodePaletteCardProps) {
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedTab, setSelectedTab] = useState<SearchTabValue>('all');
+  const [recents, setRecents] = useState<StoredRecent[]>(() => loadRecents());
+  const [highlightedIdx, setHighlightedIdx] = useState(0);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  const closeSearch = useCallback(() => {
+    setSearchOpen(false);
+    setSearchQuery('');
+    setSelectedTab('all');
+    setHighlightedIdx(0);
+  }, []);
+
+  const recordRecent = useCallback((item: LibraryItem) => {
+    // Only items that represent a real selection (base toolbar nodes or
+    // library entries) are recorded — matches "last 5 items the user added".
+    const entry: StoredRecent = { id: item.id, type: item.type, label: item.label || STEP_TOOLTIP_LABEL[item.type], category: item.category };
+    setRecents(prev => {
+      const next = [entry, ...prev.filter(r => !(r.id === entry.id && r.type === entry.type))].slice(0, RECENTS_LIMIT);
+      saveRecents(next);
+      return next;
+    });
+  }, []);
+
+  // Outside click + Escape close the popup.
+  useEffect(() => {
+    if (!searchOpen) return;
+    const onDocMouseDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) closeSearch();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeSearch();
+    };
+    document.addEventListener('mousedown', onDocMouseDown);
+    document.addEventListener('keydown', onKey);
+    // Autofocus the input when the popup opens
+    searchInputRef.current?.focus();
+    return () => {
+      document.removeEventListener('mousedown', onDocMouseDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [searchOpen, closeSearch]);
+
+  const handleToolbarNodeClick = (type: StepType) => {
+    const item: LibraryItem = { id: type, type, label: '', category: type };
+    onNodeSelect(item);
+    recordRecent(item);
+    // Clicking any toolbar node while the popup is open also closes it.
+    if (searchOpen) closeSearch();
+  };
+
+  const handleToolbarNodeDragStart = (e: React.DragEvent, type: StepType) => {
+    const item: LibraryItem = { id: type, type, label: '', category: type };
+    const ghost = document.createElement('div');
+    ghost.style.cssText = 'width:1px;height:1px;position:fixed;top:-9999px;opacity:0;';
+    document.body.appendChild(ghost);
+    e.dataTransfer.setDragImage(ghost, 0, 0);
+    setTimeout(() => document.body.removeChild(ghost), 0);
+    e.dataTransfer.effectAllowed = 'copy';
+    onDragStart(item);
+  };
+
+  // Render the horizontal pill of node icons. `searchActive` controls the
+  // search button styling (dark fill vs grey). The toolbar is rendered twice:
+  // once standalone, and once at the bottom of the search popup.
+  const renderToolbar = (searchActive: boolean) => (
+    <div className={styles.toolbar} role="toolbar" aria-label="Node toolbar">
+      <Tooltip content="Search nodes" offset={4}>
+        <button
+          type="button"
+          className={clsx(styles.toolbarBtn, styles.toolbarSearchBtn, searchActive && styles.toolbarSearchBtnActive)}
+          onClick={() => (searchOpen ? closeSearch() : setSearchOpen(true))}
+          aria-label="Search nodes"
+          aria-pressed={searchActive}
+        >
+          <SearchSmIcon size={20} />
+        </button>
+      </Tooltip>
+      {TOOLBAR_NODE_ORDER.map(type => (
+        <Tooltip key={type} content={STEP_TOOLTIP_LABEL[type]} offset={4}>
+          <button
+            type="button"
+            className={styles.toolbarBtn}
+            draggable
+            onDragStart={e => handleToolbarNodeDragStart(e, type)}
+            onDragEnd={onDragEnd}
+            onClick={() => handleToolbarNodeClick(type)}
+            aria-label={STEP_TOOLTIP_LABEL[type]}
+          >
+            {TOOLBAR_NODE_ICON[type]}
+          </button>
+        </Tooltip>
+      ))}
+    </div>
+  );
+
+  // Filter across the full library (triggers, conditions, actions, plus the
+  // 6 base node types so an empty or generic query still surfaces the primary
+  // building blocks). Delay/AI/Policy have no per-item library entries, so
+  // they're represented by their base type row.
+  const q = searchQuery.trim().toLowerCase();
+  const baseRows: LibraryItem[] = TOOLBAR_NODE_ORDER.map(type => ({
+    id: type, type, label: STEP_TOOLTIP_LABEL[type], category: type,
+  }));
+  const allRows: LibraryItem[] = [...baseRows, ...ALL_LIBRARY_ITEMS];
+
+  const typeFiltered = selectedTab === 'all'
+    ? allRows
+    : allRows.filter(item => item.type === selectedTab);
+
+  const queryFiltered = !q
+    ? typeFiltered
+    : typeFiltered.filter(item =>
+        item.label.toLowerCase().includes(q)
+        || STEP_TOOLTIP_LABEL[item.type].toLowerCase().includes(q)
+      );
+
+  // Group rows by step type for the results view. Preserve the tab order so
+  // sections always appear in the same sequence regardless of query.
+  const groupedResults: { type: StepType; rows: LibraryItem[] }[] = TOOLBAR_NODE_ORDER
+    .map(type => ({ type, rows: queryFiltered.filter(r => r.type === type) }))
+    .filter(g => g.rows.length > 0);
+
+  // Recents show at the top when there's no query and any recents pass the
+  // active tab filter. While typing we hide recents and only show matches.
+  const recentRows: LibraryItem[] = !q
+    ? recents
+        .filter(r => selectedTab === 'all' || r.type === selectedTab)
+        .map(r => ({ id: r.id, type: r.type, label: r.label, category: r.category }))
+    : [];
+  const showingRecents = recentRows.length > 0;
+
+  // Flat order used for keyboard navigation. Matches the rendered row order —
+  // recents first (when visible), then the grouped results below.
+  const flatVisibleRows: LibraryItem[] = [
+    ...recentRows,
+    ...groupedResults.flatMap(g => g.rows),
+  ];
+
+  // Clamp the highlighted index whenever the visible list changes.
+  useEffect(() => {
+    setHighlightedIdx(i => Math.min(Math.max(0, i), Math.max(0, flatVisibleRows.length - 1)));
+  }, [flatVisibleRows.length]);
+
+  const handleSearchResultClick = (item: LibraryItem) => {
+    onNodeSelect(item);
+    recordRecent(item);
+    closeSearch();
+  };
+
+  // Keyboard navigation within the popup: ↑/↓ between rows, Enter to select.
+  const onPopupKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!searchOpen) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (flatVisibleRows.length) setHighlightedIdx(i => (i + 1) % flatVisibleRows.length);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (flatVisibleRows.length) setHighlightedIdx(i => (i - 1 + flatVisibleRows.length) % flatVisibleRows.length);
+    } else if (e.key === 'Enter') {
+      const row = flatVisibleRows[highlightedIdx];
+      if (row) {
+        e.preventDefault();
+        handleSearchResultClick(row);
+      }
+    }
+  };
+
+  // Running counter for keyboard-highlighted row index across grouped sections.
+  let keyboardRowCursor = -1;
 
   return (
-    <div className={styles.paletteCard}>
-      <div className={styles.paletteToolbar}>
-        <span className={styles.paletteToolbarLabel}>Add</span>
-        <div className={styles.paletteToolbarBtns}>
-          {(['trigger', 'condition', 'action', 'ai', 'delay', 'policy'] as StepType[]).map(type => {
-            const cfg = STEP_CONFIG[type];
-            const item: LibraryItem = { id: type, type, label: '', category: type };
-            return (
-              <Tooltip key={type} content={STEP_TOOLTIP_LABEL[type]}>
-                <button
-                  className={clsx(styles.typePickerBtn, cfg.bgClass)}
-                  draggable
-                  onDragStart={e => {
-                    // Use a transparent 1×1 pixel as the native drag ghost — we render
-                    // our own dropPlaceholder inside the canvas instead
-                    const ghost = document.createElement('div');
-                    ghost.style.cssText = 'width:1px;height:1px;position:fixed;top:-9999px;opacity:0;';
-                    document.body.appendChild(ghost);
-                    e.dataTransfer.setDragImage(ghost, 0, 0);
-                    setTimeout(() => document.body.removeChild(ghost), 0);
-                    e.dataTransfer.effectAllowed = 'copy';
-                    onDragStart(item);
-                  }}
-                  onDragEnd={onDragEnd}
-                  onClick={() => onNodeSelect(item)}
-                  aria-label={STEP_TOOLTIP_LABEL[type]}
-                  type="button"
-                >
-                  {cfg.icon}
-                </button>
-              </Tooltip>
-            );
-          })}
-        </div>
-        <button
-          className={clsx(styles.zoomBtn, styles.addGroupBtn)}
-          onClick={onAddConditionGroup}
-          aria-label="Add condition group"
-          type="button"
+    <div ref={rootRef} className={styles.paletteRoot}>
+      {searchOpen && (
+        <div
+          className={styles.searchPopup}
+          role="dialog"
+          aria-label="Search nodes"
+          onKeyDown={onPopupKeyDown}
         >
-          <Link05Icon size={14} />
-          <span>Add group</span>
-        </button>
-      </div>
+          <div className={styles.searchResultsPanel}>
+            <div className={styles.searchInputRow}>
+              <SearchSmIcon size={16} />
+              <input
+                ref={searchInputRef}
+                type="text"
+                className={styles.searchInput}
+                placeholder="Search..."
+                value={searchQuery}
+                onChange={e => { setSearchQuery(e.target.value); setHighlightedIdx(0); }}
+              />
+            </div>
+
+            <FilterPillGroup className={styles.searchTabsRow} aria-label="Filter by node type">
+              {SEARCH_TAB_ORDER.map(tab => (
+                <FilterPill
+                  key={tab}
+                  active={selectedTab === tab}
+                  onClick={() => { setSelectedTab(tab); setHighlightedIdx(0); }}
+                >
+                  {SEARCH_TAB_LABEL[tab]}
+                </FilterPill>
+              ))}
+            </FilterPillGroup>
+
+            <div className={styles.searchResults}>
+              {showingRecents && (
+                <div className={styles.searchSection}>
+                  <div className={styles.searchSectionHeader}>Recents</div>
+                  {recentRows.map(r => {
+                    keyboardRowCursor += 1;
+                    const idx = keyboardRowCursor;
+                    return (
+                      <button
+                        key={`recent:${r.type}:${r.id}`}
+                        type="button"
+                        className={clsx(styles.searchResultRow, idx === highlightedIdx && styles.searchResultRowActive)}
+                        onMouseEnter={() => setHighlightedIdx(idx)}
+                        onClick={() => handleSearchResultClick(r)}
+                      >
+                        <span className={styles.searchResultIcon}>{getSearchResultIcon(r)}</span>
+                        <span className={styles.searchResultLabel}>{r.label}</span>
+                        <Tag variant="outline" size="sm" className={styles.searchResultTypeTag}>
+                          {STEP_TOOLTIP_LABEL[r.type]}
+                        </Tag>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {groupedResults.length === 0 && !showingRecents ? (
+                <div className={styles.searchEmpty}>No results</div>
+              ) : (
+                groupedResults.map(group => (
+                  <div key={`group:${group.type}`} className={styles.searchSection}>
+                    <div className={styles.searchSectionHeader}>{STEP_GROUP_HEADING[group.type]}</div>
+                    {group.rows.map(item => {
+                      keyboardRowCursor += 1;
+                      const idx = keyboardRowCursor;
+                      return (
+                        <button
+                          key={`${item.type}:${item.id}`}
+                          type="button"
+                          className={clsx(styles.searchResultRow, idx === highlightedIdx && styles.searchResultRowActive)}
+                          onMouseEnter={() => setHighlightedIdx(idx)}
+                          onClick={() => handleSearchResultClick(item)}
+                        >
+                          <span className={styles.searchResultIcon}>{getSearchResultIcon(item)}</span>
+                          <span className={styles.searchResultLabel}>{item.label}</span>
+                          <Tag variant="outline" size="sm" className={styles.searchResultTypeTag}>
+                            {STEP_TOOLTIP_LABEL[item.type]}
+                          </Tag>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+          {renderToolbar(true)}
+        </div>
+      )}
+      {!searchOpen && renderToolbar(false)}
     </div>
   );
 }
 
-// ─── LeftPanel ───────────────────────────────────────────────────────────────────
+// ─── Activity feed + AI conversation thread ──────────────────────────────────
 
-interface Message {
-  id:      string;
-  role:    'user' | 'assistant';
+type ThreadEntryKind = 'activity' | 'ai' | 'user' | 'context';
+
+interface ThreadEntry {
+  id: string;
+  kind: ThreadEntryKind;
   content: string;
+  timestamp: number;
 }
+
+/** Mock AI reaction banks — one line at a time, rotated per-bank to avoid repeats. */
+const AI_RESPONSES: Record<string, string[]> = {
+  add_trigger: [
+    "Nice — you've added a trigger. Now connect it to a condition or action to continue the flow.",
+    'Trigger in place. What should happen when it fires?',
+    'Great, the trigger is set. Add the next step from here.',
+  ],
+  add_condition: [
+    'A condition lets you branch the flow. Configure what to check on the right.',
+    'Condition added — set an operator and value to see the yes/no branches appear.',
+  ],
+  add_action: [
+    'Action dropped in. Pick an action type on the right to define what it does.',
+    'Good — choose an action and the relevant fields will show up.',
+  ],
+  add_ai: [
+    'AI Specialist added. Connect it downstream so it has a record to act on.',
+    'Specialist added — configure its persona and engagement options on the right.',
+  ],
+  add_delay: [
+    'A pause between steps — tell me how long to wait.',
+    'Delay dropped in. Set the duration on the right.',
+  ],
+  add_policy: [
+    'Policy node added — pick which folders or policies to match against.',
+    'Policy check added. Configure which ones apply.',
+  ],
+  delete: [
+    'Got it — removed. Let me know if you want to add something else here.',
+    'Noted, that step is gone. Keep going whenever you\u2019re ready.',
+  ],
+  configure: [
+    'Config saved. Ready to connect this to the next step?',
+    'Got it — updated. Nice.',
+    'Noted. Keep going when you\u2019re ready.',
+  ],
+  connect: [
+    'Wired up. Looking good.',
+    'Connection made — the flow continues from there.',
+    'Nice chain. What comes next?',
+  ],
+  disconnect: [
+    'Edge removed. You can reconnect or route this differently.',
+    'Disconnected — let me know what to wire up next.',
+  ],
+  chat: [
+    'I\u2019m just a mock for now — but I\u2019m listening.',
+    'Got it. Once I\u2019m wired up to the real model, I\u2019ll be able to help more directly.',
+    'Noted. What else would you like to try?',
+    'Heard. Keep going — I\u2019ll follow along.',
+  ],
+};
+
+const WELCOME_AI_MESSAGE =
+  "Hi! I'm your workflow assistant. I'll help you build and track changes to this workflow. Start by adding a trigger to kick things off \u2014 or ask me anything.";
+
+// Streams the AI response one chunk at a time to mimic live typing. Effect
+// re-runs only when `content` changes, so an already-finished bubble isn't
+// re-animated on incidental re-renders.
+function TypingText({ content, onProgress }: { content: string; onProgress?: () => void }) {
+  const [len, setLen] = useState(0);
+  const onProgressRef = useRef(onProgress);
+  onProgressRef.current = onProgress;
+  useEffect(() => {
+    setLen(0);
+    let i = 0;
+    let timerId: number;
+    const tick = () => {
+      i = Math.min(i + 2, content.length);
+      setLen(i);
+      onProgressRef.current?.();
+      if (i < content.length) {
+        timerId = window.setTimeout(tick, 18);
+      }
+    };
+    timerId = window.setTimeout(tick, 18);
+    return () => window.clearTimeout(timerId);
+  }, [content]);
+  return <>{content.slice(0, len)}</>;
+}
+
+// ─── LeftPanel ───────────────────────────────────────────────────────────────────
 
 interface LeftPanelProps {
   onLibNodeDragStart: (item: LibraryItem) => void;
   onLibNodeDragEnd: () => void;
   onLibNodeSelect: (item: LibraryItem) => void;
-  onAddConditionGroup: () => void;
   editNodeMode: boolean;
   editingCount: number;
   onToggleEditMode: () => void;
   aiPrompt: string;
   onAiPromptChange: (v: string) => void;
-  aiLoading: boolean;
-  messages: Message[];
+  aiTyping: boolean;
+  entries: ThreadEntry[];
   onAiSend: () => void;
 }
 
 function LeftPanel({
-  onLibNodeDragStart, onLibNodeDragEnd, onLibNodeSelect, onAddConditionGroup,
+  onLibNodeDragStart, onLibNodeDragEnd, onLibNodeSelect,
   editNodeMode, editingCount, onToggleEditMode,
-  aiPrompt, onAiPromptChange, aiLoading, messages, onAiSend,
+  aiPrompt, onAiPromptChange, aiTyping, entries, onAiSend,
 }: LeftPanelProps) {
   const [showEditTooltip, setShowEditTooltip] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const chatBottomRef = useRef<HTMLDivElement>(null);
 
+  // Entries present at mount render without the typing animation; anything
+  // added later is treated as a fresh AI response and types in.
+  const initialEntryIdsRef = useRef<Set<string>>(new Set(entries.map(e => e.id)));
+
+  // Auto-scroll on any new entry (or while the AI is typing, to keep the
+  // indicator in view).
   useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [entries, aiTyping]);
+
+  // Group consecutive AI bubbles so the avatar + name header only shows once
+  // per run (matches the way humans read threaded chat).
+  const isFirstInAiSequence = (idx: number): boolean => {
+    if (entries[idx].kind !== 'ai') return false;
+    if (idx === 0) return true;
+    return entries[idx - 1].kind !== 'ai';
+  };
+
+  const formatTime = (ms: number): string => {
+    try {
+      return new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    } catch {
+      return '';
+    }
+  };
 
   return (
     <aside className={styles.leftPanel} data-collapsed={collapsed}>
@@ -3161,14 +4184,11 @@ function LeftPanel({
       />
       <div className={styles.leftPanelInner}>
 
-        {/* ── Node Palette ── */}
+        {/* ── Node Palette ── (floats at bottom-center, always expanded) */}
         <NodePaletteCard
           onDragStart={onLibNodeDragStart}
           onDragEnd={onLibNodeDragEnd}
           onNodeSelect={onLibNodeSelect}
-          onAddConditionGroup={onAddConditionGroup}
-          collapsed={collapsed}
-          onExpand={() => setCollapsed(false)}
         />
 
 
@@ -3198,19 +4218,53 @@ function LeftPanel({
           {/* ── Shell: unified card wrapping chat thread + input ── */}
           <div className={styles.aiComposerShell}>
 
-            {/* Chat thread — always present; input stays pinned at bottom */}
+            {/* Activity feed + AI conversation thread — pinned input sits below */}
             <div className={styles.aiChatWindow}>
-              {messages.map(msg => (
-                <div
-                  key={msg.id}
-                  className={clsx(
-                    styles.aiChatBubble,
-                    msg.role === 'user' ? styles.aiChatBubbleUser : styles.aiChatBubbleAssistant,
+              {entries.map((entry) => (
+                <Fragment key={entry.id}>
+                  {entry.kind === 'activity' && (
+                    <div className={styles.threadUserBlock}>
+                      <div className={styles.threadBubbleUser}>{entry.content}</div>
+                      <time className={styles.threadBubbleTime} dateTime={new Date(entry.timestamp).toISOString()}>
+                        {formatTime(entry.timestamp)}
+                      </time>
+                    </div>
                   )}
-                >
-                  {msg.content}
-                </div>
+                  {entry.kind === 'context' && (
+                    <div className={styles.threadContextRow}>{entry.content}</div>
+                  )}
+                  {entry.kind === 'user' && (
+                    <div className={styles.threadUserBlock}>
+                      <div className={styles.threadUserLabel}>You</div>
+                      <div className={styles.threadBubbleUser}>{entry.content}</div>
+                      <time className={styles.threadBubbleTime} dateTime={new Date(entry.timestamp).toISOString()}>
+                        {formatTime(entry.timestamp)}
+                      </time>
+                    </div>
+                  )}
+                  {entry.kind === 'ai' && (
+                    <div className={styles.threadAiBlock}>
+                      <div className={styles.threadBubbleAi}>
+                        {initialEntryIdsRef.current.has(entry.id)
+                          ? entry.content
+                          : <TypingText content={entry.content} onProgress={() => chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' })} />}
+                      </div>
+                      <time className={styles.threadBubbleTime} dateTime={new Date(entry.timestamp).toISOString()}>
+                        {formatTime(entry.timestamp)}
+                      </time>
+                    </div>
+                  )}
+                </Fragment>
               ))}
+
+              {aiTyping && (
+                <div className={styles.threadAiBlock}>
+                  <div className={styles.threadBubbleAi} aria-label="AI is typing">
+                    <AILoader variant="gradient-fill" size="sm" />
+                  </div>
+                </div>
+              )}
+
               <div ref={chatBottomRef} aria-hidden="true" />
             </div>
 
@@ -3263,10 +4317,10 @@ function LeftPanel({
                 <button
                   className={styles.aiComposerSendBtn}
                   onClick={onAiSend}
-                  disabled={!aiPrompt.trim() || aiLoading}
+                  disabled={!aiPrompt.trim() || aiTyping}
                   aria-label="Send to AI"
                 >
-                  {aiLoading ? <LoadingDots /> : <ArrowNarrowUpIcon size={12} />}
+                  {aiTyping ? <LoadingDots /> : <ArrowNarrowUpIcon size={12} />}
                 </button>
               </div>
             </div>
@@ -3312,6 +4366,11 @@ interface FlowNodeProps {
   onRemoveBranchValue?: (index: number) => void;
   onUpdateConditionBranch?: (index: number, operator: string, value: string) => void;
   hasOutgoingConnections?: boolean;
+  /** Label of the workflow's trigger step — forwarded to NodePopover for the AI Specialist Test tab. */
+  triggerLabel?: string;
+  /** Fired when the right-panel Save button is clicked — used to commit a
+   *  single activity entry summarizing the node's saved configuration. */
+  onSaveNodePopover?: (nodeId: string) => void;
 }
 
 function FlowNode({
@@ -3341,6 +4400,8 @@ function FlowNode({
   onRemoveBranchValue,
   onUpdateConditionBranch,
   hasOutgoingConnections,
+  triggerLabel,
+  onSaveNodePopover,
 }: FlowNodeProps) {
   const cfg = STEP_CONFIG[step.type];
   const outerRef = useRef<HTMLDivElement>(null);
@@ -3426,12 +4487,22 @@ function FlowNode({
   // Popover is suppressed while editNodeMode is active (click = edit-select, not config).
   const showPopover = isSelected && popoverOpen && !isDragging && !editNodeMode;
 
+  const isDelay = step.type === 'delay';
+  const isTrigger = step.type === 'trigger';
+  const isAction = step.type === 'action';
+  const isPill = isDelay || isTrigger;
+  const pillFocused = isPill && isSelected && !editNodeMode;
+  const actionFocused = isAction && isSelected && !editNodeMode;
+
   return (
     <div
       ref={outerRef}
       className={clsx(
         styles.flowNodeOuter,
-        isSelected && !editNodeMode && styles.flowNodeOuterSelected,
+        isDelay && styles.flowNodeOuterDelay,
+        isTrigger && styles.flowNodeOuterTrigger,
+        isAction && styles.flowNodeOuterAction,
+        isSelected && !editNodeMode && !isPill && !isAction && styles.flowNodeOuterSelected,
         isDragging && styles.flowNodeOuterDragging,
         isDragOver && styles.flowNodeOuterDragOver,
         isEditSelected && styles.flowNodeOuterEditSelected,
@@ -3447,6 +4518,109 @@ function FlowNode({
       aria-pressed={editNodeMode ? isEditSelected : isSelected}
       onKeyDown={(e) => { if (e.key === 'Enter' && !editNodeMode) { onSelect(); if (isSelected) setPopoverOpen(true); } }}
     >
+      {isDelay ? (
+        <div
+          className={clsx(
+            styles.delayPill,
+            step.configured && step.selectedValue && styles.delayPillFilled,
+            pillFocused && styles.delayPillFocused,
+          )}
+        >
+          <ClockIcon size={14} />
+          <span>{step.configured && step.selectedValue ? step.selectedValue : 'Add Delay'}</span>
+        </div>
+      ) : isTrigger ? (() => {
+        // Prefer the contextual snippet (e.g. "Google Link completed") when
+        // the trigger has enough config to build one; fall back to the raw
+        // selected label, then to the empty-state placeholder.
+        let triggerText = 'Select trigger...';
+        if (step.configured && step.selectedValue) {
+          const segs = buildNodeSnippet(step);
+          triggerText = segs
+            ? segs.map(s => s.text).join('').trim()
+            : step.selectedValue;
+        }
+        return (
+          <div
+            className={clsx(
+              styles.triggerPill,
+              step.configured && step.selectedValue && styles.triggerPillFilled,
+              pillFocused && styles.triggerPillFocused,
+            )}
+          >
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+              <path
+                d="M4 2.75L10.5 7L4 11.25V2.75Z"
+                stroke="currentColor"
+                strokeWidth="1.4"
+                strokeLinejoin="round"
+                strokeLinecap="round"
+              />
+            </svg>
+            <span>{triggerText}</span>
+          </div>
+        );
+      })() : isAction ? (
+        <>
+          <div className={styles.actionNodeHeader}>
+            <span
+              className={clsx(
+                styles.actionNodePill,
+                actionFocused && styles.actionNodePillFocused,
+              )}
+            >
+              <ArrowCircleBrokenRightIcon size={12} />
+              <span>Action</span>
+            </span>
+            {/* Spacer to balance absolutely-positioned dots button */}
+            <div style={{ width: 24 }} aria-hidden />
+          </div>
+          <div
+            className={clsx(
+              styles.actionNodeCard,
+              actionFocused && styles.actionNodeCardFocused,
+            )}
+          >
+            <span
+              className={clsx(
+                styles.actionNodeIconBox,
+                step.configured && step.selectedValue && styles.actionNodeIconBoxFilled,
+              )}
+              aria-label={cfg.label}
+            >
+              {getStepIcon(step)}
+            </span>
+            <div className={styles.actionNodeContent}>
+              {step.configured && step.selectedValue ? (
+                <div className={styles.nodeConfigSummary} data-type="action">
+                  {(() => {
+                    const segs = buildNodeSnippet(step);
+                    if (segs) {
+                      return segs.map((seg, i) => (
+                        <span
+                          key={i}
+                          className={
+                            seg.role === 'val'
+                              ? styles.nodeConfigVal
+                              : seg.role === 'op'
+                              ? styles.nodeConfigOp
+                              : styles.nodeConfigLabel
+                          }
+                        >
+                          {seg.text}
+                        </span>
+                      ));
+                    }
+                    return <span className={styles.nodeConfigLabel}>{step.selectedValue}</span>;
+                  })()}
+                </div>
+              ) : (
+                <span className={styles.actionNodePlaceholder}>{step.placeholder}</span>
+              )}
+            </div>
+          </div>
+        </>
+      ) : (
       <div className={styles.flowNode}>
         <div className={styles.nodeHeading}>
           {/* Type badge */}
@@ -3501,6 +4675,7 @@ function FlowNode({
           </div>
         </div>
       </div>
+      )}
 
       {/* ··· Dots menu — Alloy DropdownMenu, positioned outside flowNode to escape overflow:hidden */}
       <div
@@ -3544,6 +4719,8 @@ function FlowNode({
             onRemoveBranchValue={onRemoveBranchValue}
             onUpdateConditionBranch={onUpdateConditionBranch}
             hasOutgoingConnections={hasOutgoingConnections}
+            triggerLabel={triggerLabel}
+            onSave={onSaveNodePopover ? () => onSaveNodePopover(step.id) : undefined}
           />
         </div>,
         document.body,
@@ -3717,55 +4894,19 @@ interface NodeAiFloatingInputProps {
   /** Canvas-space position: center-x of node, just below node bottom */
   left: number;
   top: number;
-  onSelectSuggestion: (value: string) => void;
-  onUpdateConditionConfig: (op: string, vals: string[]) => void;
-  onUpdateConfigField: (key: string, value: string) => void;
+  /** Submits the prompt to the shared left-panel thread. */
+  onSubmit: (message: string, nodeType: StepType) => void;
 }
 
-function NodeAiFloatingInput({ step, left, top, onSelectSuggestion, onUpdateConditionConfig, onUpdateConfigField }: NodeAiFloatingInputProps) {
-  const [aiPrompt, setAiPrompt]   = useState('');
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiResult, setAiResult]   = useState<string | null>(null);
+function NodeAiFloatingInput({ step, left, top, onSubmit }: NodeAiFloatingInputProps) {
+  const [aiPrompt, setAiPrompt] = useState('');
 
-  const handleSend = useCallback(async () => {
-    if (!aiPrompt.trim() || aiLoading) return;
-    setAiLoading(true);
-    setAiResult(null);
-    try {
-      const libItems    = ALL_LIBRARY_ITEMS.filter(i => i.type === step.type);
-      const configItem  = ALL_LIBRARY_ITEMS.find(i => i.label === step.selectedValue);
-      const rawFields: NodeConfigField[] = configItem ? (NODE_CONFIG[configItem.id] ?? []) : [];
-      const configFields = rawFields.map(f => ({
-        key: f.key, label: f.label, type: f.type, required: f.required,
-        options: f.options ?? (f.optionsByDependency ? Object.values(f.optionsByDependency).flat() : undefined),
-      }));
-      const condDef = step.type === 'condition' && step.selectedValue
-        ? CONDITION_LIBRARY.find(c => c.label === step.selectedValue) ?? null : null;
-      const systemPrompt = buildStepSystemPrompt({
-        step: { id: step.id, type: step.type, selectedValue: step.selectedValue,
-                conditionOperator: step.conditionOperator, conditionValues: step.conditionValues,
-                configValues: step.configValues, configured: step.configured },
-        libraryItemsForType: libItems.map(i => ({ id: i.id, label: i.label, type: i.type, category: i.category })),
-        configFields,
-        conditionOperators: condDef?.operators,
-        conditionValueOptions: condDef?.valueOptions,
-      });
-      const result = await callFlowAgent({ systemPrompt, userMessage: aiPrompt, tools: STEP_TOOLS });
-      for (const call of result.toolCalls) {
-        const inp = call.toolInput;
-        if (call.toolName === 'select_step_value')       onSelectSuggestion(inp.value as string);
-        else if (call.toolName === 'set_condition_config') onUpdateConditionConfig(inp.operator as string, inp.values as string[]);
-        else if (call.toolName === 'set_step_config_field') onUpdateConfigField(inp.field_key as string, inp.value as string);
-      }
-      const text = result.textBlocks.join(' ').trim();
-      setAiResult(text || 'Done.');
-      setAiPrompt('');
-    } catch (err) {
-      setAiResult(`Error: ${err instanceof Error ? err.message : 'Something went wrong'}`);
-    } finally {
-      setAiLoading(false);
-    }
-  }, [aiPrompt, aiLoading, step, onSelectSuggestion, onUpdateConditionConfig, onUpdateConfigField]);
+  const handleSend = useCallback(() => {
+    const text = aiPrompt.trim();
+    if (!text) return;
+    onSubmit(text, step.type);
+    setAiPrompt('');
+  }, [aiPrompt, step.type, onSubmit]);
 
   return (
     <div
@@ -3795,16 +4936,13 @@ function NodeAiFloatingInput({ step, left, top, onSelectSuggestion, onUpdateCond
             <button
               className={styles.aiComposerSendBtn}
               onClick={handleSend}
-              disabled={!aiPrompt.trim() || aiLoading}
+              disabled={!aiPrompt.trim()}
               aria-label="Send to AI"
             >
-              {aiLoading
-                ? <AILoader variant="gradient-fill" size={16} />
-                : <ArrowNarrowUpIcon size={12} />}
+              <ArrowNarrowUpIcon size={12} />
             </button>
           </div>
         </div>
-        {aiResult && <p className={styles.popoverAiResult}>{aiResult}</p>}
       </div>
     </div>
   );
@@ -3923,15 +5061,12 @@ interface FlowCanvasProps {
   onUpdateConditionBranch?: (nodeId: string, index: number, operator: string, value: string) => void;
   autoTidyToken?: number;
   fitToken?: number;
-  conditionGroups: ConditionGroupEntry[];
-  groupPositions: Record<string, { x: number; y: number }>;
-  onGroupPositionChange: (id: string, x: number, y: number) => void;
-  onNodeDroppedOnGroup: (nodeId: string, groupId: string) => void;
-  /** Called when an edge is dropped on an empty condition group (no nodes inside yet) */
-  onConnectToGroup?: (fromNodeId: string, groupId: string) => void;
-  onUpdateGroupOperator: (groupId: string, op: 'AND' | 'OR') => void;
-  onAddConditionToGroup: (groupId: string) => void;
-  onDeleteConditionGroup: (groupId: string) => void;
+  /** Submits a prompt from the floating node-level AI input into the main
+   *  left-panel thread. Receives the raw message + the originating node type. */
+  onNodeAiSubmit?: (message: string, nodeType: StepType) => void;
+  /** Commits the right-panel Save for a given node — emits a single activity
+   *  entry summarizing the node's saved configuration. */
+  onSaveNodePopover?: (nodeId: string) => void;
 }
 
 function FlowCanvas({
@@ -3940,7 +5075,6 @@ function FlowCanvas({
   onDuplicateNode, onDeleteNode, onAddRootTrigger,
   onInsertOnEdge, onPositionChange, onSetAllPositions, onAddEdge, onDeleteEdge, onCreateNodeAt, onCreateNodeAndConnect, onCanvasDropAtPos,
   editNodeMode, editingNodeIds, onEditNodeToggle,
-  onDetachFromGroup,
   onUpdateBranchValues,
   onUpdateBranchConfig,
   onUpdateBranchMode,
@@ -3949,15 +5083,22 @@ function FlowCanvas({
   onUpdateConditionBranch,
   autoTidyToken,
   fitToken,
-  conditionGroups,
-  groupPositions,
-  onGroupPositionChange,
-  onNodeDroppedOnGroup,
-  onConnectToGroup,
-  onUpdateGroupOperator,
-  onAddConditionToGroup,
-  onDeleteConditionGroup,
+  onNodeAiSubmit,
+  onSaveNodePopover,
 }: FlowCanvasProps) {
+  // Condition-group feature has been removed; legacy code paths treat both
+  // collections as empty/no-ops. Safe to delete once the related rendering
+  // and drag logic is pruned.
+  const conditionGroups: ConditionGroupEntry[] = [];
+  const groupPositions: Record<string, { x: number; y: number }> = {};
+  const onGroupPositionChange: (id: string, x: number, y: number) => void = () => {};
+  const onNodeDroppedOnGroup: (nodeId: string, groupId: string) => void = () => {};
+  const onConnectToGroup: (fromNodeId: string, groupId: string) => void = () => {};
+  const onUpdateGroupOperator: (groupId: string, op: 'AND' | 'OR') => void = () => {};
+  const onAddConditionToGroup: (groupId: string) => void = () => {};
+  const onDeleteConditionGroup: (groupId: string) => void = () => {};
+  const onDetachFromGroup: (nodeId: string) => void = () => {};
+
   const canvasRef      = useRef<HTMLDivElement>(null);
   const graphContentRef = useRef<HTMLDivElement>(null);
   const [pan,  setPan]  = useState({ x: INIT_PAN_X, y: 0 });
@@ -5262,6 +6403,8 @@ function FlowCanvas({
                     onRemoveBranchValue={onRemoveBranchValue ? (idx) => onRemoveBranchValue(node.id, idx) : undefined}
                     onUpdateConditionBranch={onUpdateConditionBranch ? (idx, op, val) => onUpdateConditionBranch(node.id, idx, op, val) : undefined}
                     hasOutgoingConnections={edges.some(e => e.from === node.id)}
+                    triggerLabel={nodes.find(n => n.type === 'trigger')?.selectedValue}
+                    onSaveNodePopover={onSaveNodePopover}
                   />
 
                   {/* Bottom anchor / output ports — non-grouped nodes only.
@@ -5343,9 +6486,7 @@ function FlowCanvas({
                   step={selectedNode}
                   left={aiLeft}
                   top={aiTop}
-                  onSelectSuggestion={v  => onUpdateNode(selectedId, v)}
-                  onUpdateConditionConfig={(op, vals) => onUpdateNodeCondition(selectedId, op, vals)}
-                  onUpdateConfigField={(key, val)  => onUpdateNodeConfigField(selectedId, key, val)}
+                  onSubmit={(message, nodeType) => onNodeAiSubmit?.(message, nodeType)}
                 />
               );
             })()}
@@ -5599,17 +6740,77 @@ export function BuilderPage() {
   const [draggingLibNode, setDraggingLibNode] = useState<LibraryItem | null>(null);
   const [autoTidyToken,   setAutoTidyToken]   = useState(0);
   const [fitToken,        setFitToken]        = useState(0);
-  // Standalone condition groups (created via "Add group", filled by dragging nodes in)
-  const [conditionGroups,  setConditionGroups]  = useState<ConditionGroupEntry[]>([]);
-  const [groupPositions,   setGroupPositions]   = useState<Record<string, { x: number; y: number }>>({});
   const [editNodeMode,    setEditNodeMode]    = useState(false);
   const [editingNodeIds,  setEditingNodeIds]  = useState<Set<string>>(new Set());
   const [saveState,       setSaveState]       = useState<SaveState>('idle');
   const [globalAiPrompt,  setGlobalAiPrompt]  = useState('');
-  const [globalAiLoading, setGlobalAiLoading] = useState(false);
-  const [globalAiMessages, setGlobalAiMessages] = useState<Message[]>([]);
+  const [threadEntries, setThreadEntries] = useState<ThreadEntry[]>([]);
+  const [aiTyping, setAiTyping] = useState(false);
+
+  // Rolling index per response bank so consecutive AI reactions don't repeat.
+  const aiReactionIdxRef = useRef<Record<string, number>>({});
+  const aiTypingTimerRef = useRef<number | null>(null);
   const saveTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ── Activity feed helpers ────────────────────────────────────────────────
+  // Consuming mutations call logActivity + (optionally) scheduleAiReaction.
+  // Both always append to the same thread — activity entries interleave with
+  // AI bubbles chronologically.
+
+  const appendThreadEntry = useCallback((entry: Omit<ThreadEntry, 'id' | 'timestamp'>) => {
+    setThreadEntries(prev => [...prev, {
+      id: crypto.randomUUID(),
+      timestamp: Date.now(),
+      ...entry,
+    }]);
+  }, []);
+
+  const scheduleAiReaction = useCallback((bank: string[], bankKey: string) => {
+    if (!bank || bank.length === 0) return;
+    if (aiTypingTimerRef.current != null) {
+      window.clearTimeout(aiTypingTimerRef.current);
+    }
+    setAiTyping(true);
+    const delay = 900 + Math.random() * 900;
+    aiTypingTimerRef.current = window.setTimeout(() => {
+      // Pick the next line in the bank, skipping the same index as last time
+      // so two reactions for the same event type never repeat verbatim.
+      const prevIdx = aiReactionIdxRef.current[bankKey] ?? -1;
+      const idx = bank.length > 1
+        ? (prevIdx + 1) % bank.length
+        : 0;
+      aiReactionIdxRef.current[bankKey] = idx;
+      setThreadEntries(prev => [...prev, {
+        id: crypto.randomUUID(),
+        kind: 'ai',
+        content: bank[idx],
+        timestamp: Date.now(),
+      }]);
+      setAiTyping(false);
+    }, delay);
+  }, []);
+
+  const logActivity = useCallback((content: string, bankKey?: string) => {
+    appendThreadEntry({ kind: 'activity', content });
+    if (bankKey && AI_RESPONSES[bankKey]) {
+      scheduleAiReaction(AI_RESPONSES[bankKey], bankKey);
+    }
+  }, [appendThreadEntry, scheduleAiReaction]);
+
+  // Welcome message — appended once when the thread is empty on mount.
+  useEffect(() => {
+    setThreadEntries(prev => prev.length === 0
+      ? [{ id: crypto.randomUUID(), kind: 'ai', content: WELCOME_AI_MESSAGE, timestamp: Date.now() }]
+      : prev);
+    // Clean up any pending typing timer on unmount
+    return () => {
+      if (aiTypingTimerRef.current != null) {
+        window.clearTimeout(aiTypingTimerRef.current);
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── Debounced auto-save ──
   const isMount = useRef(true);
@@ -5695,6 +6896,10 @@ export function BuilderPage() {
       setEdges(prev => [...prev, e]);
     }
     setSelectedId(n.id);
+    logActivity(
+      `${STEP_CONFIG[type].label} added${selectedValue ? ` \u2014 ${selectedValue}` : ''}`,
+      `add_${type}`,
+    );
   };
 
   /** Toggle edit-node selection mode. Exiting mode clears the selection. */
@@ -5737,16 +6942,23 @@ export function BuilderPage() {
   // Each condition node — whether grouped or standalone — is its own independent
   // unit. Updates never bleed into sibling group members: two conditions in the
   // same group can check entirely different fields.
+  // NOTE: activity logging for config changes is deferred until the user
+  // clicks Save in the right panel (see handleSaveNodePopover). This keeps
+  // the state mutation silent while the popover is open.
   const updateNode = (id: string, selectedValue: string) =>
     setNodes(prev => prev.map(n => {
       if (n.id !== id) return n;
       const condDef = n.type === 'condition'
         ? CONDITION_LIBRARY.find(c => c.label === selectedValue) ?? null
         : null;
+      // Clearing an Action (selectedValue === '') also resets its configValues so
+      // stale fields from the previous action don't bleed into the next selection.
+      const clearing = selectedValue === '';
       return {
         ...n,
         selectedValue,
-        configured: true,
+        configured: !clearing,
+        configValues: clearing && n.type === 'action' ? {} : n.configValues,
         conditionOperator: condDef
           ? (n.conditionOperator ?? condDef.operators[0])
           : n.conditionOperator,
@@ -5831,6 +7043,8 @@ export function BuilderPage() {
     }));
   };
 
+  // Silent state mutation — the thread gets a single summary activity when
+  // the user clicks Save in the right panel (see handleSaveNodePopover).
   const updateConfigField = (id: string, key: string, value: string) =>
     setNodes(prev => prev.map(n => {
       if (n.id !== id) return n;
@@ -5849,179 +7063,6 @@ export function BuilderPage() {
       return { ...n, configValues: nextVals };
     }));
 
-  // ── Condition group handler ─────────────────────────────────────────────────
-
-  const addConditionGroup = () => {
-    const groupId = `group-${++_nextId}`;
-    // Place to the right of all existing nodes/groups, vertically centered
-    const allNodePos  = Object.values(nodePositions);
-    const allGroupPos = Object.values(groupPositions);
-    const allPos = [...allNodePos, ...allGroupPos];
-    const maxX = allPos.length > 0 ? Math.max(...allPos.map(p => p.x)) + NODE_W + 20 : 300;
-    const avgY = allPos.length > 0
-      ? Math.round(allPos.reduce((s, p) => s + p.y, 0) / allPos.length)
-      : CANVAS_TOP;
-    setConditionGroups(prev => [...prev, { id: groupId, operator: 'AND' }]);
-    setGroupPositions(prev => ({ ...prev, [groupId]: { x: maxX, y: avgY } }));
-    setFitToken(t => t + 1);
-  };
-
-  /** Move a standalone group container (and all its member nodes by the same delta). */
-  const updateGroupPosition = (id: string, x: number, y: number) => {
-    setGroupPositions(prev => {
-      const old = prev[id];
-      if (!old) return prev;
-      const dx = x - old.x;
-      const dy = y - old.y;
-      // Also shift all member nodes
-      setNodePositions(np => {
-        const next = { ...np };
-        nodes.filter(n => n.branchGroupId === id).forEach(n => {
-          const p = np[n.id];
-          if (p) next[n.id] = { x: p.x + dx, y: p.y + dy };
-        });
-        return next;
-      });
-      return { ...prev, [id]: { x, y } };
-    });
-  };
-
-  const updateGroupOperator = (groupId: string, op: 'AND' | 'OR') => {
-    setConditionGroups(prev => prev.map(g => g.id === groupId ? { ...g, operator: op } : g));
-  };
-
-  const addConditionToGroup = (groupId: string) => {
-    const groupMembers = nodes.filter(n => n.branchGroupId === groupId);
-    if (groupMembers.length >= MAX_GROUP_CONDITIONS) return;
-
-    let nodeX: number;
-    let nodeY: number;
-
-    if (groupMembers.length === 0) {
-      const gPos = groupPositions[groupId];
-      if (!gPos) return;
-      nodeX = gPos.x + GROUP_PAD_X;
-      nodeY = gPos.y + GROUP_PAD_TOP;
-    } else {
-      const sorted = groupMembers
-        .map(n => nodePositions[n.id])
-        .filter(Boolean)
-        .sort((a, b) => a.x - b.x);
-      if (sorted.length === 0) return;
-      nodeX = sorted[sorted.length - 1].x + GROUP_SIBLING_PITCH;
-      nodeY = sorted[0].y;
-    }
-
-    const n = makeNode('condition');
-    n.branchGroupId = groupId;
-    setNodes(prev => [...prev, n]);
-    setNodePositions(prev => ({ ...prev, [n.id]: { x: nodeX, y: nodeY } }));
-  };
-
-  const deleteConditionGroup = (groupId: string) => {
-    setNodes(prev => prev.map(n => n.branchGroupId === groupId ? { ...n, branchGroupId: undefined } : n));
-    setConditionGroups(prev => prev.filter(g => g.id !== groupId));
-    setGroupPositions(prev => { const next = { ...prev }; delete next[groupId]; return next; });
-  };
-
-  /**
-   * Before a condition node enters a formal group, any branch configuration it
-   * carries from its standalone life is irreconcilable with group membership.
-   * If the node has connected branch edges, ask the user for confirmation.
-   * Returns true if the caller should proceed, false if the user cancelled.
-   */
-  const confirmBranchClearIfNeeded = (nodeId: string): boolean => {
-    const node = nodes.find(n => n.id === nodeId);
-    if (!node) return false;
-    const hasBranchEdges = edges.some(e => e.from === nodeId && e.branch);
-    if (!hasBranchEdges) return true;
-    return window.confirm(
-      'Adding this condition to a group will remove its branch configuration. Continue?',
-    );
-  };
-
-  /** Applies the state mutations that group membership requires:
-   *  - sets branchGroupId
-   *  - clears branchMode and conditionBranches
-   *  - removes any outgoing branch edges from this node
-   */
-  const enterGroup = (nodeId: string, groupId: string) => {
-    setNodes(prev => prev.map(n => {
-      if (n.id !== nodeId) return n;
-      return {
-        ...n,
-        branchGroupId: groupId,
-        branchMode: undefined,
-        conditionBranches: undefined,
-      };
-    }));
-    setEdges(prev => prev.filter(e => !(e.from === nodeId && e.branch)));
-  };
-
-  /** Called when a condition node is dropped onto a condition group. */
-  const handleNodeDroppedOnGroup = (nodeId: string, groupId: string) => {
-    const groupMembers = nodes.filter(n => n.branchGroupId === groupId && n.id !== nodeId);
-    if (groupMembers.length >= MAX_GROUP_CONDITIONS) return;
-
-    if (!confirmBranchClearIfNeeded(nodeId)) return;
-
-    let nodeX: number;
-    let nodeY: number;
-
-    if (groupMembers.length === 0) {
-      const gPos = groupPositions[groupId];
-      if (!gPos) return;
-      nodeX = gPos.x + GROUP_PAD_X;
-      nodeY = gPos.y + GROUP_PAD_TOP;
-    } else {
-      const sorted = groupMembers
-        .map(n => nodePositions[n.id])
-        .filter(Boolean)
-        .sort((a, b) => a.x - b.x);
-      if (sorted.length === 0) return;
-      nodeX = sorted[sorted.length - 1].x + GROUP_SIBLING_PITCH;
-      nodeY = sorted[0].y;
-    }
-
-    enterGroup(nodeId, groupId);
-    setNodePositions(prev => ({ ...prev, [nodeId]: { x: nodeX, y: nodeY } }));
-  };
-
-  // ── Connect an edge to an empty condition group — creates a fresh member ───
-
-  const handleConnectToGroup = (fromNodeId: string, groupId: string) => {
-    const group = conditionGroups.find(g => g.id === groupId);
-    const gPos = groupPositions[groupId];
-    if (!group || !gPos) return;
-    const n = makeNode('condition');
-    n.branchGroupId = groupId;
-    // New nodes created inside a group never carry branch state.
-    const nodeX = gPos.x + GROUP_PAD_X;
-    const nodeY = gPos.y + GROUP_PAD_TOP;
-    const newEdge: GraphEdge = { id: `edge-${++_nextId}`, from: fromNodeId, to: n.id };
-    setNodes(prev => [...prev, n]);
-    setNodePositions(prev => ({ ...prev, [n.id]: { x: nodeX, y: nodeY } }));
-    setEdges(prev => [...prev, newEdge]);
-  };
-
-  // ── Detach a node from its group — node returns to standalone, branch
-  //     capability is restored in the right panel. Branch state defaults to
-  //     "No Branch" (undefined) so the user can re-configure from scratch.
-
-  const detachFromGroup = (nodeId: string) => {
-    setNodes(prev => {
-      const node = prev.find(n => n.id === nodeId);
-      if (!node?.branchGroupId) return prev;
-      // Leave the remaining member(s) in the group so the container persists
-      // with an empty-slot placeholder. Branch state stays undefined; the
-      // standalone popover defaults to "No Branch" and no output handles appear
-      // until the user configures branching.
-      return prev.map(n => n.id === nodeId
-        ? { ...n, branchGroupId: undefined, branchMode: undefined, conditionBranches: undefined }
-        : n);
-    });
-  };
-
   const duplicateNode = (id: string) => {
     const src = nodes.find(n => n.id === id);
     if (!src) return;
@@ -6033,55 +7074,19 @@ export function BuilderPage() {
   };
 
   const deleteNode = (id: string) => {
-    // Group membership only comes from formal conditionGroups. Those keep
-    // their frame even when empty, so no informal-group dissolve is needed.
-    //
-    // If the deleted node was a member of a formal condition group, re-pack
-    // the remaining members left-aligned at the group's original leftmost x
-    // with consistent GROUP_SIBLING_PITCH spacing. Without this, removing a
-    // middle card leaves a gap where it was and the frame width doesn't
-    // shrink (frame width is derived from member x positions).
-    const deletedNode = nodes.find(n => n.id === id);
-    const groupId = deletedNode?.branchGroupId;
-    const isFormalGroup = groupId ? conditionGroups.some(g => g.id === groupId) : false;
-
+    const target = nodes.find(n => n.id === id);
     setNodes(prev => prev.filter(n => n.id !== id));
     setEdges(prev => prev.filter(e => e.from !== id && e.to !== id));
     setNodePositions(prev => {
       const next = { ...prev };
       delete next[id];
-      if (isFormalGroup && groupId) {
-        const remaining = nodes
-          .filter(n => n.branchGroupId === groupId && n.id !== id)
-          .map(n => ({ n, pos: prev[n.id] }))
-          .filter(x => x.pos)
-          .sort((a, b) => a.pos.x - b.pos.x);
-        if (remaining.length > 0) {
-          const anchorX = remaining[0].pos.x;
-          const anchorY = remaining[0].pos.y;
-          remaining.forEach((m, i) => {
-            next[m.n.id] = { x: anchorX + i * GROUP_SIBLING_PITCH, y: anchorY };
-          });
-        }
-      }
       return next;
     });
-    // If the deletion empties a formal group, realign groupPositions with the
-    // removed card's location so the empty-state frame appears where the
-    // final card was (instead of snapping back to the group's creation pos).
-    if (isFormalGroup && groupId) {
-      const remainingCount = nodes.filter(n => n.branchGroupId === groupId && n.id !== id).length;
-      if (remainingCount === 0) {
-        const deletedPos = nodePositions[id];
-        if (deletedPos) {
-          setGroupPositions(prev => ({
-            ...prev,
-            [groupId]: { x: deletedPos.x - GROUP_PAD_X, y: deletedPos.y - GROUP_PAD_TOP },
-          }));
-        }
-      }
-    }
     setSelectedId(prev => prev === id ? null : prev);
+    if (target) {
+      const label = STEP_CONFIG[target.type].label;
+      logActivity(`${label} deleted${target.selectedValue ? ` \u2014 ${target.selectedValue}` : ''}`, 'delete');
+    }
   };
 
   /** Insert a new node on an existing edge, splitting it into two edges. */
@@ -6117,63 +7122,80 @@ export function BuilderPage() {
     // FIX 1 & 2: each labeled handle (yes/no) may only have one outgoing edge
     if (branch && edges.some(e => e.from === fromNodeId && e.branch === branch)) return;
     setEdges(prev => [...prev, { id: `edge-${++_nextId}`, from: fromNodeId, to: toNodeId, ...(branch ? { branch } : {}) }]);
+    const fromNode = nodes.find(n => n.id === fromNodeId);
+    const toNode   = nodes.find(n => n.id === toNodeId);
+    if (fromNode && toNode) {
+      logActivity(
+        `${STEP_CONFIG[fromNode.type].label} connected to ${STEP_CONFIG[toNode.type].label}`,
+        'connect',
+      );
+    }
   };
 
   // ── Remove an existing edge ──
   const deleteEdge = (edgeId: string) => {
+    const edge = edges.find(e => e.id === edgeId);
     setEdges(prev => prev.filter(e => e.id !== edgeId));
+    if (edge) {
+      const fromNode = nodes.find(n => n.id === edge.from);
+      const toNode   = nodes.find(n => n.id === edge.to);
+      if (fromNode && toNode) {
+        logActivity(
+          `Connection between ${STEP_CONFIG[fromNode.type].label} and ${STEP_CONFIG[toNode.type].label} removed`,
+          'disconnect',
+        );
+      }
+    }
   };
 
-  const handleGlobalAiSend = useCallback(async () => {
-    if (!globalAiPrompt.trim() || globalAiLoading) return;
-    const userMsg: Message = { id: crypto.randomUUID(), role: 'user', content: globalAiPrompt.trim() };
-    setGlobalAiMessages(prev => [...prev, userMsg]);
+  // Mock AI composer — per spec, replies are canned rather than hitting the
+  // real model. The user message appends immediately; the assistant reply
+  // appears after a short typing delay via scheduleAiReaction.
+  const handleGlobalAiSend = useCallback(() => {
+    const text = globalAiPrompt.trim();
+    if (!text || aiTyping) return;
+    setThreadEntries(prev => [...prev, {
+      id: crypto.randomUUID(),
+      kind: 'user',
+      content: text,
+      timestamp: Date.now(),
+    }]);
     setGlobalAiPrompt('');
-    setGlobalAiLoading(true);
-    try {
-      const promptNodes = nodes.map(n => ({
-        id: n.id, type: n.type, selectedValue: n.selectedValue,
-        conditionOperator: n.conditionOperator, conditionValues: n.conditionValues,
-        configValues: n.configValues, configured: n.configured,
-      }));
-      const promptEdges = edges.map(e => ({ from: e.from, to: e.to, branch: e.branch }));
-      const libraryItems = ALL_LIBRARY_ITEMS.map(i => ({ id: i.id, label: i.label, type: i.type, category: i.category }));
-      const nodeConfig: Record<string, import('@/features/ai/systemPrompts').PromptConfigField[]> = {};
-      for (const [cfgId, fields] of Object.entries(NODE_CONFIG)) {
-        nodeConfig[cfgId] = fields.map(f => ({
-          key: f.key, label: f.label, type: f.type, required: f.required,
-          options: f.options ?? (f.optionsByDependency ? Object.values(f.optionsByDependency).flat() : undefined),
-        }));
-      }
-      const systemPrompt = buildGlobalSystemPrompt({ nodes: promptNodes, edges: promptEdges, editingNodeIds, libraryItems, nodeConfig });
-      const result = await callFlowAgent({ systemPrompt, userMessage: globalAiPrompt, tools: GLOBAL_TOOLS });
-      let changes = 0;
-      for (const call of result.toolCalls) {
-        const inp = call.toolInput;
-        if (call.toolName === 'add_node') {
-          const parentId = (inp.parent_node_id as string) === 'null' ? null : (inp.parent_node_id as string);
-          addNodeAfter(parentId, inp.type as StepType, inp.branch as 'yes' | 'no' | undefined, inp.selected_value as string);
-          changes++;
-        } else if (call.toolName === 'update_node') {
-          updateNode(inp.node_id as string, inp.selected_value as string);
-          changes++;
-        } else if (call.toolName === 'set_config_field') {
-          updateConfigField(inp.node_id as string, inp.field_key as string, inp.value as string);
-          changes++;
-        } else if (call.toolName === 'delete_node') {
-          deleteNode(inp.node_id as string);
-          changes++;
-        }
-      }
-      const text = result.textBlocks.join(' ').trim();
-      const responseText = text || `Applied ${changes} change${changes !== 1 ? 's' : ''}.`;
-      setGlobalAiMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: responseText }]);
-    } catch (err) {
-      setGlobalAiMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: `Error: ${err instanceof Error ? err.message : 'Something went wrong'}` }]);
-    } finally {
-      setGlobalAiLoading(false);
-    }
-  }, [globalAiPrompt, globalAiLoading, nodes, edges, editingNodeIds, addNodeAfter, updateNode, updateConfigField, deleteNode]);
+    scheduleAiReaction(AI_RESPONSES.chat, 'chat');
+  }, [globalAiPrompt, aiTyping, scheduleAiReaction]);
+
+  /**
+   * Fired when the user commits a node's configuration via the right-panel
+   * Save button. Emits a single activity entry summarizing the node's current
+   * state (plus an AI reaction) — regardless of how many field edits led up
+   * to it. Fields-in-flight don't log until the user explicitly hits Save.
+   */
+  const handleSaveNodePopover = useCallback((nodeId: string) => {
+    const node = nodes.find(n => n.id === nodeId);
+    if (!node) return;
+    const label = STEP_CONFIG[node.type].label;
+    const segs = buildNodeSnippet(node);
+    const summary = segs ? segs.map(s => s.text).join('').trim() : node.selectedValue;
+    const content = summary ? `${label} configured \u2014 ${summary}` : `${label} saved`;
+    logActivity(content, 'configure');
+  }, [nodes, logActivity]);
+
+  /**
+   * Shared entry point for the node-level floating AI input. Pipes the message
+   * into the same thread the left-panel composer writes to, with a small
+   * preceding "context" row explaining which node the prompt originated from.
+   */
+  const handleNodeAiSubmit = useCallback((message: string, nodeType: StepType) => {
+    const text = message.trim();
+    if (!text || aiTyping) return;
+    const now = Date.now();
+    setThreadEntries(prev => [
+      ...prev,
+      { id: crypto.randomUUID(), kind: 'context', content: `From ${STEP_CONFIG[nodeType].label} node —`, timestamp: now },
+      { id: crypto.randomUUID(), kind: 'user',    content: text,                                        timestamp: now },
+    ]);
+    scheduleAiReaction(AI_RESPONSES.chat, 'chat');
+  }, [aiTyping, scheduleAiReaction]);
 
   // ── Create a new disconnected node at canvas position ──
   const createNodeAt = (type: StepType, x: number, y: number) => {
@@ -6181,6 +7203,7 @@ export function BuilderPage() {
     setNodePositions(prev => ({ ...prev, [n.id]: { x: x - NODE_W / 2, y: y - NODE_H / 2 } }));
     setNodes(prev => [...prev, n]);
     setSelectedId(n.id);
+    logActivity(`${STEP_CONFIG[type].label} added`, `add_${type}`);
   };
 
   const createNodeAndConnect = (fromId: string, type: StepType, x: number, y: number, branch?: string | null) => {
@@ -6190,15 +7213,11 @@ export function BuilderPage() {
     const edge: GraphEdge = { id: `edge-${++_nextId}`, from: fromId, to: n.id, ...(branch ? { branch } : {}) };
     setEdges(prev => [...prev, edge]);
     setSelectedId(n.id);
+    logActivity(`${STEP_CONFIG[type].label} added`, `add_${type}`);
   };
 
   // ── Canvas drop: lib item dropped at cursor position → new disconnected node ──
-  const handleCanvasDropAtPos = (item: LibraryItem, x: number, y: number, targetGroupId?: string) => {
-    // If a condition node was dropped onto a condition group frame, join the group
-    if (item.type === 'condition' && targetGroupId) {
-      addConditionToGroup(targetGroupId);
-      return;
-    }
+  const handleCanvasDropAtPos = (item: LibraryItem, x: number, y: number) => {
     const n = makeNode(item.type);
     if (item.label) {
       n.selectedValue = item.label;
@@ -6207,6 +7226,10 @@ export function BuilderPage() {
     setNodePositions(prev => ({ ...prev, [n.id]: { x, y } }));
     setNodes(prev => [...prev, n]);
     setSelectedId(n.id);
+    logActivity(
+      `${STEP_CONFIG[item.type].label} added${item.label ? ` \u2014 ${item.label}` : ''}`,
+      `add_${item.type}`,
+    );
   };
 
   const updateNodePosition = (id: string, x: number, y: number) => {
@@ -6240,14 +7263,13 @@ export function BuilderPage() {
           onLibNodeDragStart={(item) => setDraggingLibNode(item)}
           onLibNodeDragEnd={() => setDraggingLibNode(null)}
           onLibNodeSelect={(item) => { handleCanvasDropAtPos(item, 0, CANVAS_TOP); setSelectedId(null); }}
-          onAddConditionGroup={addConditionGroup}
           editNodeMode={editNodeMode}
           editingCount={editingNodeIds.size}
           onToggleEditMode={toggleEditMode}
           aiPrompt={globalAiPrompt}
           onAiPromptChange={setGlobalAiPrompt}
-          aiLoading={globalAiLoading}
-          messages={globalAiMessages}
+          aiTyping={aiTyping}
+          entries={threadEntries}
           onAiSend={handleGlobalAiSend}
         />
 
@@ -6285,15 +7307,8 @@ export function BuilderPage() {
           onUpdateConditionBranch={updateConditionBranch}
           autoTidyToken={autoTidyToken}
           fitToken={fitToken}
-          conditionGroups={conditionGroups}
-          groupPositions={groupPositions}
-          onGroupPositionChange={updateGroupPosition}
-          onNodeDroppedOnGroup={handleNodeDroppedOnGroup}
-          onConnectToGroup={handleConnectToGroup}
-          onDetachFromGroup={detachFromGroup}
-          onUpdateGroupOperator={updateGroupOperator}
-          onAddConditionToGroup={addConditionToGroup}
-          onDeleteConditionGroup={deleteConditionGroup}
+          onNodeAiSubmit={handleNodeAiSubmit}
+          onSaveNodePopover={handleSaveNodePopover}
         />
       </div>
     </div>

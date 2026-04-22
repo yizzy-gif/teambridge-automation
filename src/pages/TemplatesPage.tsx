@@ -1,4 +1,4 @@
-import React, { useState, useMemo, type ReactNode } from 'react';
+import React, { Fragment, useCallback, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { Button } from '@alloy/components/Button';
@@ -7,9 +7,16 @@ import type { TagColor } from '@alloy/components/Tag';
 import { Tabs } from '@alloy/components/Tabs';
 import { SearchField, SelectField } from '@alloy/components/Input';
 import { FilterPill } from '@alloy/components/FilterPill';
+import { Checkbox } from '@alloy/components/Checkbox';
 import { BookmarkIcon } from '@alloy/components/icons/BookmarkIcon';
 import { Divider } from '@alloy/components/Divider';
 import { Target04Icon } from '@alloy/components/icons/Target04Icon';
+import { ChevronDownIcon } from '@alloy/components/icons/ChevronDownIcon';
+import { ClockIcon } from '@alloy/components/icons/ClockIcon';
+import { Bell01Icon } from '@alloy/components/icons/Bell01Icon';
+import { ClipboardCheckIcon } from '@alloy/components/icons/ClipboardCheckIcon';
+import { ListBulletIcon } from '@alloy/components/icons/ListBulletIcon';
+import { Edit03Icon } from '@alloy/components/icons/Edit03Icon';
 import styles from './TemplatesPage.module.css';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -49,7 +56,7 @@ interface TemplateCategory {
   workflows: TemplateWorkflow[];
 }
 
-// ─── Mini Workflow Preview SVG ────────────────────────────────────────────────
+// ─── Mini flow diagram (used inside the expanded card only) ──────────────────
 
 const NODE_COLORS: Record<StepType, string> = {
   trigger:   '#b45309',
@@ -63,68 +70,49 @@ const NODE_BG: Record<StepType, string> = {
   action:    '#bbf7d0',
 };
 
-function WorkflowPreview({ steps, saved, onSave }: {
-  steps: StepType[];
-  saved: boolean;
-  onSave: () => void;
-}) {
-  const display = steps.slice(0, 3);
-  const nodeW = 78;
-  const nodeH = 42;
-  const gap   = 18;
-  const svgW  = 300;
+/** Read-only flow preview SVG. Displays up to the first 4 nodes so long
+ *  templates don't make the preview illegible. */
+function TemplatePreviewDiagram({ steps }: { steps: StepType[] }) {
+  const display = steps.slice(0, 4);
+  const nodeW = 96;
+  const nodeH = 48;
+  const gap   = 22;
+  const svgW  = display.length * nodeW + (display.length - 1) * gap + 24;
   const svgH  = 96;
-  const totalW = display.length * nodeW + (display.length - 1) * gap;
-  const startX = (svgW - totalW) / 2;
+  const startX = 12;
   const y      = (svgH - nodeH) / 2;
 
   return (
-    <div className={styles.previewArea}>
-      <svg
-        viewBox={`0 0 ${svgW} ${svgH}`}
-        className={styles.previewSvg}
-        aria-hidden
-      >
-        {display.map((type, i) => {
-          const x = startX + i * (nodeW + gap);
-          const mx = x - gap;
-          const my = y + nodeH / 2;
-          return (
-            <g key={i}>
-              {i > 0 && (
-                <>
-                  <line x1={mx} y1={my} x2={x} y2={my} stroke="#e2e8f0" strokeWidth="1.5"/>
-                  <polygon
-                    points={`${x - 4},${my - 3} ${x},${my} ${x - 4},${my + 3}`}
-                    fill="#cbd5e1"
-                  />
-                </>
-              )}
-              <rect
-                x={x} y={y} width={nodeW} height={nodeH}
-                rx="6" ry="6"
-                fill="white"
-                stroke="#e2e8f0"
-                strokeWidth="1"
-              />
-              <circle cx={x + 13} cy={y + nodeH / 2} r="5" fill={NODE_BG[type]}/>
-              <circle cx={x + 13} cy={y + nodeH / 2} r="3" fill={NODE_COLORS[type]}/>
-              <rect x={x + 24} y={y + 11} width={nodeW - 30} height={5} rx="2.5" fill="#e2e8f0"/>
-              <rect x={x + 24} y={y + 22} width={nodeW - 38} height={5} rx="2.5" fill="#f1f5f9"/>
-            </g>
-          );
-        })}
-      </svg>
-
-      {/* Save / Bookmark button */}
-      <button
-        className={clsx(styles.saveBtn, saved && styles.saveBtnActive)}
-        onClick={e => { e.stopPropagation(); onSave(); }}
-        aria-label={saved ? 'Unsave template' : 'Save template'}
-      >
-        <BookmarkIcon size={14} />
-      </button>
-    </div>
+    <svg
+      viewBox={`0 0 ${svgW} ${svgH}`}
+      className={styles.previewSvg}
+      aria-hidden
+      preserveAspectRatio="xMidYMid meet"
+    >
+      {display.map((type, i) => {
+        const x = startX + i * (nodeW + gap);
+        const mx = x - gap;
+        const my = y + nodeH / 2;
+        return (
+          <g key={i}>
+            {i > 0 && (
+              <>
+                <line x1={mx} y1={my} x2={x} y2={my} stroke="#e2e8f0" strokeWidth="1.5" />
+                <polygon
+                  points={`${x - 4},${my - 3} ${x},${my} ${x - 4},${my + 3}`}
+                  fill="#cbd5e1"
+                />
+              </>
+            )}
+            <rect x={x} y={y} width={nodeW} height={nodeH} rx="6" ry="6" fill="white" stroke="#e2e8f0" strokeWidth="1" />
+            <circle cx={x + 14} cy={y + nodeH / 2} r="6" fill={NODE_BG[type]} />
+            <circle cx={x + 14} cy={y + nodeH / 2} r="3.5" fill={NODE_COLORS[type]} />
+            <rect x={x + 26} y={y + 12} width={nodeW - 34} height={5} rx="2.5" fill="#e2e8f0" />
+            <rect x={x + 26} y={y + 26} width={nodeW - 46} height={5} rx="2.5" fill="#f1f5f9" />
+          </g>
+        );
+      })}
+    </svg>
   );
 }
 
@@ -226,61 +214,206 @@ const TRIGGER_OPTIONS = (() => {
   ];
 })();
 
-// ─── Workflow Card ────────────────────────────────────────────────────────────
+// ─── Step-type → Alloy icon (used in the icon cluster) ───────────────────────
 
-function WorkflowCard({
+const STEP_TYPE_LABEL: Record<StepType, string> = {
+  trigger:   'Trigger',
+  condition: 'Condition',
+  action:    'Action',
+};
+
+const MAX_CLUSTER_ICONS = 3;
+
+/** Icon shown inside each rounded square in the collapsed-card cluster. The
+ *  first slot uses the workflow's trigger-category icon for specificity; the
+ *  remaining slots use step-type icons. */
+function StepClusterIcon({ step, triggerIcon }: { step: StepType; triggerIcon: ReactNode }) {
+  if (step === 'trigger') return <>{triggerIcon}</>;
+  if (step === 'condition') return <ClipboardCheckIcon size={14} />;
+  return <Bell01Icon size={14} />;
+}
+
+// ─── Template Card ────────────────────────────────────────────────────────────
+
+function TemplateCard({
   workflow,
+  isExpanded,
+  isSelected,
+  onToggleExpand,
+  onToggleSelect,
   saved,
   onSave,
+  onUseTemplate,
+  onEditTemplate,
 }: {
   workflow: TemplateWorkflow;
+  isExpanded: boolean;
+  isSelected: boolean;
+  onToggleExpand: () => void;
+  onToggleSelect: () => void;
   saved: boolean;
   onSave: () => void;
+  onUseTemplate: () => void;
+  onEditTemplate: () => void;
 }) {
-  const navigate = useNavigate();
   const stepCount = workflow.steps.length;
+  const triggerMeta = TRIGGER_CATEGORY_META[workflow.triggerCategory];
+  const clusterSteps = workflow.steps.slice(0, MAX_CLUSTER_ICONS);
+  const overflow = workflow.steps.length - clusterSteps.length;
+
+  const handleCardClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    // Let nested interactive elements (checkbox, chevron, buttons) handle
+    // their own clicks without toggling the expansion.
+    if ((e.target as HTMLElement).closest('[data-card-action]')) return;
+    onToggleExpand();
+  };
+  const handleKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      onToggleExpand();
+    }
+  };
 
   return (
-    <div className={styles.card}>
-      <WorkflowPreview steps={workflow.steps} saved={saved} onSave={onSave} />
-
-      <div className={styles.cardBody}>
-        <p className={`heading-sm ${styles.cardName}`}>{workflow.name}</p>
-
-        <div className={styles.cardMeta}>
-          <span className={styles.cardMetaItem}>
-            {TRIGGER_CATEGORY_META[workflow.triggerCategory].Icon()}
-            {TRIGGER_CATEGORY_META[workflow.triggerCategory].label}
-          </span>
-          <span className={styles.cardMetaDot} />
-          <span className={styles.cardMetaItem}>
-            <svg width="11" height="11" viewBox="0 0 14 14" fill="none">
-              <circle cx="3" cy="7" r="1.5" stroke="currentColor" strokeWidth="1.2"/>
-              <circle cx="11" cy="7" r="1.5" stroke="currentColor" strokeWidth="1.2"/>
-              <circle cx="7" cy="7" r="1.5" stroke="currentColor" strokeWidth="1.2"/>
-              <path d="M4.5 7h1M8.5 7h1" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
-            </svg>
-            {stepCount} {stepCount === 1 ? 'step' : 'steps'}
-          </span>
+    <div
+      className={clsx(
+        styles.card,
+        isSelected && styles.cardSelected,
+        isExpanded && styles.cardActive,
+      )}
+      role="button"
+      tabIndex={0}
+      aria-expanded={isExpanded}
+      aria-pressed={isSelected}
+      onClick={handleCardClick}
+      onKeyDown={handleKey}
+    >
+      {/* ── Top row: checkbox · icon cluster · spacer · step count · chevron ── */}
+      <div className={styles.cardTop}>
+        <span data-card-action onClick={e => e.stopPropagation()}>
+          <Checkbox
+            size="sm"
+            checked={isSelected}
+            onChange={onToggleSelect}
+            aria-label={`Select ${workflow.name}`}
+          />
+        </span>
+        <div className={styles.iconCluster} aria-hidden>
+          {clusterSteps.map((step, i) => (
+            <span key={i} className={styles.iconDot}>
+              <StepClusterIcon step={step} triggerIcon={triggerMeta.Icon()} />
+            </span>
+          ))}
+          {overflow > 0 && (
+            <span className={clsx(styles.iconDot, styles.iconOverflow)}>+{overflow}</span>
+          )}
         </div>
+        <span className={styles.cardTopSpacer} />
+        <span className={styles.cardStepCount} title={`${stepCount} ${stepCount === 1 ? 'step' : 'steps'}`}>
+          <ListBulletIcon size={12} />
+          {stepCount} {stepCount === 1 ? 'step' : 'steps'}
+        </span>
+        <button
+          type="button"
+          data-card-action
+          className={clsx(styles.cardChevronBtn, isExpanded && styles.cardChevronBtnOpen)}
+          onClick={e => { e.stopPropagation(); onToggleExpand(); }}
+          aria-label={isExpanded ? 'Collapse template' : 'Expand template'}
+          aria-expanded={isExpanded}
+        >
+          <ChevronDownIcon size={14} />
+        </button>
+      </div>
 
-        <div className={styles.cardTags}>
+      {/* ── Body: template name (3-line clamp) ── */}
+      <span className={styles.cardName}>{workflow.name}</span>
+
+      {/* ── Bottom row: trigger label · dot · category tag pills ── */}
+      <div className={styles.cardFooter}>
+        <span className={styles.cardFooterTrigger}>
+          <ClockIcon size={12} />
+          {triggerMeta.label}
+        </span>
+        {workflow.tags.length > 0 && <span className={styles.cardFooterDot} />}
+        <div className={styles.cardFooterTags}>
           {workflow.tags.map(t => (
             <Tag key={t.label} variant="subtle" size="sm" color={t.color}>
               {t.label}
             </Tag>
           ))}
         </div>
-
-        <Button
-          variant="primary"
-          size="sm"
-          className={styles.previewBtn}
-          onClick={() => navigate('/automations/new')}
+        <span className={styles.cardFooterSpacer} />
+        <button
+          type="button"
+          data-card-action
+          className={clsx(styles.saveBtn, saved && styles.saveBtnActive)}
+          onClick={e => { e.stopPropagation(); onSave(); }}
+          aria-label={saved ? 'Unsave template' : 'Save template'}
         >
-          Use Template
-        </Button>
+          <BookmarkIcon size={14} />
+        </button>
       </div>
+
+      {/* ── Expanded panel — full-width inside the grid row ── */}
+      {isExpanded && (
+        <div className={styles.cardExpanded} data-card-action>
+          <div className={styles.expandedDiagram}>
+            <TemplatePreviewDiagram steps={workflow.steps} />
+          </div>
+
+          <div className={styles.expandedSection}>
+            <h3 className={styles.expandedHeading}>About this template</h3>
+            <p className={styles.expandedDescription}>
+              {triggerMeta.label} flow: &ldquo;{workflow.name}&rdquo;. Uses {stepCount}{' '}
+              step{stepCount === 1 ? '' : 's'} to accomplish its task.
+            </p>
+          </div>
+
+          <div className={styles.expandedSection}>
+            <h3 className={styles.expandedHeading}>Steps</h3>
+            <ol className={styles.expandedStepList}>
+              {workflow.steps.map((step, i) => (
+                <li key={i} className={styles.expandedStep}>
+                  <span className={styles.expandedStepIndex}>{i + 1}</span>
+                  <span className={clsx(styles.expandedStepDot, styles[`stepDot_${step}`])} />
+                  <span className={styles.expandedStepLabel}>{STEP_TYPE_LABEL[step]}</span>
+                </li>
+              ))}
+            </ol>
+          </div>
+
+          <div className={styles.expandedSection}>
+            <h3 className={styles.expandedHeading}>Tags</h3>
+            <div className={styles.expandedTags}>
+              {workflow.tags.map(t => (
+                <Tag key={t.label} variant="subtle" size="sm" color={t.color}>
+                  {t.label}
+                </Tag>
+              ))}
+            </div>
+          </div>
+
+          <div className={styles.expandedActions}>
+            <Button
+              variant="primary"
+              size="sm"
+              className={styles.expandedActionBtn}
+              onClick={onUseTemplate}
+            >
+              Use Template
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              leadingArtwork={<Edit03Icon size={14} />}
+              className={styles.expandedActionBtn}
+              onClick={onEditTemplate}
+            >
+              Edit Template
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -291,10 +424,22 @@ function CategorySection({
   category,
   savedIds,
   onSave,
+  selectedIds,
+  onToggleSelect,
+  expandedId,
+  onToggleExpand,
+  onUseTemplate,
+  onEditTemplate,
 }: {
   category: TemplateCategory;
   savedIds: Set<string>;
   onSave: (id: string) => void;
+  selectedIds: Set<string>;
+  onToggleSelect: (id: string) => void;
+  expandedId: string | null;
+  onToggleExpand: (id: string) => void;
+  onUseTemplate: (id: string) => void;
+  onEditTemplate: (id: string) => void;
 }) {
   return (
     <section className={styles.section}>
@@ -303,12 +448,19 @@ function CategorySection({
       </h2>
       <div className={styles.grid}>
         {category.workflows.map(w => (
-          <WorkflowCard
-            key={w.id}
-            workflow={w}
-            saved={savedIds.has(w.id)}
-            onSave={() => onSave(w.id)}
-          />
+          <Fragment key={w.id}>
+            <TemplateCard
+              workflow={w}
+              saved={savedIds.has(w.id)}
+              onSave={() => onSave(w.id)}
+              isSelected={selectedIds.has(w.id)}
+              onToggleSelect={() => onToggleSelect(w.id)}
+              isExpanded={expandedId === w.id}
+              onToggleExpand={() => onToggleExpand(w.id)}
+              onUseTemplate={() => onUseTemplate(w.id)}
+              onEditTemplate={() => onEditTemplate(w.id)}
+            />
+          </Fragment>
         ))}
       </div>
     </section>
@@ -438,12 +590,17 @@ function HeroBanner({ search, onSearch, onClear, activeTags, onToggleTag }: {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export function TemplatesPage() {
+  const navigate = useNavigate();
   const [search,         setSearch]         = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [triggerFilter,  setTriggerFilter]  = useState('all');
   const [activeTags,     setActiveTags]     = useState<Set<string>>(new Set());
   const [savedIds,       setSavedIds]       = useState<Set<string>>(new Set());
   const [activeTopTab,   setActiveTopTab]   = useState('all');
+  // Bulk selection — rendered as a blue border on the card.
+  const [selectedIds,    setSelectedIds]    = useState<Set<string>>(new Set());
+  // Single-expand inline preview.
+  const [expandedId,     setExpandedId]     = useState<string | null>(null);
 
   const toggleTag = (tag: string) =>
     setActiveTags(prev => {
@@ -458,6 +615,21 @@ export function TemplatesPage() {
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
     });
+
+  const toggleSelected = useCallback((id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }, []);
+
+  const toggleExpanded = useCallback((id: string) => {
+    setExpandedId(curr => (curr === id ? null : id));
+  }, []);
+
+  const useTemplate = useCallback((_id: string) => navigate('/automations/new'), [navigate]);
+  const editTemplate = useCallback((_id: string) => navigate('/automations/new'), [navigate]);
 
   const visible = useMemo(() => {
     const q = search.toLowerCase().trim();
@@ -530,6 +702,12 @@ export function TemplatesPage() {
             category={cat}
             savedIds={savedIds}
             onSave={toggleSave}
+            selectedIds={selectedIds}
+            onToggleSelect={toggleSelected}
+            expandedId={expandedId}
+            onToggleExpand={toggleExpanded}
+            onUseTemplate={useTemplate}
+            onEditTemplate={editTemplate}
           />
         ))
       )}

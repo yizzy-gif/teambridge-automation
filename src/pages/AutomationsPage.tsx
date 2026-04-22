@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useId, useState } from 'react';
+import { Fragment, useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { ComponentType } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { clsx } from 'clsx';
@@ -8,15 +8,15 @@ import type { StatusTagStatus } from '@alloy/components/StatusTag';
 import { Tag } from '@alloy/components/Tag';
 import type { TagColor } from '@alloy/components/Tag';
 import { ToggleButton } from '@alloy/components/ToggleButton';
-import { DataCard } from '@alloy/components/DataCard';
-import { Divider } from '@alloy/components/Divider';
 import { Switch } from '@alloy/components/Switch';
+import { Button } from '@alloy/components/Button';
+import { FilterPill, FilterPillGroup } from '@alloy/components/FilterPill';
+import { PlusIcon } from '@alloy/components/icons/PlusIcon';
 import {
   Table, TableHeader, TableBody, TableRow, TableHead, TableCell,
   CellStack, CellStatusTag, CellTag, CellText,
 } from '@alloy/components/Table';
 import { Grid01Icon } from '@alloy/components/icons/Grid01Icon';
-import { BarChart02Icon } from '@alloy/components/icons/BarChart02Icon';
 import { Users03Icon } from '@alloy/components/icons/Users03Icon';
 import { CheckCircleIcon } from '@alloy/components/icons/CheckCircleIcon';
 import { ListBulletIcon } from '@alloy/components/icons/ListBulletIcon';
@@ -134,6 +134,7 @@ const MOCK_AUTOMATIONS: Automation[] = [
     category: 'HR',
     stats: { reached: 38, pending: 5, skipped: 5 },
     actionIcons: ['mail', 'people', 'task'],
+    tags: ['HR', 'Onboarding', 'Welcome'],
     owner: { name: 'Alex Rivera', avatarUrl: 'https://i.pravatar.cc/80?u=alex-rivera' },
     createdAt: '2025-11-03T10:12:00Z',
     updatedAt: '2026-03-28T14:02:00Z',
@@ -151,6 +152,7 @@ const MOCK_AUTOMATIONS: Automation[] = [
     category: 'Finance',
     stats: { reached: 98, pending: 12, skipped: 10 },
     actionIcons: ['bell', 'mail', 'finance', 'ai'],
+    tags: ['Finance', 'Reminder', 'Weekly'],
     hasErrors: true,
     owner: { name: 'Priya Shah', avatarUrl: 'https://i.pravatar.cc/80?u=priya-shah' },
     createdAt: '2025-08-17T09:00:00Z',
@@ -169,6 +171,7 @@ const MOCK_AUTOMATIONS: Automation[] = [
     category: 'Scheduling',
     stats: { reached: 24, pending: 3, skipped: 4 },
     actionIcons: ['bell', 'message'],
+    tags: ['Scheduling', 'Notification'],
     owner: { name: 'Jordan Lee', avatarUrl: 'https://i.pravatar.cc/80?u=jordan-lee' },
     createdAt: '2026-01-22T11:45:00Z',
     updatedAt: '2026-04-02T08:15:00Z',
@@ -186,6 +189,7 @@ const MOCK_AUTOMATIONS: Automation[] = [
     category: 'HR',
     stats: { reached: 0, pending: 0, skipped: 0 },
     actionIcons: ['bell'],
+    tags: ['HR', 'Alert', 'Payroll'],
     owner: { name: 'Sam Chen', avatarUrl: 'https://i.pravatar.cc/80?u=sam-chen' },
     createdAt: '2026-04-11T17:20:00Z',
     updatedAt: '2026-04-15T12:00:00Z',
@@ -203,6 +207,7 @@ const MOCK_AUTOMATIONS: Automation[] = [
     category: 'HR',
     stats: { reached: 12, pending: 2, skipped: 4 },
     actionIcons: ['mail', 'task', 'people'],
+    tags: ['HR', 'Offboarding'],
     owner: { name: 'Morgan Patel', avatarUrl: 'https://i.pravatar.cc/80?u=morgan-patel' },
     createdAt: '2025-09-09T09:30:00Z',
     updatedAt: '2026-04-16T11:00:00Z',
@@ -226,7 +231,7 @@ const CATEGORY_COLOR: Record<string, TagColor> = {
 const STATUS_TAG_STATUS: Record<AutomationStatus, StatusTagStatus> = {
   active: 'success', // green
   paused: 'neutral', // gray
-  draft:  'info',    // blue
+  draft:  'neutral', // gray (distinct from Ongoing's info blue)
 };
 
 /** Run-level status → Alloy StatusTag mapping. */
@@ -361,7 +366,47 @@ function EmptyState({ onNew }: { onNew: () => void }) {
 export function AutomationsPage() {
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState<RunStatus | 'all'>('all');
+  /** 'draft' filters by workflow lifecycle status; every other value filters
+   *  by the workflow's most-recent run status. */
+  const [filter, setFilter] = useState<RunStatus | 'draft' | 'all'>('all');
+
+  /** Currently-active tag filters. Matching workflows must include every
+   *  applied tag (AND semantics). Starts empty; tags are added one at a time
+   *  via the "+ Filter" → editable-pill → Enter flow. */
+  const [activeTags, setActiveTags] = useState<Set<string>>(new Set());
+  const removeTag = useCallback((tag: string) => {
+    setActiveTags(prev => {
+      const next = new Set(prev);
+      next.delete(tag);
+      return next;
+    });
+  }, []);
+
+  /** Value inside the pending/editable pill. `null` when no pill is being
+   *  composed; empty string when the user just clicked "+ Filter" and the
+   *  input has focus but is empty. */
+  const [draftTag, setDraftTag] = useState<string | null>(null);
+  const draftInputRef = useRef<HTMLInputElement | null>(null);
+  // Focus the input whenever a new draft pill appears.
+  useEffect(() => {
+    if (draftTag !== null) draftInputRef.current?.focus();
+  }, [draftTag]);
+
+  const startNewTagFilter = useCallback(() => setDraftTag(''), []);
+  const cancelDraftTag = useCallback(() => setDraftTag(null), []);
+  const commitDraftTag = useCallback(() => {
+    setDraftTag(prev => {
+      const value = (prev ?? '').trim();
+      if (!value) return null; // empty → cancel rather than commit
+      setActiveTags(tags => {
+        if (tags.has(value)) return tags;
+        const next = new Set(tags);
+        next.add(value);
+        return next;
+      });
+      return null;
+    });
+  }, []);
   const [view, setView] = useState<ViewMode>('card');
 
   // Merge localStorage-saved settings over mock data (name, description, tags)
@@ -406,62 +451,25 @@ export function AutomationsPage() {
     );
   }, []);
 
-  const totalRuns   = automations.reduce((s, a) => s + a.runsTotal, 0);
-  const totalReached = automations.reduce((s, a) => s + a.stats.reached, 0);
-  const totalStats   = automations.reduce((s, a) => s + a.stats.reached + a.stats.pending + a.stats.skipped, 0);
-  const completionRate = totalStats > 0 ? Math.round((totalReached / totalStats) * 100) : 0;
-  const activeCount  = automations.filter((a) => a.status === 'active').length;
-
   const q = search.toLowerCase();
   const filtered = automations.filter((a) => {
     const matchesSearch =
       a.name.toLowerCase().includes(q) ||
       a.description.toLowerCase().includes(q) ||
       (a.tags ?? []).some(t => t.toLowerCase().includes(q));
-    const matchesFilter = filter === 'all' || a.lastRunStatus === filter;
-    return matchesSearch && matchesFilter;
+    const matchesFilter =
+      filter === 'all' ? true
+        : filter === 'draft' ? a.status === 'draft'
+        : a.lastRunStatus === filter;
+    // Tag pills use AND semantics: a workflow must include every selected tag.
+    const tags = new Set(a.tags ?? []);
+    const matchesTags = activeTags.size === 0 ||
+      [...activeTags].every(t => tags.has(t));
+    return matchesSearch && matchesFilter && matchesTags;
   });
 
   return (
     <div className={styles.page}>
-      {/* Metric cards */}
-      <div className={styles.metrics}>
-        <DataCard
-          color="slate"
-          icon={<Grid01Icon size={24} />}
-          label="Automations"
-          value={automations.length}
-          tag={`${activeCount} active`}
-          tagColor="green"
-        />
-        <DataCard
-          color="blue"
-          icon={<BarChart02Icon size={24} />}
-          label="Total runs"
-          value={totalRuns}
-          tag="all time"
-          tagColor="neutral"
-        />
-        <DataCard
-          color="green"
-          icon={<Users03Icon size={24} />}
-          label="People reached"
-          value={totalReached}
-          tag={`${automations.reduce((s, a) => s + a.stats.pending, 0)} pending`}
-          tagColor="blue"
-        />
-        <DataCard
-          color="matcha"
-          icon={<CheckCircleIcon size={24} />}
-          label="Completion rate"
-          value={`${completionRate}%`}
-          tag={`${automations.reduce((s, a) => s + a.stats.skipped, 0)} skipped`}
-          tagColor="yellow"
-        />
-      </div>
-
-      <Divider />
-
       {/* Toolbar */}
       <div className={styles.toolbar}>
         <div className={styles.toolbarTop}>
@@ -517,12 +525,65 @@ export function AutomationsPage() {
           </button>
         </div>
 
-        <Tabs value={filter} onChange={(v) => setFilter(v as RunStatus | 'all')}>
+        {/* Tag filter row — starts empty. Clicking "+ Filter" spawns an
+            editable pill with an input; Enter commits the typed value as a
+            new applied filter, Escape (or blur while empty) cancels. Each
+            applied tag renders as a removable pill. AND-combined with the
+            search box and the status tabs below. */}
+        <FilterPillGroup aria-label="Tag filters">
+          {[...activeTags].map(tag => (
+            <FilterPill
+              key={tag}
+              active
+              onClick={() => removeTag(tag)}
+              onRemove={() => removeTag(tag)}
+            >
+              {tag}
+            </FilterPill>
+          ))}
+          {draftTag !== null && (
+            <span className={styles.draftPill}>
+              <input
+                ref={draftInputRef}
+                className={styles.draftPillInput}
+                value={draftTag}
+                onChange={e => setDraftTag(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    commitDraftTag();
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    cancelDraftTag();
+                  }
+                }}
+                onBlur={commitDraftTag}
+                placeholder="Type and press Enter"
+                aria-label="New filter value"
+              />
+            </span>
+          )}
+          {draftTag === null && (
+            <Button
+              className={styles.filterAddBtn}
+              variant="ghost"
+              size="sm"
+              leadingArtwork={<PlusIcon size={14} />}
+              onClick={startNewTagFilter}
+              aria-label="Add filter"
+            >
+              Filter
+            </Button>
+          )}
+        </FilterPillGroup>
+
+        <Tabs value={filter} onChange={(v) => setFilter(v as RunStatus | 'draft' | 'all')}>
           <Tabs.Tab value="all">All</Tabs.Tab>
           <Tabs.Tab value="ongoing">Ongoing</Tabs.Tab>
           <Tabs.Tab value="completed">Completed</Tabs.Tab>
           <Tabs.Tab value="failed">Failed</Tabs.Tab>
           <Tabs.Tab value="exited">Exited</Tabs.Tab>
+          <Tabs.Tab value="draft">Draft</Tabs.Tab>
         </Tabs>
       </div>
 
@@ -535,17 +596,20 @@ export function AutomationsPage() {
             const isDraft    = automation.status === 'draft';
             const isOpen     = expandedId === automation.id;
             const regionId   = `${previewRegionBaseId}-card-${automation.id}`;
-            const openEditor = () => navigate(`/automations/${automation.id}`);
+            // Clicking anywhere on the card toggles the inline expanded
+            // preview. Navigation to the builder is reserved for the
+            // "Edit workflow" button inside the expanded panel.
+            const toggleThis = () => toggleExpanded(automation.id);
             const handleCardClick = (e: React.MouseEvent<HTMLDivElement>) => {
               // Let nested interactive elements (switch, chevron) handle their
-              // own clicks without navigating.
+              // own clicks without re-toggling.
               if ((e.target as HTMLElement).closest('[data-card-action]')) return;
-              openEditor();
+              toggleThis();
             };
             const handleKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
               if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault();
-                openEditor();
+                toggleThis();
               }
             };
             return (
@@ -563,11 +627,15 @@ export function AutomationsPage() {
                   <span className={styles.cardWarningDot} aria-label="Has recent errors" />
                 )}
 
-                {/* ── Top row: most-recent run status · spacer · last run · expand ── */}
+                {/* ── Top row: status pill · spacer · last run · expand ──
+                    Draft workflows haven't run yet, so instead of a run-level
+                    badge we surface the workflow's lifecycle state as "Draft". */}
                 <div className={styles.cardTop}>
-                  {automation.lastRunStatus && (
+                  {automation.status === 'draft' ? (
+                    <StatusBadge status="draft" />
+                  ) : automation.lastRunStatus ? (
                     <RunStatusBadge status={automation.lastRunStatus} />
-                  )}
+                  ) : null}
                   <span className={styles.cardTopSpacer} />
                   <span className={styles.cardLastRun}>
                     <ClockIcon size={12} />
@@ -703,7 +771,11 @@ export function AutomationsPage() {
                         </div>
                       </TableCell>
                       <TableCell>
-                        {automation.lastRunStatus ? (
+                        {automation.status === 'draft' ? (
+                          <CellStatusTag status={STATUS_TAG_STATUS.draft}>
+                            {STATUS_LABEL.draft}
+                          </CellStatusTag>
+                        ) : automation.lastRunStatus ? (
                           <CellStatusTag status={RUN_STATUS_TAG_STATUS[automation.lastRunStatus]}>
                             {RUN_STATUS_LABEL[automation.lastRunStatus]}
                           </CellStatusTag>

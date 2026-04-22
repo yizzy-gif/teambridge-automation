@@ -158,6 +158,7 @@
 /* Each card re-enables pointer events */
 .infoCard,
 .paletteCard,
+.paletteRoot,
 .aiComposer {
   pointer-events: auto;
 }
@@ -392,6 +393,26 @@
   background: var(--color-bg-primary);
   box-shadow: var(--shadow-below-md);
   transition: border-color var(--duration-fast), background var(--duration-fast), box-shadow var(--duration-fast);
+  position: relative;
+}
+
+/* Top fade — 48px gradient from the panel background (100%) to transparent
+   (0%) so thread entries dissolve softly as they scroll under the rounded
+   top edge of the shell instead of snapping off abruptly. */
+.aiComposerShell::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 48px;
+  pointer-events: none;
+  z-index: 1;
+  background: linear-gradient(
+    to bottom,
+    var(--color-bg-primary) 0%,
+    color-mix(in srgb, var(--color-bg-primary) 0%, transparent) 100%
+  );
 }
 /* Active: gradient border + outer ring on the whole shell */
 .aiComposerShell:focus-within {
@@ -567,7 +588,10 @@
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  /* Gap sized to leave room for the hover-reveal timestamp beneath each bubble
+     (timestamp is absolutely positioned, so the gap is the breathing room it
+     fills when the block is hovered). */
+  gap: var(--space-5);
   padding: var(--space-3);
   border-bottom: 1px solid var(--color-border-opaque);
 }
@@ -597,9 +621,428 @@
   border-bottom-left-radius: var(--radius-xs);
 }
 
+/* ─── Activity feed + AI conversation thread ─────────────────────────────── */
+
+/* Centered timestamp divider — inserted between entries only when the minute
+   changes, so consecutive entries within the same minute stay grouped.
+   Typography mirrors Alloy's paragraph-sm utility. */
+.threadTimeDivider {
+  align-self: center;
+  margin: var(--space-1) 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-regular);
+  line-height: var(--line-height-relaxed);
+  letter-spacing: var(--tracking-normal);
+  color: var(--color-content-tertiary);
+}
+
+/* Context row — subtle one-line label above a user bubble (e.g. "From
+   Trigger node —") that explains where the message originated. No bubble,
+   right-aligned so it visually pairs with the outbound pill below it. */
+.threadContextRow {
+  align-self: flex-end;
+  padding: 0 var(--space-2);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-regular);
+  line-height: var(--line-height-relaxed);
+  letter-spacing: var(--tracking-normal);
+  color: var(--color-content-tertiary);
+}
+
+/* Activity entry — subtle left-aligned row with a dot icon + short text.
+   Timestamp lives on the shared divider above the group. */
+.threadActivityRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-1);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  color: var(--color-content-tertiary);
+  line-height: var(--line-height-relaxed);
+}
+
+.threadActivityDot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--color-content-tertiary);
+  flex-shrink: 0;
+}
+
+.threadActivityText {
+  flex: 1;
+  min-width: 0;
+  word-break: break-word;
+}
+
+/* ── AI message block (left-aligned, with avatar header + flush text) ── */
+.threadAiBlock {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-1);
+  width: 100%;
+}
+
+/* Timestamp tucked at the bottom of each bubble group — visually hidden until
+   the block is hovered. Absolutely positioned so the reveal doesn't reflow
+   the conversation. */
+.threadBubbleTime {
+  position: absolute;
+  bottom: calc(var(--space-1) * -1);
+  transform: translateY(100%);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-regular);
+  line-height: var(--line-height-snug);
+  color: var(--color-content-tertiary);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--duration-fast) var(--ease-default);
+  white-space: nowrap;
+}
+
+/* Align each timestamp with its bubble's content edge:
+   • AI bubble has 4px horizontal padding → match with left: var(--space-1)
+   • User bubble is right-aligned inside its block → flush with right: 0 */
+.threadAiBlock .threadBubbleTime { left: var(--space-1); }
+.threadUserBlock .threadBubbleTime { right: 0; }
+
+.threadAiBlock:hover > .threadBubbleTime,
+.threadUserBlock:hover > .threadBubbleTime {
+  opacity: 1;
+}
+
+.threadAiLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-secondary);
+}
+
+.threadAiAvatar {
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-full);
+  background: var(--gradient-ai);
+  color: var(--color-content-inverse-primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* AI response — plain text, no bubble. Fills the panel width for easy
+   scanning and aligns with activity rows along the left edge. */
+.threadBubbleAi {
+  padding: 0 var(--space-1);
+  color: var(--color-content-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  line-height: var(--line-height-relaxed);
+  word-break: break-word;
+  white-space: pre-wrap;
+  width: 100%;
+}
+
+/* ── User bubble block (right-aligned) ── */
+.threadUserBlock {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-1);
+  max-width: 88%;
+  align-self: flex-end;
+}
+
+.threadUserLabel {
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-secondary);
+}
+
+/* Outbound bubble (user message + activity) — pill matching the Container.svg
+   spec: Alloy secondary bg + opaque border + primary text. */
+.threadBubbleUser {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-secondary);
+  color: var(--color-content-primary);
+  border: 1px solid var(--color-border-opaque);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-regular);
+  line-height: var(--line-height-relaxed);
+  letter-spacing: var(--tracking-normal);
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+/* ── Typing indicator (three bouncing dots) ── */
+.threadTypingDots {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 12px;
+}
+
+.threadTypingDots > span {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--color-content-tertiary);
+  animation: threadTypingBounce 1.2s infinite ease-in-out;
+}
+
+.threadTypingDots > span:nth-child(2) { animation-delay: 0.15s; }
+.threadTypingDots > span:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes threadTypingBounce {
+  0%, 80%, 100% { opacity: 0.3; transform: translateY(0); }
+  40%           { opacity: 1;   transform: translateY(-3px); }
+}
+
 /* ─── Node Palette Card ────────────────────────────────────────────────────────── */
 
+/* Floating wrapper — positions the toolbar (and any search popup above it) at
+   the bottom-center of the canvas. The wrapper itself is layout-only; the
+   pill's visual chrome lives on `.toolbar`. */
+.paletteRoot {
+  position: fixed;
+  left: 50%;
+  bottom: var(--space-6); /* 24px from viewport bottom */
+  transform: translateX(-50%);
+  z-index: 20;
+  max-width: calc(100vw - var(--space-6) * 2);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Toolbar: width hugs content, hugs button height, 8px corner radius. */
+.toolbar {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2); /* 8px between icon buttons */
+  padding: var(--space-1); /* 4px all sides */
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-md); /* 8px */
+  transition: box-shadow var(--duration-fast) var(--ease-default);
+}
+
+.toolbar:hover {
+  box-shadow: 0 0 7px 0 color-mix(in srgb, var(--color-content-primary) 25%, transparent);
+}
+
+/* Each toolbar node button is a bare 36×36 square — icon only, no bg. */
+.toolbarBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-content-primary);
+  cursor: pointer;
+  transition:
+    background var(--duration-fast) var(--ease-default),
+    color var(--duration-fast) var(--ease-default),
+    transform var(--duration-fast) var(--ease-default);
+  flex-shrink: 0;
+}
+
+.toolbarBtn:hover {
+  transform: scale(1.1);
+}
+
+/* Search button always carries the neutral surface fill at rest. */
+.toolbarSearchBtn {
+  background: var(--color-bg-secondary);
+}
+
+.toolbarSearchBtn:hover {
+  background: var(--color-bg-tertiary);
+  transform: none;
+}
+
+/* Active state — search popup is open. */
+.toolbarSearchBtnActive,
+.toolbarSearchBtnActive:hover {
+  background: var(--color-bg-inverse-primary);
+  color: var(--color-content-inverse-primary);
+}
+
+/* ── Search popup (appears above the toolbar) ─────────────────────────────── */
+
+.searchPopup {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.searchResultsPanel {
+  width: 420px;
+  max-width: calc(100vw - var(--space-6) * 2);
+  max-height: 400px;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-md); /* 8px */
+  box-shadow: var(--shadow-below-md);
+  overflow: hidden;
+}
+
+.searchInputRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--color-border-opaque);
+  color: var(--color-content-tertiary);
+}
+
+.searchInput {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  color: var(--color-content-primary);
+}
+
+.searchInput::placeholder {
+  color: var(--color-content-tertiary);
+}
+
+/* Filter pill row — horizontally scrollable when labels overflow. */
+.searchTabsRow {
+  padding: var(--space-2) var(--space-3);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.searchTabsRow::-webkit-scrollbar { display: none; }
+
+.searchResults {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-1);
+  /* Five 36px rows + one 28px section header + top/bottom padding — anything
+     beyond scrolls, with a sliver of the 6th row peeking to hint at more. */
+  max-height: 232px;
+  overflow-y: auto;
+  min-height: 64px;
+}
+
+.searchSection { display: flex; flex-direction: column; }
+.searchSection + .searchSection { margin-top: var(--space-2); }
+
+.searchSectionHeader {
+  padding: var(--space-2) var(--space-2) var(--space-1);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: var(--tracking-wide);
+  color: var(--color-content-tertiary);
+  text-transform: uppercase;
+}
+
+.searchResultRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 36px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-primary);
+  text-align: left;
+  width: 100%;
+  transition: background var(--duration-fast) var(--ease-default);
+}
+
+.searchResultRow:hover,
+.searchResultRowActive {
+  background: var(--color-bg-secondary);
+}
+
+.searchResultIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  color: var(--color-content-primary);
+  flex-shrink: 0;
+}
+
+.searchResultLabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Trailing node-type chip — revealed on row hover / keyboard focus.
+   Rendered in a disabled appearance (muted text + disabled-bg surface) since
+   it's a read-only indicator, not an interactive control. */
+.searchResultTypeTag {
+  flex-shrink: 0;
+  margin-right: var(--space-2);
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-default);
+
+  --tag-outline-bg:     var(--color-bg-disabled);
+  --tag-outline-border: var(--color-border-opaque);
+  --tag-outline-color:  var(--color-content-disabled);
+}
+
+.searchResultRow:hover .searchResultTypeTag,
+.searchResultRowActive .searchResultTypeTag {
+  opacity: 1;
+}
+
+.searchEmpty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  color: var(--color-content-tertiary);
+}
+
+/* ── Legacy palette toolbar (still referenced by older left-panel layout) ─── */
 .paletteCard {
+  position: fixed;
+  left: 50%;
+  bottom: var(--space-6);
+  transform: translateX(-50%);
+  z-index: 20;
+  max-width: calc(100vw - var(--space-6) * 2);
   background: var(--color-bg-primary);
   border: 1px solid var(--color-border-opaque);
   border-radius: var(--radius-lg);
@@ -607,7 +1050,6 @@
   overflow: visible;
 }
 
-/* ── Add-new-tool toolbar inside the palette card ── */
 .paletteToolbar {
   display: flex;
   align-items: center;
@@ -3419,4 +3861,750 @@
   font-weight: var(--font-weight-medium);
   color: var(--color-content-secondary);
   min-width: 32px;
+}
+
+/* ─── AI Specialist — Configure / Test tabs ──────────────────────────────── */
+
+.aiSpecTabsWrap {
+  padding: var(--space-2) var(--space-3) 0;
+  border-bottom: 1px solid var(--color-border-opaque);
+  flex-shrink: 0;
+}
+
+/* ─── AI Specialist Test tab ─────────────────────────────────────────────── */
+
+.aiTestRoot {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-3);
+  gap: var(--space-3);
+}
+
+/* Chat view takes all available height; the thread grows to fill it */
+.aiTestRootChat {
+  gap: var(--space-2);
+}
+
+/* ── Specialist header card (AI gradient) ── */
+.aiTestSpecHeaderCard {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-radius: var(--radius-lg);
+  background: var(--gradient-ai);
+  box-shadow: var(--shadow-below-low);
+  flex-shrink: 0;
+}
+
+.aiTestSpecHeaderAvatar {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-full);
+  background: rgba(255, 255, 255, 0.22);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.aiTestSpecHeaderText {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0);
+  min-width: 0;
+}
+
+.aiTestSpecHeaderName {
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-content-inverse-primary);
+  line-height: var(--line-height-tight);
+}
+
+.aiTestSpecHeaderRole {
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-inverse-primary);
+  opacity: 0.88;
+  line-height: var(--line-height-tight);
+}
+
+/* ── Record selection screen ── */
+.aiTestRecordSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.aiTestRecordTitle {
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-content-primary);
+  line-height: var(--line-height-relaxed);
+}
+
+.aiTestRecordDescription {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-regular);
+  color: var(--color-content-secondary);
+  line-height: var(--line-height-relaxed);
+}
+
+/* ── Start Test gradient button (AI gradient) ── */
+.aiTestStartBtn {
+  margin-top: var(--space-2);
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--gradient-ai);
+  color: var(--color-content-inverse-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+  box-shadow: var(--shadow-below-low);
+  transition: transform var(--duration-fast) var(--ease-default),
+              opacity var(--duration-fast) var(--ease-default);
+}
+
+.aiTestStartBtn:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.aiTestStartBtn:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.aiTestStartBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Chat thread ── */
+.aiTestThread {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-1);
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-opaque) transparent;
+}
+
+.aiTestThread::-webkit-scrollbar { width: 4px; }
+.aiTestThread::-webkit-scrollbar-track { background: transparent; }
+.aiTestThread::-webkit-scrollbar-thumb {
+  background: var(--color-border-opaque);
+  border-radius: var(--radius-full);
+}
+
+.aiTestSpecialistBlock {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  max-width: 85%;
+}
+
+.aiTestSpecialistLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-secondary);
+}
+
+.aiTestSpecialistLabelAvatar {
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-full);
+  background: var(--gradient-ai);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.aiTestBubbleSpecialist {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-secondary);
+  color: var(--color-content-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-regular);
+  line-height: var(--line-height-relaxed);
+  border-top-left-radius: var(--radius-xs);
+  word-wrap: break-word;
+}
+
+.aiTestUserBlock {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-1);
+  max-width: 85%;
+  align-self: flex-end;
+}
+
+.aiTestUserLabel {
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-secondary);
+}
+
+.aiTestBubbleUser {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-inverse-primary);
+  color: var(--color-content-inverse-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-regular);
+  line-height: var(--line-height-relaxed);
+  border-top-right-radius: var(--radius-xs);
+  word-wrap: break-word;
+}
+
+/* ── Typing indicator ── */
+.aiTestTypingDots {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 12px;
+}
+
+.aiTestTypingDots > span {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--color-content-tertiary);
+  animation: aiTestTypingBounce 1.2s infinite ease-in-out;
+}
+
+.aiTestTypingDots > span:nth-child(2) { animation-delay: 0.15s; }
+.aiTestTypingDots > span:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes aiTestTypingBounce {
+  0%, 80%, 100% { opacity: 0.3; transform: translateY(0); }
+  40%           { opacity: 1;   transform: translateY(-3px); }
+}
+
+/* ── Composer ── */
+.aiTestComposer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-primary);
+  flex-shrink: 0;
+  transition: border-color var(--duration-fast) var(--ease-default),
+              box-shadow var(--duration-fast) var(--ease-default);
+}
+
+.aiTestComposer:focus-within {
+  border-color: var(--color-border-focus);
+  box-shadow: 0 0 0 3px var(--color-bg-focus-ring);
+}
+
+.aiTestComposerInput {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  padding: var(--space-1) var(--space-2);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  color: var(--color-content-primary);
+}
+
+.aiTestComposerInput::placeholder {
+  color: var(--color-content-tertiary);
+}
+
+.aiTestComposerSend {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-inverse-primary);
+  color: var(--color-content-inverse-primary);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: opacity var(--duration-fast) var(--ease-default);
+}
+
+.aiTestComposerSend:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ── Reset button ── */
+.aiTestResetBtn {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-primary);
+  color: var(--color-content-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--duration-fast) var(--ease-default);
+}
+
+.aiTestResetBtn:hover {
+  background: var(--color-bg-secondary);
+}
+
+/* ─── Action selector (right panel, empty action step) ──────────────────── */
+
+.actionSelectorRoot {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.actionSelectorSearch {
+  padding: var(--space-3) var(--space-3) var(--space-2);
+  flex-shrink: 0;
+}
+
+.actionSelectorList {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 var(--space-2) var(--space-3);
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-opaque) transparent;
+}
+
+.actionSelectorList::-webkit-scrollbar { width: 4px; }
+.actionSelectorList::-webkit-scrollbar-track { background: transparent; }
+.actionSelectorList::-webkit-scrollbar-thumb {
+  background: var(--color-border-opaque);
+  border-radius: var(--radius-full);
+}
+
+.actionSelectorGroup {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: var(--space-2);
+}
+
+.actionSelectorGroupHeader {
+  padding: var(--space-2) var(--space-2) var(--space-1);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-content-secondary);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  line-height: var(--line-height-relaxed);
+}
+
+.actionSelectorRow {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2);
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-default);
+}
+
+.actionSelectorRow:hover,
+.actionSelectorRow:focus-visible {
+  background: var(--color-bg-secondary);
+  outline: none;
+}
+
+.actionSelectorRowIcon {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 2px;
+}
+
+.actionSelectorRowText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.actionSelectorRowLabel {
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-primary);
+  line-height: var(--line-height-snug);
+}
+
+.actionSelectorRowDesc {
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-regular);
+  color: var(--color-content-secondary);
+  line-height: var(--line-height-relaxed);
+}
+
+.actionSelectorEmpty {
+  margin: 0;
+  padding: var(--space-4) var(--space-2);
+  text-align: center;
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  color: var(--color-content-tertiary);
+}
+
+/* ─── Action selected header (back arrow + icon + title) ────────────────── */
+
+.actionSelectedHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border-opaque);
+  flex-shrink: 0;
+}
+
+.actionSelectedIcon {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.actionSelectedTitle {
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-content-primary);
+  line-height: var(--line-height-relaxed);
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ─── Delay node — pill variant ─────────────────────────────────────────── */
+
+/* Keep the 200px nodeWrapper footprint so anchors/connectors stay aligned;
+   just center the auto-width pill + dots button group within it. */
+.flowNodeOuterDelay {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4); /* 16px between the pill and the dots button */
+}
+
+/* Ghost spacer mirroring the dots button (32px) — keeps the pill itself
+   horizontally centered on the wrapper so the top/bottom anchors line up
+   with the pill center, not the pill+dots group center. */
+.flowNodeOuterDelay::before {
+  content: '';
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+}
+
+/* Inline the dots menu next to the pill (override the card's absolute positioning). */
+.flowNodeOuterDelay .nodeDotsDropdown {
+  position: static;
+  top: auto;
+  right: auto;
+  transform: none;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-default);
+}
+
+/* Reveal the dots button on node hover (or while its own menu is open). */
+.flowNodeOuterDelay:hover .nodeDotsDropdown,
+.flowNodeOuterDelay:focus-within .nodeDotsDropdown {
+  opacity: 1;
+}
+
+/* Base pill — empty/default state (muted pale orange) */
+.delayPill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  min-height: 36px;
+  border-radius: var(--radius-full);
+  background: var(--Alloy-orange-100);
+  border: 1px solid var(--Alloy-orange-150);
+  color: var(--Alloy-orange-300);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--tracking-wide);
+  line-height: var(--line-height-relaxed);
+  white-space: nowrap;
+  transition:
+    background var(--duration-fast) var(--ease-default),
+    border-color var(--duration-fast) var(--ease-default),
+    color var(--duration-fast) var(--ease-default),
+    box-shadow var(--duration-fast) var(--ease-default);
+}
+
+/* Filled + default — pale pill with dark orange-600 text (no glow) */
+.delayPillFilled {
+  background: var(--Alloy-orange-100);
+  border-color: var(--Alloy-orange-150);
+  color: var(--Alloy-orange-600);
+}
+
+/* Empty + focused — vibrant orange with glow, pale orange-300 text (placeholder tone) */
+.delayPillFocused {
+  background: var(--Alloy-orange-500);
+  border-color: var(--Alloy-orange-600);
+  color: var(--Alloy-orange-300);
+  box-shadow: 0 0 7px 0 var(--Alloy-orange-500);
+}
+
+/* Filled + focused — vibrant orange with white text + glow */
+.delayPillFilled.delayPillFocused {
+  background: var(--Alloy-orange-500);
+  border-color: var(--Alloy-orange-600);
+  color: var(--color-content-inverse-primary);
+  box-shadow: 0 0 7px 0 var(--Alloy-orange-500);
+}
+
+/* Hover — subtle lift when empty + not focused */
+.flowNodeOuter:hover .delayPill:not(.delayPillFocused):not(.delayPillFilled) {
+  background: var(--Alloy-orange-150);
+  border-color: var(--Alloy-orange-200);
+}
+
+/* ─── Trigger node — pill variant (four states, green Alloy tokens) ──────── */
+
+/* Layout mirrors the delay pill: keep the 200px nodeWrapper footprint so
+   anchors/connectors stay aligned, and center the auto-width pill via a
+   ghost spacer that balances the dots button on the opposite side. */
+.flowNodeOuterTrigger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+}
+
+.flowNodeOuterTrigger::before {
+  content: '';
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+}
+
+.flowNodeOuterTrigger .nodeDotsDropdown {
+  position: static;
+  top: auto;
+  right: auto;
+  transform: none;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-default);
+}
+
+.flowNodeOuterTrigger:hover .nodeDotsDropdown,
+.flowNodeOuterTrigger:focus-within .nodeDotsDropdown {
+  opacity: 1;
+}
+
+/* State 1 — DEFAULT EMPTY: green-100 fill, green-150 border, green-300 content */
+.triggerPill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  min-height: 36px;
+  border-radius: var(--radius-full);
+  background: var(--Alloy-green-100);
+  border: 1px solid var(--Alloy-green-150);
+  color: var(--Alloy-green-300);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--tracking-wide);
+  line-height: var(--line-height-relaxed);
+  white-space: nowrap;
+  transition:
+    background var(--duration-fast) var(--ease-default),
+    border-color var(--duration-fast) var(--ease-default),
+    color var(--duration-fast) var(--ease-default),
+    box-shadow var(--duration-fast) var(--ease-default);
+}
+
+/* State 2 — DEFAULT FILLED: same shell, dark green-600 content */
+.triggerPillFilled {
+  background: var(--Alloy-green-100);
+  border-color: var(--Alloy-green-150);
+  color: var(--Alloy-green-600);
+}
+
+/* State 4 — SELECTED (empty) LIGHT LABEL VARIANT: vibrant green-500 bg
+   with green-600 border, muted green-300 content, and the green glow. */
+.triggerPillFocused {
+  background: var(--Alloy-green-500);
+  border-color: var(--Alloy-green-600);
+  color: var(--Alloy-green-300);
+  box-shadow: 0 0 7px 0 var(--Alloy-green-500);
+}
+
+/* State 3 — SELECTED PRIMARY (filled): same vibrant shell, white content. */
+.triggerPillFilled.triggerPillFocused {
+  background: var(--Alloy-green-500);
+  border-color: var(--Alloy-green-600);
+  color: var(--Alloy-white);
+  box-shadow: 0 0 7px 0 var(--Alloy-green-500);
+}
+
+/* Hover — subtle lift when empty + not focused */
+.flowNodeOuter:hover .triggerPill:not(.triggerPillFocused):not(.triggerPillFilled) {
+  background: var(--Alloy-green-150);
+  border-color: var(--Alloy-green-200);
+}
+
+/* ─── Action node — pill-on-top + white card below (blue Alloy tokens) ─── */
+
+.actionNodeHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 32px;
+  margin-bottom: var(--space-2);
+}
+
+/* Align the absolutely-positioned dots button with the pill row and the card's right edge */
+.flowNodeOuterAction .nodeDotsDropdown {
+  top: 0;
+  right: 0;
+}
+
+/* Pill badge — rounded-full, tiny icon + "Action" label */
+.actionNodePill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0 var(--space-2);
+  height: 20px;
+  border-radius: var(--radius-full);
+  background: var(--Alloy-blue-50);
+  border: 1px solid var(--Alloy-blue-150);
+  color: var(--Alloy-blue-800);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  line-height: 1;
+  white-space: nowrap;
+  transition:
+    background var(--duration-fast) var(--ease-default),
+    border-color var(--duration-fast) var(--ease-default),
+    color var(--duration-fast) var(--ease-default);
+}
+
+/* Focused/selected: solid primary blue fill, white content */
+.actionNodePillFocused {
+  background: var(--Alloy-blue-500);
+  border-color: var(--Alloy-blue-500);
+  color: var(--Alloy-white);
+}
+
+/* Bottom card — white, thin blue ring, 7px radius */
+.actionNodeCard {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  background: var(--color-bg-primary);
+  border: 1px solid var(--Alloy-blue-150);
+  border-radius: 7px;
+  transition:
+    border-color var(--duration-fast) var(--ease-default),
+    box-shadow var(--duration-fast) var(--ease-default);
+}
+
+/* Focused card: primary blue ring + blue glow */
+.actionNodeCardFocused {
+  border-color: var(--Alloy-blue-500);
+  box-shadow: 0 0 7px 0 var(--Alloy-blue-500);
+}
+
+/* Small rounded square icon container — always light-blue fill */
+.actionNodeIconBox {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  background: var(--Alloy-blue-150);
+  color: var(--Alloy-blue-300);
+  flex-shrink: 0;
+}
+
+/* Configured state: icon uses darker blue */
+.actionNodeIconBoxFilled {
+  color: var(--Alloy-blue-700);
+}
+
+.actionNodeContent {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+/* Placeholder ("Search actions...") — muted slate label */
+.actionNodePlaceholder {
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: var(--tracking-wide);
+  color: var(--Alloy-slate-300);
+  line-height: var(--line-height-relaxed);
 }

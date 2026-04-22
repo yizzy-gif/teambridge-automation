@@ -177,7 +177,7 @@ const BOTTOM_ITEMS: NavItem[] = [
   { id: 'form',       label: 'Form',            icon: <FormIcon /> },
   { id: 'tasks',      label: 'Tasks',           icon: <TasksIcon /> },
   { id: 'policy',     label: 'Policy',          icon: <PolicyIcon /> },
-  { id: 'automation', label: 'Automation',      icon: <AutomationIcon />, path: '/automations' },
+  { id: 'automation', label: 'Workflow',        icon: <AutomationIcon />, path: '/automations' },
   { id: 'payroll',    label: 'Payroll',         icon: <PayrollIcon /> },
   { id: 'esign',      label: 'E-Sign Studio',   icon: <ESignIcon /> },
 ];
