@@ -792,6 +792,25 @@
   gap: var(--space-1);
   max-width: 88%;
   align-self: flex-end;
+  /* Entrance animation — new outbound bubbles fade in and rise 16px to
+     their final spot. `both` keeps the final state after the animation. */
+  animation: threadOutboundSlideIn 220ms var(--ease-out) both;
+}
+
+@keyframes threadOutboundSlideIn {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Respect the user's motion preference — fade in only, no translate. */
+@media (prefers-reduced-motion: reduce) {
+  .threadUserBlock {
+    animation: threadOutboundFadeIn 120ms var(--ease-out) both;
+  }
+  @keyframes threadOutboundFadeIn {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
 }
 
 .threadUserLabel {
@@ -5377,6 +5396,23 @@
   border-radius: var(--radius-md);
   margin-bottom: var(--space-2);
   background: var(--color-bg-primary);
+}
+
+/* Operator + value on a single line — verb takes its natural width, the
+   value widget fills the remaining space. Wraps gracefully when tight. */
+.conditionRowOpValue {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.conditionRowOpSelect {
+  flex: 0 0 auto;
+  min-width: 90px;
+}
+.conditionRowValue {
+  flex: 1 1 0;
+  min-width: 120px;
 }
 .conditionRowHead {
   display: flex;

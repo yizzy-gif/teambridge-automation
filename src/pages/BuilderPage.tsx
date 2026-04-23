@@ -2649,14 +2649,15 @@ function ConditionRow({ entry, showRemove, onRemove, onPatch, index }: Condition
         ]}
       />
       {def && (
-        <>
+        <div className={styles.conditionRowOpValue}>
           <PopoverSelect
             value={op}
             onChange={newOp => onPatch({ operator: newOp, values: [] })}
             options={ops.map(o => ({ value: o, label: OPERATOR_LABELS[o] ?? o }))}
+            className={styles.conditionRowOpSelect}
           />
           {!isNoVal && isIn && def.valueOptions && (
-            <div className={styles.popoverTags}>
+            <div className={clsx(styles.popoverTags, styles.conditionRowValue)}>
               {def.valueOptions.map(opt => {
                 const selected = vals.includes(opt);
                 return (
@@ -2673,10 +2674,12 @@ function ConditionRow({ entry, showRemove, onRemove, onPatch, index }: Condition
             </div>
           )}
           {!isNoVal && isIn && !def.valueOptions && (
-            <ConditionTagInput values={vals} onChange={next => onPatch({ values: next })} />
+            <div className={styles.conditionRowValue}>
+              <ConditionTagInput values={vals} onChange={next => onPatch({ values: next })} />
+            </div>
           )}
           {!isNoVal && isWithin && (
-            <div className={styles.conditionWithinNext}>
+            <div className={clsx(styles.conditionWithinNext, styles.conditionRowValue)}>
               <NumberField
                 size="md" min={1} placeholder="30"
                 value={vals[0] ?? ''}
@@ -2705,6 +2708,7 @@ function ConditionRow({ entry, showRemove, onRemove, onPatch, index }: Condition
                 { value: '', label: 'Select value…' },
                 ...def.valueOptions.map(opt => ({ value: opt, label: opt })),
               ]}
+              className={styles.conditionRowValue}
             />
           )}
           {!isNoVal && !isIn && !isWithin && !def.valueOptions && (
@@ -2713,9 +2717,10 @@ function ConditionRow({ entry, showRemove, onRemove, onPatch, index }: Condition
               value={vals[0] ?? ''}
               onChange={e => onPatch({ values: [e.target.value] })}
               aria-label="Condition value"
+              className={styles.conditionRowValue}
             />
           )}
-        </>
+        </div>
       )}
     </div>
   );
@@ -2791,7 +2796,6 @@ function ConditionGroupsEditor({ step, onUpdateConditionGroups }: ConditionGroup
         {groups.map((group, gIdx) => (
           <Fragment key={group.id}>
             <div className={styles.conditionGroup}>
-              <div className={styles.conditionGroupHeader}>AND</div>
               <div className={styles.conditionGroupRows}>
                 {group.conditions.map((c, cIdx) => (
                   <ConditionRow
@@ -4485,7 +4489,7 @@ function LeftPanel({
                 <div className={styles.threadBubbleAi}>
                   <AILoader
                     variant="gradient-fill"
-                    size="sm"
+                    size={24}
                     state={aiTyping ? 'loading' : 'ready'}
                   />
                 </div>
@@ -5036,9 +5040,11 @@ interface InsertPopoverProps {
 
 function InsertPopover({ parentId, nodes, edges, anchorRect, onInsert, onClose }: InsertPopoverProps) {
   const panelRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [search, setSearch] = useState('');
+  const [selectedTab, setSelectedTab] = useState<SearchTabValue>('all');
 
-  const PANEL_W = 228;
+  const PANEL_W = 360;
   const leftPanel = document.querySelector('[class*="leftPanel"]');
   const canvasLeft = leftPanel ? leftPanel.getBoundingClientRect().right + 12 : 12;
   const left = anchorRect.right + 12 + PANEL_W <= window.innerWidth
@@ -5046,12 +5052,28 @@ function InsertPopover({ parentId, nodes, edges, anchorRect, onInsert, onClose }
     : Math.max(canvasLeft, anchorRect.left - 12 - PANEL_W);
   const pos = { top: anchorRect.top - 10, left };
 
-  const validItems = ALL_LIBRARY_ITEMS.filter(item =>
-    canAddNodeAfter(parentId, item.type, nodes, edges) &&
-    (search.trim() === '' ||
-      item.label.toLowerCase().includes(search.toLowerCase()) ||
-      item.category.toLowerCase().includes(search.toLowerCase()))
+  // Items valid at this insertion point — filtered by tab + search query.
+  const allValid = ALL_LIBRARY_ITEMS.filter(item =>
+    canAddNodeAfter(parentId, item.type, nodes, edges)
   );
+  const validTypes = Array.from(new Set(allValid.map(i => i.type)));
+  const tabOrder: SearchTabValue[] = ['all', ...SEARCH_TAB_ORDER.filter(
+    (t): t is StepType => t !== 'all' && validTypes.includes(t as StepType)
+  )];
+  const q = search.trim().toLowerCase();
+  const filtered = allValid.filter(item => {
+    if (selectedTab !== 'all' && item.type !== selectedTab) return false;
+    if (q === '') return true;
+    return item.label.toLowerCase().includes(q) || item.category.toLowerCase().includes(q);
+  });
+  const grouped = SEARCH_TAB_ORDER
+    .filter((t): t is StepType => t !== 'all')
+    .map(type => ({ type, rows: filtered.filter(i => i.type === type) }))
+    .filter(g => g.rows.length > 0);
+
+  useEffect(() => {
+    searchInputRef.current?.focus();
+  }, []);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -5067,35 +5089,56 @@ function InsertPopover({ parentId, nodes, edges, anchorRect, onInsert, onClose }
       style={{ position: 'fixed', top: pos.top, left: pos.left, zIndex: 1000 }}
       onMouseDown={e => e.stopPropagation()}
     >
-      <div className={styles.connectorInsertPopover}>
-        <div className={styles.connectorInsertSearch}>
-          <SearchField
-            size="sm"
-            placeholder="Search nodes…"
+      <div className={styles.searchResultsPanel} role="dialog" aria-label="Insert node">
+        <div className={styles.searchInputRow}>
+          <SearchSmIcon size={16} />
+          <input
+            ref={searchInputRef}
+            type="text"
+            className={styles.searchInput}
+            placeholder="Search nodes..."
             value={search}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearch(e.target.value)}
-            onClear={() => setSearch('')}
+            onChange={e => setSearch(e.target.value)}
           />
         </div>
-        <ScrollArea className={styles.connectorInsertList}>
-          <div className={styles.connectorInsertListInner}>
-            {validItems.length === 0 ? (
-              <p className={styles.connectorInsertEmpty}>No nodes match</p>
-            ) : validItems.map(item => {
-              const cfg = STEP_CONFIG[item.type];
-              return (
-                <button
-                  key={item.id}
-                  className={styles.connectorInsertItem}
-                  onClick={() => { onInsert(item.type, item.label); onClose(); }}
-                >
-                  <span className={clsx(styles.paletteItemIcon, cfg.bgClass)}>{getLibraryItemIcon(item)}</span>
-                  {item.label}
-                </button>
-              );
-            })}
-          </div>
-        </ScrollArea>
+
+        <FilterPillGroup className={styles.searchTabsRow} aria-label="Filter by node type">
+          {tabOrder.map(tab => (
+            <FilterPill
+              key={tab}
+              active={selectedTab === tab}
+              onClick={() => setSelectedTab(tab)}
+            >
+              {SEARCH_TAB_LABEL[tab]}
+            </FilterPill>
+          ))}
+        </FilterPillGroup>
+
+        <div className={styles.searchResults}>
+          {grouped.length === 0 ? (
+            <div className={styles.searchEmpty}>No results</div>
+          ) : (
+            grouped.map(group => (
+              <div key={`group:${group.type}`} className={styles.searchSection}>
+                <div className={styles.searchSectionHeader}>{STEP_GROUP_HEADING[group.type]}</div>
+                {group.rows.map(item => (
+                  <button
+                    key={`${item.type}:${item.id}`}
+                    type="button"
+                    className={styles.searchResultRow}
+                    onClick={() => { onInsert(item.type, item.label); onClose(); }}
+                  >
+                    <span className={styles.searchResultIcon}>{getSearchResultIcon(item)}</span>
+                    <span className={styles.searchResultLabel}>{item.label}</span>
+                    <Tag variant="outline" size="sm" className={styles.searchResultTypeTag}>
+                      {STEP_TOOLTIP_LABEL[item.type]}
+                    </Tag>
+                  </button>
+                ))}
+              </div>
+            ))
+          )}
+        </div>
       </div>
     </div>,
     document.body,
