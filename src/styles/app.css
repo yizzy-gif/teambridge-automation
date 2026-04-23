@@ -74,18 +74,27 @@ body {
   --color-surface-dark-border:  rgba(255 255 255 / 0.12);
 
   /* Step-type icon backgrounds */
-  --step-trigger-bg:   var(--Alloy-orange-150, #fae1c0);
-  --step-trigger-fg:   var(--Alloy-orange-600, #b45309);
-  --step-condition-bg: var(--Alloy-blue-100,   #d1e1ff);
-  --step-condition-fg: var(--Alloy-blue-600,   #1454cb);
-  --step-action-bg:    var(--Alloy-green-100,  #bbf7d0);
-  --step-action-fg:    var(--Alloy-green-700,  #15803d);
+  /* Trigger tokens — green family to match the trigger pill design */
+  --step-trigger-bg:   var(--Alloy-green-100,  #d0eed3);
+  --step-trigger-fg:   var(--Alloy-green-700,  #16681e);
+  /* Condition tokens — slate family to match the condition node design */
+  --step-condition-bg: var(--Alloy-slate-100,  #e8eaee);
+  --step-condition-fg: var(--Alloy-slate-600,  #394454);
+  /* Action tokens — blue family to match the updated action node design
+     (circle: blue-100 fill, blue-600 icon stroke per the spec SVGs). */
+  --step-action-bg:    var(--Alloy-blue-100,   #d1e1ff);
+  --step-action-fg:    var(--Alloy-blue-600,   #1454cb);
   --step-ai-bg:        var(--Alloy-purple-100, #ede9fe);
   --step-ai-fg:        var(--Alloy-purple-600, #7c3aed);
-  --step-delay-bg:     var(--Alloy-yellow-150, #fff0b2);
-  --step-delay-fg:     var(--Alloy-yellow-700, #997a00);
+  /* Delay tokens — orange family to match the delay pill design */
+  --step-delay-bg:     var(--Alloy-orange-100, #fcebd5);
+  --step-delay-fg:     var(--Alloy-orange-700, #8f5e1b);
   --step-policy-bg:    var(--Alloy-coral-100,  #ffe1d6);
   --step-policy-fg:    var(--Alloy-coral-600,  #c2410c);
+
+  /* Rose mid-stop from --gradient-policy-engine — used as the single-color
+     accent for focused policy node border + glow. */
+  --color-policy-accent: #FC6684;
 
   /* Canvas dot-grid */
   --canvas-bg:         #fafafa;
@@ -101,4 +110,51 @@ body {
 
   /* Muted placeholder text inside node Select field — Figma --content/inversesecondary */
   --color-content-placeholder: #cbd0d7;
+}
+
+/* Dark-mode canvas — mirrors Alloy's auto + manual pattern.
+   Also softens Alloy's default dark borders (slate-700) which read too bright
+   against slate-900/850 surfaces in this app. */
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) {
+    --canvas-bg:                var(--Alloy-slate-900);
+    --canvas-dot-color:         rgba(255 255 255 / 0.08);
+    --color-border-opaque:      var(--Alloy-slate-800);
+    --color-border-transparent: rgba(255 255 255 / 0.04);
+  }
+}
+.dark {
+  --canvas-bg:                var(--Alloy-slate-900);
+  --canvas-dot-color:         rgba(255 255 255 / 0.08);
+  --color-border-opaque:      var(--Alloy-slate-800);
+  --color-border-transparent: rgba(255 255 255 / 0.04);
+}
+
+/* ─── Alloy primary button — dark-mode contrast fix ──────────────────────────
+   Alloy's packaged dark-mode primary rule sets bg to `--color-bg-primary`,
+   which in this app equals the page background (slate-950) — so the primary
+   button becomes invisible. Restore the light-mode inverse semantics in dark
+   mode: a bright fill with dark text, mirroring the high-contrast primary
+   CTA users expect. Hover/active step down through the slate surface scale. */
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) button[data-variant="primary"] {
+    background-color: var(--color-bg-inverse-primary);
+    color:            var(--color-content-inverse-primary);
+  }
+  :root:not(.light) button[data-variant="primary"]:hover:not(:disabled) {
+    background-color: var(--Alloy-slate-100);
+  }
+  :root:not(.light) button[data-variant="primary"]:active:not(:disabled) {
+    background-color: var(--Alloy-slate-200);
+  }
+}
+.dark button[data-variant="primary"] {
+  background-color: var(--color-bg-inverse-primary);
+  color:            var(--color-content-inverse-primary);
+}
+.dark button[data-variant="primary"]:hover:not(:disabled) {
+  background-color: var(--Alloy-slate-100);
+}
+.dark button[data-variant="primary"]:active:not(:disabled) {
+  background-color: var(--Alloy-slate-200);
 }

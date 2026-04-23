@@ -1,9 +1,17 @@
+export interface PromptConditionEntry {
+  fieldId: string;
+  operator: string;
+  values: string[];
+}
+
 export interface PromptNode {
   id: string;
   type: 'trigger' | 'condition' | 'action' | 'ai' | 'delay';
   selectedValue?: string;
-  conditionOperator?: string;
-  conditionValues?: string[];
+  /** Multi-condition list for condition nodes. */
+  conditions?: PromptConditionEntry[];
+  /** Logic operator joining multiple conditions. */
+  conditionLogic?: 'AND' | 'OR';
   configValues?: Record<string, string>;
   configured: boolean;
 }
@@ -11,7 +19,6 @@ export interface PromptNode {
 export interface PromptEdge {
   from: string;
   to: string;
-  branch?: string;
 }
 
 export interface PromptLibraryItem {
@@ -59,14 +66,12 @@ After making changes, provide a brief one-sentence summary of what you did.`,
       const cfg = n.configValues && Object.keys(n.configValues).length > 0
         ? ` config=${JSON.stringify(n.configValues)}`
         : '';
-      const cond = n.conditionOperator
-        ? ` operator="${n.conditionOperator}" values=${JSON.stringify(n.conditionValues ?? [])}`
+      const conds = (n.conditions && n.conditions.length > 0)
+        ? ` conditions=${JSON.stringify(n.conditions)} logic="${n.conditionLogic ?? 'AND'}"`
         : '';
-      return `  node id="${n.id}" type="${n.type}" selected="${n.selectedValue ?? 'unconfigured'}"${cfg}${cond}`;
+      return `  node id="${n.id}" type="${n.type}" selected="${n.selectedValue ?? 'unconfigured'}"${cfg}${conds}`;
     });
-    const edgeLines = edges.map(e =>
-      `  ${e.from} → ${e.to}${e.branch ? ` (${e.branch} branch)` : ''}`,
-    );
+    const edgeLines = edges.map(e => `  ${e.from} → ${e.to}`);
     parts.push(`\nCURRENT FLOW:\n${nodeLines.join('\n')}\nEdges:\n${edgeLines.join('\n')}`);
   }
 
@@ -130,10 +135,8 @@ export function buildStepSystemPrompt(options: {
   step: PromptNode;
   libraryItemsForType: PromptLibraryItem[];
   configFields: PromptConfigField[];
-  conditionOperators?: string[];
-  conditionValueOptions?: string[];
 }): string {
-  const { step, libraryItemsForType, configFields, conditionOperators, conditionValueOptions } = options;
+  const { step, libraryItemsForType, configFields } = options;
 
   const parts: string[] = [];
 
@@ -149,11 +152,11 @@ Make tool calls — do not just explain what to do. Provide a brief confirmation
   const cfg = step.configValues && Object.keys(step.configValues).length > 0
     ? `\n  config: ${JSON.stringify(step.configValues)}`
     : '';
-  const cond = step.conditionOperator
-    ? `\n  operator: "${step.conditionOperator}", values: ${JSON.stringify(step.conditionValues ?? [])}`
+  const conds = (step.conditions && step.conditions.length > 0)
+    ? `\n  conditions: ${JSON.stringify(step.conditions)}\n  logic: "${step.conditionLogic ?? 'AND'}"`
     : '';
   parts.push(
-    `\nCURRENT STEP:\n  id: ${step.id}\n  type: ${step.type}\n  selected: "${step.selectedValue ?? 'not selected yet'}"${cfg}${cond}`,
+    `\nCURRENT STEP:\n  id: ${step.id}\n  type: ${step.type}\n  selected: "${step.selectedValue ?? 'not selected yet'}"${cfg}${conds}`,
   );
 
   // 3. Available items for this step type
@@ -168,14 +171,6 @@ Make tool calls — do not just explain what to do. Provide a brief confirmation
       return `  ${f.key} (${f.type}, ${req})${opts}`;
     });
     parts.push(`\nCONFIGURATION FIELDS FOR "${step.selectedValue}":\n${fieldLines.join('\n')}`);
-  }
-
-  // 5. Condition operators
-  if (conditionOperators && conditionOperators.length > 0) {
-    parts.push(`\nVALID OPERATORS FOR THIS CONDITION:\n  ${conditionOperators.join(', ')}`);
-    if (conditionValueOptions && conditionValueOptions.length > 0) {
-      parts.push(`VALID VALUES:\n  ${conditionValueOptions.join(', ')}`);
-    }
   }
 
   return parts.join('\n');

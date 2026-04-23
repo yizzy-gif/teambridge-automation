@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, Fragment } from 'react';
+import { useState, useRef, useEffect, useCallback, Fragment, isValidElement, cloneElement } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useParams } from 'react-router-dom';
 import { clsx } from 'clsx';
@@ -28,6 +28,8 @@ import { File04Icon } from '@alloy/components/icons/File04Icon';
 import { Home02Icon } from '@alloy/components/icons/Home02Icon';
 import { ClockIcon } from '@alloy/components/icons/ClockIcon';
 import { ClipboardCheckIcon } from '@alloy/components/icons/ClipboardCheckIcon';
+import { InfoCircleIcon } from '@alloy/components/icons/InfoCircleIcon';
+import { MinusIcon } from '@alloy/components/icons/MinusIcon';
 import { Edit03Icon } from '@alloy/components/icons/Edit03Icon';
 import { Mail01Icon } from '@alloy/components/icons/Mail01Icon';
 import { Bell01Icon } from '@alloy/components/icons/Bell01Icon';
@@ -168,6 +170,15 @@ function formatDelaySummary(cfg: Record<string, string> | undefined): string | n
 }
 type AutomationStatus = 'draft' | 'active' | 'inactive' | 'archived';
 
+/** A single condition entry inside a condition node (new multi-condition model). */
+interface ConditionEntry {
+  /** Matches ConditionDef.id (library id). Empty string = unassigned. */
+  fieldId: string;
+  operator: string;
+  /** Supports multi-value operators (e.g. "is any of"). */
+  values: string[];
+}
+
 interface GraphNode {
   id: string;
   type: StepType;
@@ -175,34 +186,39 @@ interface GraphNode {
   placeholder: string;
   configured: boolean;
   selectedValue?: string;
+  /** Legacy single-condition fields — retained only for non-condition nodes
+   *  (kept on the interface so the existing compat paths still compile). */
   conditionOperator?: string;
   conditionValues?: string[];
   configValues?: Record<string, string>;
-  /** Links sibling condition nodes that share the same condition config. */
-  branchGroupId?: string;
-  /** Output branching mode for standalone condition nodes. Undefined = no branches configured. */
-  branchMode?: 'yes-no' | 'multi-value';
-  /** Branch entries for multi-value mode — each has its own operator and value (= output handle label). */
-  conditionBranches?: Array<{ operator: string; value: string }>;
+  /** New multi-condition model for condition nodes. Up to 5 entries. */
+  conditions?: ConditionEntry[];
+  /** Logic operator joining multiple conditions. Only meaningful when conditions.length >= 2. */
+  conditionLogic?: 'AND' | 'OR';
+
+  /** ── Info metadata — surfaced in the right-panel "Info" section ──
+   *  `nodeId` is the stable short human-readable ID (e.g. "node_a1b2c3")
+   *  used for prompt/activity references. Distinct from the internal
+   *  React `id` key, which existing state paths still target. */
+  nodeId?: string;
+  /** ISO timestamp set at node creation — never changes. */
+  createdAt?: string;
+  /** ISO timestamp bumped on every mutation (config/position/connection). */
+  updatedAt?: string;
+  /** Display name of the user who last modified this node. */
+  updatedBy?: string;
 }
 
 interface GraphEdge {
   id: string;
   from: string;
   to: string;
-  branch?: string;
 }
 
 // Alias kept so FlowNode component compiles without changes
 type FlowStep = GraphNode;
 
-/** A standalone condition group created via "Add group" button, tracking its empty slots. */
-interface ConditionGroupEntry {
-  id: string;
-  operator: 'AND' | 'OR';
-}
-
-const MAX_GROUP_CONDITIONS = 5;
+const MAX_CONDITIONS = 5;
 
 // ─── Icons ──────────────────────────────────────────────────────────────────────
 
@@ -346,12 +362,12 @@ function LoadingDots() {
 // ─── Step config map ───────────────────────────────────────────────────────────
 
 const STEP_CONFIG: Record<StepType, { icon: React.ReactNode; label: string; bgClass: string }> = {
-  trigger:   { icon: <Target04Icon size={12} />,                label: 'Trigger',   bgClass: styles.iconTrigger   },
-  condition: { icon: <GitBranch01Icon size={12} />,             label: 'Condition', bgClass: styles.iconCondition },
-  action:    { icon: <ArrowCircleBrokenRightIcon size={12} />,  label: 'Action',    bgClass: styles.iconAction    },
-  ai:        { icon: <TeambridgeAIIcon size={12} />,             label: 'AI',        bgClass: styles.iconAi        },
-  delay:     { icon: <ClockIcon size={12} />,                   label: 'Delay',     bgClass: styles.iconDelay     },
-  policy:    { icon: <ClipboardCheckIcon size={12} />,          label: 'Policy',    bgClass: styles.iconPolicy    },
+  trigger:   { icon: <PlayIcon          size={12} />,           label: 'Trigger',   bgClass: styles.iconTrigger   },
+  condition: { icon: <FilterLinesIcon   size={12} />,           label: 'Condition', bgClass: styles.iconCondition },
+  action:    { icon: <CircularArrowIcon size={12} />,           label: 'Action',    bgClass: styles.iconAction    },
+  ai:        { icon: <TeambridgeAIIcon  size={12} />,           label: 'AI',        bgClass: styles.iconAi        },
+  delay:     { icon: <ClockIcon         size={12} />,           label: 'Delay',     bgClass: styles.iconDelay     },
+  policy:    { icon: <TriangleUpIcon    size={12} />,           label: 'Policy',    bgClass: styles.iconPolicy    },
 };
 
 const STEP_TOOLTIP_LABEL: Record<StepType, string> = {
@@ -364,7 +380,7 @@ const STEP_TOOLTIP_LABEL: Record<StepType, string> = {
 };
 
 const NODE_TYPE_TAG_COLOR: Record<StepType, TagColor> = {
-  trigger:   'orange',
+  trigger:   'green',
   condition: 'blue',
   action:    'green',
   ai:        'purple',
@@ -1214,14 +1230,28 @@ function buildNodeSnippet(step: FlowStep): SnippetSeg[] | null {
     const fn = NODE_SNIPPET[libItem.id];
     return fn ? fn(step.configValues ?? {}) : null;
   }
-  if (step.type === 'condition' && step.conditionOperator) {
-    const opLabel = OPERATOR_LABELS[step.conditionOperator] ?? step.conditionOperator;
-    const vals    = step.conditionValues ?? [];
+  if (step.type === 'condition') {
+    const conds = step.conditions ?? [];
+    if (conds.length === 0) return null;
+    if (conds.length >= 2) {
+      const logic = step.conditionLogic ?? 'AND';
+      return [
+        { text: String(conds.length), role: 'label' },
+        { text: ' conditions',        role: 'op'    },
+        { text: ` \u2014 ${logic}`,    role: 'val'   },
+      ];
+    }
+    // Single condition — render "field operator value(s)"
+    const c = conds[0];
+    const def = CONDITION_LIBRARY.find(d => d.id === c.fieldId);
+    const fieldLabel = def?.label ?? step.selectedValue ?? '';
+    if (!fieldLabel) return null;
+    const opLabel = OPERATOR_LABELS[c.operator] ?? c.operator;
     const segs: SnippetSeg[] = [
-      { text: step.selectedValue,  role: 'label' },
-      { text: ` ${opLabel}`,       role: 'op'    },
+      { text: fieldLabel,    role: 'label' },
+      { text: ` ${opLabel}`, role: 'op'    },
     ];
-    if (vals.length > 0) segs.push({ text: ` ${vals.join(', ')}`, role: 'val' });
+    if (c.values.length > 0) segs.push({ text: ` ${c.values.join(', ')}`, role: 'val' });
     return segs;
   }
   return null;
@@ -1263,13 +1293,6 @@ const H_SPACING     = 300;   // centre-to-centre column pitch
 const V_SPACING     = 210;   // centre-to-centre row pitch (~80px gap between cards)
 const CANVAS_TOP    = 48;    // initial top padding
 const LEFT_PANEL_W  = 360;   // left panel width — pan offset so content starts in visible area
-// Group container padding constants — shared between rendering and drag/anchor logic
-const GROUP_PAD_X   = 12;
-const GROUP_PAD_TOP = 12;
-const GROUP_PAD_BOT = 12;
-const GROUP_SLOT_H        = NODE_H;   // height of an empty slot placeholder (matches condition node height)
-// Wider pitch for group members — badge needs 39px + 16px clearance each side = 71px min gap
-const GROUP_SIBLING_PITCH = NODE_W + 72;
 // With graphContent at `left: 50%` of viewport the natural center is at ~50% of viewport.
 // We offset pan.x by this value so nodes centre in the area to the right of the panel.
 const INIT_PAN_X    = 300;   // empirically: root at centreX=140 → viewport x=505 (visible midpoint)
@@ -1277,15 +1300,14 @@ const INIT_PAN_X    = 300;   // empirically: root at centreX=140 → viewport x=
 // ─── Layout engine ────────────────────────────────────────────────────────────
 
 /** Compute absolute { x, y } pixel positions for every node in the graph.
- *  Handles: multiple independent roots, branching, and simple merge nodes. */
+ *  Handles: multiple independent roots, and simple merge nodes. */
 function computeLayout(
   nodes: GraphNode[],
   edges: GraphEdge[],
   /**
    * Optional override for a node's column slot width. When provided for an id,
    * `getW` uses this value as the node's own-width instead of the default
-   * H_SPACING. Used by tidy-up to reserve horizontal space for a condition
-   * group's full width when only its primary member is in the reduced graph.
+   * H_SPACING.
    */
   nodeSlotWidthOverrides?: Map<string, number>,
 ): Map<string, { x: number; y: number }> {
@@ -1304,42 +1326,6 @@ function computeLayout(
   });
 
   const roots = nodes.filter(n => (inc.get(n.id)?.length ?? 0) === 0);
-
-  // For condition nodes with yes-no or multi-value outputs, reorder children
-  // in the adjacency list to match the left-to-right order of their output
-  // handles. Otherwise DFS places children in edge-insertion order, which
-  // makes the "yes" branch land on the right and connectors cross over the
-  // "no" branch (and vice versa for arbitrary multi-value label orders).
-  const branchRank = (
-    parent: GraphNode,
-    edge: GraphEdge | undefined,
-  ): number => {
-    const b = edge?.branch;
-    if (!b) return Number.MAX_SAFE_INTEGER; // non-branched edges sink to the end
-    const bLower = b.toLowerCase();
-    if (parent.branchMode === 'yes-no') {
-      return bLower === 'yes' ? 0 : bLower === 'no' ? 1 : 2;
-    }
-    if (parent.branchMode === 'multi-value') {
-      const cases = (parent.conditionBranches ?? []).map(c => c.value);
-      const i = cases.indexOf(b);
-      if (i !== -1) return i;
-      const iLower = cases.findIndex(v => v.toLowerCase() === bLower);
-      return iLower !== -1 ? iLower : cases.length;
-    }
-    return Number.MAX_SAFE_INTEGER;
-  };
-  nodes.forEach(n => {
-    if (n.type !== 'condition' || !n.branchMode) return;
-    const children = out.get(n.id);
-    if (!children || children.length < 2) return;
-    const sorted = [...children].sort((a, b) => {
-      const ea = edges.find(e => e.from === n.id && e.to === a);
-      const eb = edges.find(e => e.from === n.id && e.to === b);
-      return branchRank(n, ea) - branchRank(n, eb);
-    });
-    out.set(n.id, sorted);
-  });
 
   // Topological depth — merge nodes get max(parent depths) + 1
   const depth = new Map<string, number>();
@@ -1393,118 +1379,12 @@ function computeLayout(
     }
   };
 
-  // SIBLING_PITCH defined early so both the roots loop and the post-process block can use it
-  const SIBLING_PITCH = NODE_W + 8;
-
-  // Partition roots: standalone branch-group nodes (no parent, same branchGroupId) are
-  // placed together at SIBLING_PITCH; all other roots use the normal H_SPACING path.
-  const standaloneGroupRoots = new Map<string, GraphNode[]>();
-  const ungroupedRoots: GraphNode[] = [];
-  roots.forEach(root => {
-    if (root.branchGroupId) {
-      const g = standaloneGroupRoots.get(root.branchGroupId) ?? [];
-      g.push(root);
-      standaloneGroupRoots.set(root.branchGroupId, g);
-    } else {
-      ungroupedRoots.push(root);
-    }
-  });
-
   let rootCentreX = 0;
-
-  // Place normal (non-grouped) roots
-  for (const root of ungroupedRoots) {
+  for (const root of roots) {
     const w = subtreeW.get(root.id) ?? H_SPACING;
     place(root.id, rootCentreX + w / 2);
     rootCentreX += w + H_SPACING;
   }
-
-  // Place standalone branch-group root clusters with group spacing (wider for badge clearance)
-  standaloneGroupRoots.forEach(groupRoots => {
-    const totalSpan = (groupRoots.length - 1) * GROUP_SIBLING_PITCH;
-    const clusterCentreX = rootCentreX + totalSpan / 2 + NODE_W / 2;
-    const startX = clusterCentreX - totalSpan / 2 - NODE_W / 2;
-    groupRoots.forEach((root, i) => {
-      positions.set(root.id, { x: startX + i * GROUP_SIBLING_PITCH, y: CANVAS_TOP });
-      placed.add(root.id);
-    });
-    rootCentreX += totalSpan + NODE_W + H_SPACING;
-  });
-
-  // ── Post-process: fix sibling branch groups ──────────────────────────────────
-  // Process ALL children of a branch parent together (not per branch group) so
-  // that multiple branch groups from the same parent don't overlap each other.
-
-  const branchGroups = new Map<string, GraphNode[]>();
-  nodes.forEach(n => {
-    if (n.branchGroupId) {
-      const g = branchGroups.get(n.branchGroupId) ?? [];
-      g.push(n);
-      branchGroups.set(n.branchGroupId, g);
-    }
-  });
-
-  // Build set of all branch-sibling IDs so recentre skips them
-  const isBranchSibling = new Set<string>();
-  branchGroups.forEach(siblings => {
-    if (siblings.length >= 2) siblings.forEach(s => isBranchSibling.add(s.id));
-  });
-
-  // Recursively re-centre a subtree rooted at `id` around `centreX`,
-  // preserving each node's existing Y (depth row). Skips branch siblings —
-  // those are handled by the outer parentsToProcess loop.
-  const recentre = (id: string, centreX: number, seen = new Set<string>()) => {
-    if (seen.has(id)) return;
-    seen.add(id);
-    const pos = positions.get(id);
-    if (!pos) return;
-    positions.set(id, { x: centreX - NODE_W / 2, y: pos.y });
-    const children = (out.get(id) ?? []).filter(c => !isBranchSibling.has(c));
-    if (children.length === 0) return;
-    const totalW = children.reduce((s, c) => s + (subtreeW.get(c) ?? H_SPACING), 0);
-    let childX = centreX - totalW / 2;
-    for (const c of children) {
-      const w = subtreeW.get(c) ?? H_SPACING;
-      recentre(c, childX + w / 2, seen);
-      childX += w;
-    }
-  };
-
-  // Find every parent whose child list contains at least one branch sibling,
-  // sorted by depth so ancestors are processed before descendants.
-  const parentsToProcess = nodes
-    .filter(n => (out.get(n.id) ?? []).some(c => isBranchSibling.has(c)))
-    .sort((a, b) => (depth.get(a.id) ?? 0) - (depth.get(b.id) ?? 0));
-
-  parentsToProcess.forEach(parent => {
-    const parentPos = positions.get(parent.id);
-    if (!parentPos) return;
-    const parentCentreX = parentPos.x + NODE_W / 2;
-
-    const allChildren = out.get(parent.id) ?? [];
-    if (allChildren.length < 2) return;
-
-    // Sort by current DFS X to preserve left-to-right visual order
-    const sorted = [...allChildren].sort(
-      (a, b) => (positions.get(a)?.x ?? 0) - (positions.get(b)?.x ?? 0),
-    );
-
-    const yPos = positions.get(sorted[0])?.y ?? (CANVAS_TOP + V_SPACING);
-    // Use group pitch for branch siblings (wider gap for AND/OR badge clearance)
-    const pitch = GROUP_SIBLING_PITCH;
-    const totalWidth = (sorted.length - 1) * pitch;
-    const startX = parentCentreX - totalWidth / 2 - NODE_W / 2;
-
-    sorted.forEach((childId, i) => {
-      const childCentreX = startX + i * pitch + NODE_W / 2;
-      positions.set(childId, { x: startX + i * pitch, y: yPos });
-      // Re-centre this child's own (non-branch) subtree under its new position
-      const grandchildren = (out.get(childId) ?? []).filter(c => !isBranchSibling.has(c));
-      for (const gc of grandchildren) {
-        recentre(gc, childCentreX, new Set([childId]));
-      }
-    });
-  });
 
   return positions;
 }
@@ -1512,12 +1392,12 @@ function computeLayout(
 // ─── Popover data ──────────────────────────────────────────────────────────────
 
 const POPOVER_TITLES: Record<StepType, string> = {
-  trigger:   'Choose a trigger',
-  condition: 'Add a condition',
-  action:    'Choose an action',
-  ai:        'AI Specialist',
-  delay:     'Delay',
-  policy:    'Policy',
+  trigger:   'Configure Trigger',
+  condition: 'Configure Condition',
+  action:    'Configure Action',
+  ai:        'Configure AI Specialist',
+  delay:     'Configure Delay',
+  policy:    'Configure Policy',
 };
 
 const POPOVER_SUGGESTIONS: Record<StepType, string[]> = {
@@ -2601,42 +2481,24 @@ function ActionSelector({ onSelect }: ActionSelectorProps) {
 
 interface NodePopoverProps {
   step: FlowStep;
-  /** All nodes in the same branch group (including this node), sorted left→right. */
-  groupSiblings?: FlowStep[];
   onSelectSuggestion: (value: string) => void;
   onUpdateConditionConfig: (op: string, vals: string[]) => void;
-  /** Update a specific branch node's values (does not sync across group). */
-  onUpdateBranchValues?: (nodeId: string, vals: string[]) => void;
-  /** Update a single branch node's operator+values independently (no group sync). */
-  onUpdateBranchConfig?: (nodeId: string, op: string, vals: string[]) => void;
   onUpdateConfigField: (key: string, value: string) => void;
   onClose: () => void;
   /** Fired when the user clicks the footer "Save" button — commits the
    *  current step configuration as a single activity entry in the thread. */
   onSave?: () => void;
-  onDeleteBranch?: (nodeId: string) => void;
-  /** Update the output branch mode for a standalone condition node */
-  onUpdateBranchMode?: (mode: 'yes-no' | 'multi-value' | '') => void;
-  /** Add a new empty branch entry to a multi-value condition node */
-  onAddBranchValue?: () => void;
-  /** Remove a branch entry at the given index from a multi-value condition node */
-  onRemoveBranchValue?: (index: number) => void;
-  /** Update operator and value for a branch entry at the given index */
-  onUpdateConditionBranch?: (index: number, operator: string, value: string) => void;
-  /** Whether this node currently has any outgoing edges */
-  hasOutgoingConnections?: boolean;
+  /** Update the full conditions list + logic operator for a condition node. */
+  onUpdateConditions?: (conditions: ConditionEntry[], logic: 'AND' | 'OR') => void;
   /** The selected label of the workflow's trigger step, used by the AI Specialist Test tab. */
   triggerLabel?: string;
 }
 
-function NodePopover({ step, groupSiblings, onSelectSuggestion, onUpdateConditionConfig, onUpdateBranchValues, onUpdateBranchConfig, onUpdateConfigField, onClose, onSave, onDeleteBranch, onUpdateBranchMode, onAddBranchValue, onRemoveBranchValue, onUpdateConditionBranch, hasOutgoingConnections, triggerLabel }: NodePopoverProps) {
+function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpdateConfigField, onClose, onSave, onUpdateConditions, triggerLabel }: NodePopoverProps) {
   const cfg = STEP_CONFIG[step.type];
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
   const [aiResult, setAiResult] = useState<string | null>(null);
-
-  // Branch config state (standalone condition nodes only)
-  const [branchModeConfirmPending, setBranchModeConfirmPending] = useState<'yes-no' | 'multi-value' | '' | null>(null);
 
   // Policy modal state (policy nodes only)
   const [policyModalOpen, setPolicyModalOpen] = useState(false);
@@ -2644,6 +2506,26 @@ function NodePopover({ step, groupSiblings, onSelectSuggestion, onUpdateConditio
   // AI Specialist tab state (Configure / Test) — only relevant for AI Specialist nodes.
   const [aiSpecTab, setAiSpecTab] = useState<'configure' | 'test'>('configure');
   const isAiSpecialist = step.type === 'ai' && step.selectedValue === 'AI Specialist';
+
+  // Right-panel info card — overlay triggered by the header ⓘ icon.
+  const [infoOpen, setInfoOpen] = useState(false);
+  const [infoCopied, setInfoCopied] = useState(false);
+  const infoTriggerRef = useRef<HTMLButtonElement>(null);
+  const infoCardRef = useRef<HTMLDivElement>(null);
+
+  // Outside-click: close the info card when the user clicks anywhere that
+  // isn't the trigger or the card itself.
+  useEffect(() => {
+    if (!infoOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (infoTriggerRef.current?.contains(t)) return;
+      if (infoCardRef.current?.contains(t)) return;
+      setInfoOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [infoOpen]);
   // A specialist is "configured" when the AI Specialist library item is selected.
   const specialistConfigured = isAiSpecialist;
   // Specialist identity — currently a hardcoded default, overridable via configValues when wired.
@@ -2665,19 +2547,14 @@ function NodePopover({ step, groupSiblings, onSelectSuggestion, onUpdateConditio
         required: f.required,
         options: f.options ?? (f.optionsByDependency ? Object.values(f.optionsByDependency).flat() : undefined),
       }));
-      const condDef = step.type === 'condition' && step.selectedValue
-        ? CONDITION_LIBRARY.find(c => c.label === step.selectedValue) ?? null
-        : null;
       const systemPrompt = buildStepSystemPrompt({
         step: {
           id: step.id, type: step.type, selectedValue: step.selectedValue,
-          conditionOperator: step.conditionOperator, conditionValues: step.conditionValues,
+          conditions: step.conditions, conditionLogic: step.conditionLogic,
           configValues: step.configValues, configured: step.configured,
         },
         libraryItemsForType: libItems.map(i => ({ id: i.id, label: i.label, type: i.type, category: i.category })),
         configFields,
-        conditionOperators: condDef?.operators,
-        conditionValueOptions: condDef?.valueOptions,
       });
       const result = await callFlowAgent({ systemPrompt, userMessage: aiPrompt, tools: STEP_TOOLS });
       for (const call of result.toolCalls) {
@@ -2700,16 +2577,6 @@ function NodePopover({ step, groupSiblings, onSelectSuggestion, onUpdateConditio
     }
   };
 
-  // Condition config — only relevant when a condition node has a selectedValue
-  const condDef = step.type === 'condition' && step.selectedValue
-    ? CONDITION_LIBRARY.find(c => c.label === step.selectedValue) ?? null
-    : null;
-  const condOp   = condDef ? (step.conditionOperator ?? condDef.operators[0]) : '';
-  const condVals = step.conditionValues ?? [];
-  const isNoValueOp  = ['is_empty', 'is_not_empty', 'missing_required'].includes(condOp);
-  const isInOp       = condOp === 'in';
-  const isWithinNext = condOp === 'within_next';
-
   const isEmpty = !step.selectedValue;
 
   return (
@@ -2721,30 +2588,131 @@ function NodePopover({ step, groupSiblings, onSelectSuggestion, onUpdateConditio
       onClick={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
     >
-      {/* ── 1. Header — type badge + label + close ── */}
+      {/* ── 1. Header — type badge + label + info toggle + close ── */}
       <div className={styles.popoverHeader}>
         <div className={styles.popoverHeaderLeft}>
           <span className={clsx(styles.popoverTypeBadge, cfg.bgClass)} aria-hidden>
-            {getStepIcon(step)}
+            {SEARCH_RESULT_BASE_ICON[step.type]}
           </span>
           <span className={styles.popoverTitle}>{POPOVER_TITLES[step.type]}</span>
         </div>
-        <Button
-          variant="ghost"
-          size="xs"
-          iconOnly
-          onClick={onClose}
-          aria-label="Close popover"
-        >
-          <XIcon />
-        </Button>
+        <div className={styles.popoverHeaderActions}>
+          <button
+            ref={infoTriggerRef}
+            type="button"
+            className={styles.popoverInfoTrigger}
+            onClick={() => setInfoOpen(v => !v)}
+            aria-label="Node info"
+            aria-expanded={infoOpen}
+            aria-controls="node-info-card"
+            data-active={infoOpen ? 'true' : undefined}
+          >
+            <InfoCircleIcon size={16} />
+          </button>
+          <Button
+            variant="ghost"
+            size="xs"
+            iconOnly
+            onClick={onClose}
+            aria-label="Close popover"
+          >
+            <XIcon />
+          </Button>
+        </div>
       </div>
+
+      {/* Info overlay card — opens below the header when the info icon is clicked */}
+      {infoOpen && (
+        <div className={styles.popoverInfoCardWrap}>
+          <div id="node-info-card" ref={infoCardRef} className={styles.popoverInfoCard} role="dialog" aria-label="Node info">
+            <div className={styles.popoverInfoCardHeader}>
+              <span className={styles.popoverInfoCardTitle}>Info</span>
+              <Button
+                variant="ghost"
+                size="xs"
+                iconOnly
+                onClick={() => setInfoOpen(false)}
+                aria-label="Close info"
+              >
+                <MinusIcon />
+              </Button>
+            </div>
+            <div className={styles.popoverInfoRows}>
+              <div className={styles.popoverInfoRow}>
+                <span className={styles.popoverInfoLabel}>Node ID</span>
+                <span className={styles.popoverInfoValueGroup}>
+                  {infoCopied && (
+                    <span
+                      className={styles.popoverInfoCopiedFlag}
+                      role="status"
+                      aria-live="polite"
+                    >
+                      Copied
+                    </span>
+                  )}
+                  {step.nodeId && (
+                    <button
+                      type="button"
+                      className={styles.popoverInfoCopyBtn}
+                      aria-label="Copy node ID"
+                      data-copied={infoCopied ? 'true' : undefined}
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(step.nodeId!);
+                          setInfoCopied(true);
+                          window.setTimeout(() => setInfoCopied(false), 1200);
+                        } catch { /* clipboard unavailable — ignore */ }
+                      }}
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden>
+                        <rect x="9" y="9" width="11" height="11" rx="2"
+                          stroke="currentColor" strokeWidth="1.75" />
+                        <path d="M15 9V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h3"
+                          stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </button>
+                  )}
+                  <code className={styles.popoverInfoValueMono}>
+                    {step.nodeId ?? '—'}
+                  </code>
+                </span>
+              </div>
+              <div className={styles.popoverInfoDivider} aria-hidden />
+              <div className={styles.popoverInfoRow}>
+                <span className={styles.popoverInfoLabel}>Created</span>
+                <span className={styles.popoverInfoValue}>
+                  {formatInfoTimestamp(step.createdAt)}
+                </span>
+              </div>
+              <div className={styles.popoverInfoDivider} aria-hidden />
+              <div className={styles.popoverInfoRow}>
+                <span className={styles.popoverInfoLabel}>Last updated</span>
+                <span className={styles.popoverInfoValue}>
+                  {formatInfoTimestamp(step.updatedAt)}
+                </span>
+              </div>
+              <div className={styles.popoverInfoDivider} aria-hidden />
+              <div className={styles.popoverInfoRow}>
+                <span className={styles.popoverInfoLabel}>Updated by</span>
+                <span className={styles.popoverInfoValue}>
+                  {step.updatedBy ?? 'System'}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── scrollable body ── */}
       <div className={styles.popoverBody}>
 
-      {/* ── 2. Name + Suggested ── (skipped for action — handled by ActionSelector / action header below) */}
-      {step.type !== 'ai' && step.type !== 'delay' && step.type !== 'policy' && step.type !== 'action' && (
+      {/* Node configuration sections render flat below — name-select, action
+          selector, policy sections, condition rows, configuration fields, and
+          AI specialist UI. No Settings accordion wrapper. */}
+
+      {/* ── 2a. Name + Suggested ── (skipped for action — handled by ActionSelector / action header below;
+            also skipped for condition — condition body has per-row field dropdowns) */}
+      {step.type !== 'ai' && step.type !== 'delay' && step.type !== 'policy' && step.type !== 'action' && step.type !== 'condition' && (
         <div className={styles.popoverSection}>
           <NodeNameSelect step={step} onSelect={onSelectSuggestion} />
           {isEmpty && (
@@ -2933,255 +2901,193 @@ function NodePopover({ step, groupSiblings, onSelectSuggestion, onUpdateConditio
       )}
 
       {/* ══════════════════════════════════════════════════════════════════
-          STANDALONE CONDITION NODE — new panel structure:
-          Field → Output Branches → Configuration
+          CONDITION NODE — multi-condition list with AND/OR logic operator.
           ══════════════════════════════════════════════════════════════════ */}
-      {step.type === 'condition' && !step.branchGroupId && (
-        <>
-          {/* ── OUTPUT BRANCHES — always visible ── */}
-          <div className={styles.popoverDivider} />
-          <div className={styles.popoverSection}>
-            <p className={styles.popoverSectionLabel}>Output Branches</p>
-            <select
-              className={styles.branchModeSelect}
-              value={step.branchMode ?? ''}
-              onChange={e => {
-                const next = e.target.value as 'yes-no' | 'multi-value' | '';
-                if (hasOutgoingConnections) {
-                  setBranchModeConfirmPending(next);
-                } else {
-                  onUpdateBranchMode?.(next);
-                }
-              }}
-            >
-              <option value="">No Branch</option>
-              <option value="yes-no">Yes / No</option>
-              <option value="multi-value">Multi-value</option>
-            </select>
+      {step.type === 'condition' && (() => {
+        const conds  = step.conditions ?? [];
+        const logic  = step.conditionLogic ?? 'AND';
+        const update = (next: ConditionEntry[], nextLogic: 'AND' | 'OR' = logic) =>
+          onUpdateConditions?.(next, nextLogic);
 
-            {/* Inline confirmation when switching with existing connections */}
-            {branchModeConfirmPending !== null && (
-              <div className={styles.branchConfirmPanel}>
-                <p className={styles.branchConfirmText}>
-                  Switching branch type will remove existing branch connections. Continue?
-                </p>
-                <div className={styles.branchConfirmActions}>
-                  <button
-                    type="button"
-                    className={styles.branchConfirmYes}
-                    onClick={() => {
-                      onUpdateBranchMode?.(branchModeConfirmPending!);
-                      setBranchModeConfirmPending(null);
-                    }}
-                  >Yes, switch</button>
-                  <button
-                    type="button"
-                    className={styles.branchConfirmNo}
-                    onClick={() => setBranchModeConfirmPending(null)}
-                  >Cancel</button>
+        const addCondition = () => {
+          if (conds.length >= MAX_CONDITIONS) return;
+          const def = CONDITION_LIBRARY[0];
+          update([...conds, { fieldId: '', operator: def?.operators[0] ?? 'equals', values: [] }]);
+        };
+        const removeCondition = (i: number) => {
+          const next = conds.filter((_, j) => j !== i);
+          update(next);
+        };
+        const patchCondition = (i: number, patch: Partial<ConditionEntry>) => {
+          const next = conds.map((c, j) => j === i ? { ...c, ...patch } : c);
+          update(next);
+        };
+
+        return (
+          <>
+            {/* ── AND/OR toggle — only for 2+ conditions ── */}
+            {conds.length >= 2 && (
+              <div className={styles.popoverSection}>
+                <div className={styles.conditionLogicToggle} role="group" aria-label="Condition logic">
+                  {(['AND', 'OR'] as const).map(op => (
+                    <button
+                      key={op}
+                      type="button"
+                      className={clsx(
+                        styles.conditionLogicOption,
+                        logic === op && styles.conditionLogicOptionActive,
+                      )}
+                      onClick={() => update(conds, op)}
+                      aria-pressed={logic === op}
+                    >
+                      {op === 'AND' ? 'AND — all pass' : 'OR — at least one passes'}
+                    </button>
+                  ))}
                 </div>
               </div>
             )}
-          </div>
 
-          {/* ── CONFIGURATION — only when a condition field is selected ── */}
-          {condDef && (
-            <>
-              <div className={styles.popoverDivider} />
-              <div className={styles.popoverSection}>
-                <p className={styles.popoverSectionLabel}>Configuration</p>
+            <div className={styles.popoverDivider} />
 
-                {/* ── No Branch or Yes/No: single operator + value input ── */}
-                {(step.branchMode === undefined || step.branchMode === 'yes-no') && (() => {
-                  const isNoVal  = ['is_empty', 'is_not_empty', 'missing_required'].includes(condOp);
-                  const isIn     = condOp === 'in';
-                  const isWithin = condOp === 'within_next';
-                  return (
-                    <div className={styles.popoverFields}>
-                      <PopoverSelect
-                        value={condOp}
-                        onChange={op => onUpdateConditionConfig(op, [])}
-                        options={condDef.operators.map(op => ({ value: op, label: OPERATOR_LABELS[op] ?? op }))}
-                      />
-                      {!isNoVal && isIn && condDef.valueOptions && (
-                        <div className={styles.popoverTags}>
-                          {condDef.valueOptions.map(opt => {
-                            const selected = condVals.includes(opt);
-                            return (
-                              <button
-                                key={opt}
-                                type="button"
-                                className={clsx(styles.popoverTag, selected && styles.popoverTagSelected)}
-                                onClick={() => onUpdateConditionConfig(condOp, selected ? condVals.filter(v => v !== opt) : [...condVals, opt])}
-                              >{opt}</button>
-                            );
-                          })}
-                        </div>
-                      )}
-                      {!isNoVal && isIn && !condDef.valueOptions && (
-                        <ConditionTagInput values={condVals} onChange={next => onUpdateConditionConfig(condOp, next)} />
-                      )}
-                      {!isNoVal && isWithin && (
-                        <div className={styles.conditionWithinNext}>
-                          <NumberField size="md" min={1} placeholder="30"
-                            value={condVals[0] ?? ''}
-                            onChange={e => onUpdateConditionConfig(condOp, [e.target.value, condVals[1] ?? 'days'])}
-                            aria-label="Time amount" className={styles.conditionWithinNextNum}
-                          />
-                          <PopoverSelect
-                            value={condVals[1] ?? 'days'}
-                            onChange={unit => onUpdateConditionConfig(condOp, [condVals[0] ?? '', unit])}
-                            className={styles.conditionWithinNextUnit}
-                            options={[{ value: 'hours', label: 'hours' }, { value: 'days', label: 'days' }, { value: 'weeks', label: 'weeks' }]}
-                          />
-                        </div>
-                      )}
-                      {!isNoVal && !isIn && !isWithin && condDef.valueOptions && (
-                        <PopoverSelect
-                          value={condVals[0] ?? ''}
-                          onChange={v => onUpdateConditionConfig(condOp, [v])}
-                          placeholder="Select value…"
-                          options={[{ value: '', label: 'Select value…' }, ...condDef.valueOptions.map(opt => ({ value: opt, label: opt }))]}
-                        />
-                      )}
-                      {!isNoVal && !isIn && !isWithin && !condDef.valueOptions && (
-                        <TextField size="md" placeholder="Enter value…"
-                          value={condVals[0] ?? ''}
-                          onChange={e => onUpdateConditionConfig(condOp, [e.target.value])}
-                          aria-label="Condition value"
-                        />
+            {/* ── Conditions list ── */}
+            <div className={styles.popoverSection}>
+              <p className={styles.popoverSectionLabel}>Conditions</p>
+              {conds.length === 0 && (
+                <p className={styles.popoverConfigPlaceholder}>
+                  No conditions yet. Add one to check a field.
+                </p>
+              )}
+              {conds.map((c, i) => {
+                const def = c.fieldId
+                  ? CONDITION_LIBRARY.find(d => d.id === c.fieldId) ?? null
+                  : null;
+                const ops = def?.operators ?? [];
+                const op  = c.operator || ops[0] || '';
+                const vals = c.values;
+                const isNoVal  = ['is_empty', 'is_not_empty', 'missing_required'].includes(op);
+                const isIn     = op === 'in' || op === 'not_in';
+                const isWithin = op === 'within_next';
+                return (
+                  <div key={i} className={styles.conditionRow}>
+                    <div className={styles.conditionRowHead}>
+                      <span className={styles.conditionRowIndex}>{i + 1}</span>
+                      {conds.length > 1 && (
+                        <button
+                          type="button"
+                          className={styles.conditionRowRemoveBtn}
+                          onClick={() => removeCondition(i)}
+                          aria-label={`Remove condition ${i + 1}`}
+                        >
+                          <XIcon size={12} />
+                        </button>
                       )}
                     </div>
-                  );
-                })()}
-
-                {/* ── Multi-value: one branch group per output handle ── */}
-                {step.branchMode === 'multi-value' && (
-                  <div className={styles.popoverFields}>
-                    {(step.conditionBranches ?? []).map((branch, idx) => {
-                      const bOp    = branch.operator || condDef.operators[0];
-                      const bVal   = branch.value;
-                      const bNoVal = ['is_empty', 'is_not_empty', 'missing_required'].includes(bOp);
-                      return (
-                        <div key={idx} className={styles.branchRow}>
-                          <div className={styles.branchRowHead}>
-                            <span className={styles.branchRowLabel}>Branch {idx + 1}</span>
-                            <button
-                              type="button"
-                              className={styles.branchRowDeleteBtn}
-                              onClick={() => onRemoveBranchValue?.(idx)}
-                              aria-label={`Remove branch ${idx + 1}`}
-                            >×</button>
+                    {/* Field dropdown */}
+                    <PopoverSelect
+                      value={c.fieldId}
+                      onChange={newId => {
+                        const newDef = CONDITION_LIBRARY.find(d => d.id === newId);
+                        patchCondition(i, {
+                          fieldId: newId,
+                          operator: newDef?.operators[0] ?? '',
+                          values: [],
+                        });
+                      }}
+                      placeholder="Select field…"
+                      options={[
+                        { value: '', label: 'Select field…' },
+                        ...CONDITION_LIBRARY.map(d => ({ value: d.id, label: d.label })),
+                      ]}
+                    />
+                    {def && (
+                      <>
+                        <PopoverSelect
+                          value={op}
+                          onChange={newOp => patchCondition(i, { operator: newOp, values: [] })}
+                          options={ops.map(o => ({ value: o, label: OPERATOR_LABELS[o] ?? o }))}
+                        />
+                        {!isNoVal && isIn && def.valueOptions && (
+                          <div className={styles.popoverTags}>
+                            {def.valueOptions.map(opt => {
+                              const selected = vals.includes(opt);
+                              return (
+                                <button
+                                  key={opt}
+                                  type="button"
+                                  className={clsx(styles.popoverTag, selected && styles.popoverTagSelected)}
+                                  onClick={() => patchCondition(i, {
+                                    values: selected ? vals.filter(v => v !== opt) : [...vals, opt],
+                                  })}
+                                >{opt}</button>
+                              );
+                            })}
                           </div>
-                          <PopoverSelect
-                            value={bOp}
-                            onChange={op => onUpdateConditionBranch?.(idx, op, bVal)}
-                            options={condDef.operators.map(op => ({ value: op, label: OPERATOR_LABELS[op] ?? op }))}
+                        )}
+                        {!isNoVal && isIn && !def.valueOptions && (
+                          <ConditionTagInput
+                            values={vals}
+                            onChange={next => patchCondition(i, { values: next })}
                           />
-                          {!bNoVal && condDef.valueOptions && (
+                        )}
+                        {!isNoVal && isWithin && (
+                          <div className={styles.conditionWithinNext}>
+                            <NumberField
+                              size="md" min={1} placeholder="30"
+                              value={vals[0] ?? ''}
+                              onChange={e => patchCondition(i, { values: [e.target.value, vals[1] ?? 'days'] })}
+                              aria-label="Time amount"
+                              className={styles.conditionWithinNextNum}
+                            />
                             <PopoverSelect
-                              value={bVal}
-                              onChange={v => onUpdateConditionBranch?.(idx, bOp, v)}
-                              placeholder="Select value…"
-                              options={[{ value: '', label: 'Select value…' }, ...condDef.valueOptions.map(opt => ({ value: opt, label: opt }))]}
+                              value={vals[1] ?? 'days'}
+                              onChange={unit => patchCondition(i, { values: [vals[0] ?? '', unit] })}
+                              className={styles.conditionWithinNextUnit}
+                              options={[
+                                { value: 'hours', label: 'hours' },
+                                { value: 'days',  label: 'days'  },
+                                { value: 'weeks', label: 'weeks' },
+                              ]}
                             />
-                          )}
-                          {!bNoVal && !condDef.valueOptions && (
-                            <TextField
-                              size="md"
-                              placeholder="Enter value…"
-                              value={bVal}
-                              onChange={e => onUpdateConditionBranch?.(idx, bOp, e.target.value)}
-                              aria-label={`Branch ${idx + 1} value`}
-                            />
-                          )}
-                        </div>
-                      );
-                    })}
-                    <button
-                      type="button"
-                      className={styles.addBranchBtn}
-                      onClick={() => onAddBranchValue?.()}
-                    >
-                      <PlusIcon size={10} />
-                      Branch
-                    </button>
+                          </div>
+                        )}
+                        {!isNoVal && !isIn && !isWithin && def.valueOptions && (
+                          <PopoverSelect
+                            value={vals[0] ?? ''}
+                            onChange={v => patchCondition(i, { values: [v] })}
+                            placeholder="Select value…"
+                            options={[
+                              { value: '', label: 'Select value…' },
+                              ...def.valueOptions.map(opt => ({ value: opt, label: opt })),
+                            ]}
+                          />
+                        )}
+                        {!isNoVal && !isIn && !isWithin && !def.valueOptions && (
+                          <TextField
+                            size="md" placeholder="Enter value…"
+                            value={vals[0] ?? ''}
+                            onChange={e => patchCondition(i, { values: [e.target.value] })}
+                            aria-label="Condition value"
+                          />
+                        )}
+                      </>
+                    )}
                   </div>
-                )}
-              </div>
-            </>
-          )}
-        </>
-      )}
-
-      {/* ══════════════════════════════════════════════════════════════════
-          GROUPED CONDITION NODE — inside a formal Condition Group.
-          Shows ONLY field/operator/value. No branch selector, no Yes/No,
-          no multi-value UI. Branch state never appears for grouped nodes.
-          ══════════════════════════════════════════════════════════════════ */}
-      {step.type === 'condition' && step.branchGroupId && !isEmpty && condDef && (
-        <>
-          <div className={styles.popoverDivider} />
-          <div className={styles.popoverSection}>
-            <p className={styles.popoverSectionLabel}>Configuration</p>
-            <div className={styles.popoverFields}>
-              <PopoverSelect
-                value={condOp}
-                onChange={op => onUpdateConditionConfig(op, [])}
-                options={condDef.operators.map(op => ({ value: op, label: OPERATOR_LABELS[op] ?? op }))}
-              />
-              {!isNoValueOp && isInOp && condDef.valueOptions && (
-                <div className={styles.popoverTags}>
-                  {condDef.valueOptions.map(opt => {
-                    const selected = condVals.includes(opt);
-                    return (
-                      <button
-                        key={opt}
-                        type="button"
-                        className={clsx(styles.popoverTag, selected && styles.popoverTagSelected)}
-                        onClick={() => onUpdateConditionConfig(condOp, selected ? condVals.filter(v => v !== opt) : [...condVals, opt])}
-                      >{opt}</button>
-                    );
-                  })}
-                </div>
-              )}
-              {!isNoValueOp && isInOp && !condDef.valueOptions && (
-                <ConditionTagInput values={condVals} onChange={next => onUpdateConditionConfig(condOp, next)} />
-              )}
-              {!isNoValueOp && isWithinNext && (
-                <div className={styles.conditionWithinNext}>
-                  <NumberField size="md" min={1} placeholder="30"
-                    value={condVals[0] ?? ''}
-                    onChange={e => onUpdateConditionConfig(condOp, [e.target.value, condVals[1] ?? 'days'])}
-                    aria-label="Time amount" className={styles.conditionWithinNextNum}
-                  />
-                  <PopoverSelect
-                    value={condVals[1] ?? 'days'}
-                    onChange={unit => onUpdateConditionConfig(condOp, [condVals[0] ?? '', unit])}
-                    className={styles.conditionWithinNextUnit}
-                    options={[{ value: 'hours', label: 'hours' }, { value: 'days', label: 'days' }, { value: 'weeks', label: 'weeks' }]}
-                  />
-                </div>
-              )}
-              {!isNoValueOp && !isInOp && !isWithinNext && condDef.valueOptions && (
-                <PopoverSelect
-                  value={condVals[0] ?? ''}
-                  onChange={v => onUpdateConditionConfig(condOp, [v])}
-                  placeholder="Select value…"
-                  options={[{ value: '', label: 'Select value…' }, ...condDef.valueOptions.map(opt => ({ value: opt, label: opt }))]}
-                />
-              )}
-              {!isNoValueOp && !isInOp && !isWithinNext && !condDef.valueOptions && (
-                <TextField size="md" placeholder="Enter value…"
-                  value={condVals[0] ?? ''}
-                  onChange={e => onUpdateConditionConfig(condOp, [e.target.value])}
-                  aria-label="Condition value"
-                />
+                );
+              })}
+              {conds.length < MAX_CONDITIONS && (
+                <button
+                  type="button"
+                  className={styles.addConditionBtn}
+                  onClick={addCondition}
+                >
+                  <PlusIcon size={10} />
+                  Add condition
+                </button>
               )}
             </div>
-          </div>
-        </>
-      )}
+          </>
+        );
+      })()}
 
       {/* ══════════════════════════════════════════════════════════════════
           AI SPECIALIST — tabs (Configure | Test) at the top of the panel
@@ -3842,6 +3748,7 @@ function NodePaletteCard({ onDragStart, onDragEnd, onNodeSelect }: NodePaletteCa
           <button
             type="button"
             className={styles.toolbarBtn}
+            data-step-type={type}
             draggable
             onDragStart={e => handleToolbarNodeDragStart(e, type)}
             onDragEnd={onDragEnd}
@@ -4030,13 +3937,29 @@ function NodePaletteCard({ onDragStart, onDragEnd, onNodeSelect }: NodePaletteCa
 
 // ─── Activity feed + AI conversation thread ──────────────────────────────────
 
-type ThreadEntryKind = 'activity' | 'ai' | 'user' | 'context';
+type ThreadEntryKind = 'activity' | 'ai' | 'user' | 'context' | 'node_change';
+
+/** Payload attached to a `node_change` thread entry — drives the inline
+ *  NodeChangeCard render. */
+interface NodeChangePayload {
+  nodes: Array<{ id: string; type: StepType; name: string }>;
+  /** Human-readable change kind — added / edited / deleted / connected. */
+  changeType: string;
+  /** Dot-separated counts shown in the footer (e.g. `[1, 0, 3, 0]`). */
+  stats?: number[];
+  /** Which side of the thread this card anchors to. Defaults to 'outbound'. */
+  side?: 'inbound' | 'outbound';
+  /** Optional override for the small header label above the card.
+   *  Defaults to `changeType`. */
+  headerLabel?: string;
+}
 
 interface ThreadEntry {
   id: string;
   kind: ThreadEntryKind;
   content: string;
   timestamp: number;
+  nodeChange?: NodeChangePayload;
 }
 
 /** Mock AI reaction banks — one line at a time, rotated per-bank to avoid repeats. */
@@ -4120,15 +4043,67 @@ function TypingText({ content, onProgress }: { content: string; onProgress?: () 
   return <>{content.slice(0, len)}</>;
 }
 
+// ─── NodeChangeCard ──────────────────────────────────────────────────────────────
+// Inline card rendered in the AI thread whenever a canvas node change is
+// logged. Display-only: header label above, rows for each affected node,
+// separator, and a footer with dot-separated stats + timestamp.
+
+interface NodeChangeCardProps {
+  payload: NodeChangePayload;
+  timestamp: number;
+}
+
+function NodeChangeCard({ payload, timestamp }: NodeChangeCardProps) {
+  const side = payload.side ?? 'outbound';
+  const headerLabel = payload.headerLabel ?? payload.changeType;
+  return (
+    <div
+      className={clsx(
+        styles.nodeChangeBlock,
+        side === 'inbound' ? styles.nodeChangeBlockInbound : styles.nodeChangeBlockOutbound,
+      )}
+    >
+      <span className={styles.nodeChangeHeaderLabel}>{headerLabel}</span>
+      <div className={styles.nodeChangeCard}>
+        <div className={styles.nodeChangeRows}>
+          {payload.nodes.map(n => (
+            <div key={n.id} className={styles.nodeChangeRow}>
+              <span
+                className={clsx(
+                  styles.nodeChangeRowIcon,
+                  STEP_CONFIG[n.type]?.bgClass,
+                )}
+                aria-hidden
+              >
+                {STEP_CONFIG[n.type]?.icon}
+              </span>
+              <span className={styles.nodeChangeRowName}>{n.name}</span>
+            </div>
+          ))}
+        </div>
+        <div className={styles.nodeChangeDivider} aria-hidden />
+        <div className={styles.nodeChangeFooter}>
+          <span className={styles.nodeChangeStats}>
+            {(payload.stats ?? []).join(' \u00B7 ')}
+          </span>
+          <time
+            className={styles.nodeChangeTime}
+            dateTime={new Date(timestamp).toISOString()}
+          >
+            {new Date(timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+          </time>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── LeftPanel ───────────────────────────────────────────────────────────────────
 
 interface LeftPanelProps {
   onLibNodeDragStart: (item: LibraryItem) => void;
   onLibNodeDragEnd: () => void;
   onLibNodeSelect: (item: LibraryItem) => void;
-  editNodeMode: boolean;
-  editingCount: number;
-  onToggleEditMode: () => void;
   aiPrompt: string;
   onAiPromptChange: (v: string) => void;
   aiTyping: boolean;
@@ -4138,12 +4113,56 @@ interface LeftPanelProps {
 
 function LeftPanel({
   onLibNodeDragStart, onLibNodeDragEnd, onLibNodeSelect,
-  editNodeMode, editingCount, onToggleEditMode,
   aiPrompt, onAiPromptChange, aiTyping, entries, onAiSend,
 }: LeftPanelProps) {
-  const [showEditTooltip, setShowEditTooltip] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+  const [panelWidth, setPanelWidth] = useState(360);
+  const panelWidthRef = useRef(360);
+  const leftHandleRef = useRef<HTMLDivElement>(null);
   const chatBottomRef = useRef<HTMLDivElement>(null);
+  const promptTextareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Keep the prompt textarea's height in sync with its content up to the
+  // CSS-defined max-height (5 lines via --line-height-loose). Runs on every
+  // aiPrompt change — including external clears — so the textarea shrinks
+  // back to a single line when the value is reset.
+  useEffect(() => {
+    const t = promptTextareaRef.current;
+    if (!t) return;
+    t.style.height = 'auto';
+    t.style.height = t.scrollHeight + 'px';
+  }, [aiPrompt]);
+
+  // Drag-to-resize with click-vs-drag fallback: if the pointer moves less than
+  // a small threshold, treat as a click (toggle collapse); otherwise resize.
+  useEffect(() => {
+    const handle = leftHandleRef.current;
+    if (!handle) return;
+    const onDown = (e: MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const startX = e.clientX;
+      const startWidth = panelWidthRef.current;
+      let dragged = false;
+      const onMove = (ev: MouseEvent) => {
+        const dx = ev.clientX - startX;
+        if (!dragged && Math.abs(dx) < 3) return;
+        dragged = true;
+        const w = Math.min(600, Math.max(360, startWidth + dx));
+        panelWidthRef.current = w;
+        setPanelWidth(w);
+      };
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        if (!dragged) setCollapsed(c => !c);
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    };
+    handle.addEventListener('mousedown', onDown);
+    return () => handle.removeEventListener('mousedown', onDown);
+  }, []);
 
   // Entries present at mount render without the typing animation; anything
   // added later is treated as a fresh AI response and types in.
@@ -4172,14 +4191,18 @@ function LeftPanel({
   };
 
   return (
-    <aside className={styles.leftPanel} data-collapsed={collapsed}>
-      {/* ── Collapse toggle pill — right edge of panel ── */}
+    <aside
+      className={styles.leftPanel}
+      data-collapsed={collapsed}
+      style={collapsed ? undefined : { width: panelWidth }}
+    >
+      {/* ── Handle — drag to resize, click to collapse ── */}
       <div
+        ref={leftHandleRef}
         className={styles.leftPanelHandle}
-        onClick={() => setCollapsed(c => !c)}
         role="button"
         tabIndex={0}
-        aria-label={collapsed ? 'Expand panel' : 'Collapse panel'}
+        aria-label={collapsed ? 'Expand panel' : 'Collapse or drag to resize panel'}
         onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && setCollapsed(c => !c)}
       />
       <div className={styles.leftPanelInner}>
@@ -4207,13 +4230,6 @@ function LeftPanel({
           </Button>
         ) : (
         <div className={styles.aiComposer}>
-
-          {/* Tooltip — rendered outside aiComposerCard so overflow:hidden doesn't clip it */}
-          {showEditTooltip && (
-            <div className={styles.aiComposerTooltip} role="tooltip">
-              Hold ⌘ to select multiple nodes
-            </div>
-          )}
 
           {/* ── Shell: unified card wrapping chat thread + input ── */}
           <div className={styles.aiComposerShell}>
@@ -4254,77 +4270,78 @@ function LeftPanel({
                       </time>
                     </div>
                   )}
+                  {entry.kind === 'node_change' && entry.nodeChange && (
+                    <NodeChangeCard payload={entry.nodeChange} timestamp={entry.timestamp} />
+                  )}
                 </Fragment>
               ))}
 
-              {aiTyping && (
-                <div className={styles.threadAiBlock}>
-                  <div className={styles.threadBubbleAi} aria-label="AI is typing">
-                    <AILoader variant="gradient-fill" size="sm" />
-                  </div>
+              {/* Single AILoader lives at the end of the conversation —
+                  switches between `state="loading"` while the AI is
+                  responding and `state="ready"` while standing by for the
+                  next prompt. Same component instance so it visually moves
+                  down with new messages rather than appearing/disappearing. */}
+              <div className={styles.threadAiBlock}>
+                <div className={styles.threadBubbleAi}>
+                  <AILoader
+                    variant="gradient-fill"
+                    size="sm"
+                    state={aiTyping ? 'loading' : 'ready'}
+                  />
                 </div>
-              )}
+              </div>
 
               <div ref={chatBottomRef} aria-hidden="true" />
             </div>
 
-            <div className={styles.aiComposerCard}>
-            <textarea
-              className={styles.aiComposerTextarea}
-              value={aiPrompt}
-              onChange={(e) => onAiPromptChange(e.target.value)}
-              placeholder="Ask AI anything..."
-              aria-label="Ask AI"
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onAiSend(); }
-              }}
-            />
-            <div className={styles.aiComposerActionBar}>
-              {/* Left group: attach + edit node */}
-              <div className={styles.aiComposerLeft}>
-                <button
-                  type="button"
-                  className={styles.aiComposerPlusBtn}
-                  aria-label="Attach"
-                >
-                  <PlusIcon size={10} />
-                </button>
-                <button
-                  type="button"
-                  className={clsx(
-                    styles.aiComposerEditBtn,
-                    (editNodeMode || editingCount > 0) && styles.aiComposerEditBtnActive,
+            <div className={styles.aiComposerWrapper}>
+              <div className={styles.aiComposerCard}>
+              <textarea
+                ref={promptTextareaRef}
+                className={styles.aiComposerTextarea}
+                rows={1}
+                value={aiPrompt}
+                onChange={(e) => onAiPromptChange(e.target.value)}
+                placeholder="Ask AI anything..."
+                aria-label="Ask AI"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onAiSend(); }
+                }}
+              />
+              <div className={styles.aiComposerActionBar}>
+                {/* Left group: attach */}
+                <div className={styles.aiComposerLeft}>
+                  <button
+                    type="button"
+                    className={styles.aiComposerPlusBtn}
+                    aria-label="Attach"
+                  >
+                    <PlusIcon size={10} />
+                  </button>
+                </div>
+                {/* Right group: mic + send */}
+                <div className={styles.aiComposerRight}>
+                  <button
+                    type="button"
+                    className={styles.aiComposerMicBtn}
+                    aria-label="Voice input"
+                  >
+                    <Microphone02Icon size={14} />
+                  </button>
+                  {(aiPrompt.trim().length > 0 || aiTyping) && (
+                    <button
+                      className={styles.aiComposerSendBtn}
+                      onClick={onAiSend}
+                      disabled={!aiPrompt.trim() || aiTyping}
+                      aria-label="Send to AI"
+                    >
+                      {aiTyping ? <LoadingDots /> : <ArrowNarrowUpIcon size={12} />}
+                    </button>
                   )}
-                  onClick={onToggleEditMode}
-                  onMouseEnter={() => setShowEditTooltip(true)}
-                  onMouseLeave={() => setShowEditTooltip(false)}
-                  aria-label="Edit node"
-                  aria-pressed={editNodeMode}
-                >
-                  <Grid01Icon size={12} />
-                  {editingCount > 0 ? `Edit node (${editingCount})` : 'Edit node'}
-                </button>
+                </div>
               </div>
-              {/* Right group: mic + send */}
-              <div className={styles.aiComposerRight}>
-                <button
-                  type="button"
-                  className={styles.aiComposerMicBtn}
-                  aria-label="Voice input"
-                >
-                  <Microphone02Icon size={14} />
-                </button>
-                <button
-                  className={styles.aiComposerSendBtn}
-                  onClick={onAiSend}
-                  disabled={!aiPrompt.trim() || aiTyping}
-                  aria-label="Send to AI"
-                >
-                  {aiTyping ? <LoadingDots /> : <ArrowNarrowUpIcon size={12} />}
-                </button>
-              </div>
-            </div>
-          </div>
+              </div>{/* end aiComposerCard */}
+            </div>{/* end aiComposerWrapper */}
           </div>{/* end aiComposerShell */}
         </div>
         )}
@@ -4357,14 +4374,8 @@ interface FlowNodeProps {
   editNodeMode?: boolean;
   /** Whether this node is currently edit-selected (shows AI purple ring) */
   isEditSelected?: boolean;
-  groupSiblings?: FlowStep[];
-  onUpdateBranchValues?: (nodeId: string, vals: string[]) => void;
-  onUpdateBranchConfig?: (nodeId: string, op: string, vals: string[]) => void;
-  onDeleteBranch?: (nodeId: string) => void;
-  onUpdateBranchMode?: (mode: 'yes-no' | 'multi-value' | '') => void;
-  onAddBranchValue?: () => void;
-  onRemoveBranchValue?: (index: number) => void;
-  onUpdateConditionBranch?: (index: number, operator: string, value: string) => void;
+  /** Update the full conditions list + logic operator for a condition node. */
+  onUpdateConditions?: (conditions: ConditionEntry[], logic: 'AND' | 'OR') => void;
   hasOutgoingConnections?: boolean;
   /** Label of the workflow's trigger step — forwarded to NodePopover for the AI Specialist Test tab. */
   triggerLabel?: string;
@@ -4391,15 +4402,7 @@ function FlowNode({
   onMoveDown,
   editNodeMode = false,
   isEditSelected = false,
-  groupSiblings,
-  onUpdateBranchValues,
-  onUpdateBranchConfig,
-  onDeleteBranch,
-  onUpdateBranchMode,
-  onAddBranchValue,
-  onRemoveBranchValue,
-  onUpdateConditionBranch,
-  hasOutgoingConnections,
+  onUpdateConditions,
   triggerLabel,
   onSaveNodePopover,
 }: FlowNodeProps) {
@@ -4490,9 +4493,15 @@ function FlowNode({
   const isDelay = step.type === 'delay';
   const isTrigger = step.type === 'trigger';
   const isAction = step.type === 'action';
+  const isCondition = step.type === 'condition';
+  const isPolicy = step.type === 'policy';
+  const isAi = step.type === 'ai';
   const isPill = isDelay || isTrigger;
   const pillFocused = isPill && isSelected && !editNodeMode;
   const actionFocused = isAction && isSelected && !editNodeMode;
+  const conditionActive = isCondition && isSelected && !editNodeMode;
+  const policyActive = isPolicy && isSelected && !editNodeMode;
+  const aiFocused = isAi && isSelected && !editNodeMode;
 
   return (
     <div
@@ -4502,7 +4511,10 @@ function FlowNode({
         isDelay && styles.flowNodeOuterDelay,
         isTrigger && styles.flowNodeOuterTrigger,
         isAction && styles.flowNodeOuterAction,
-        isSelected && !editNodeMode && !isPill && !isAction && styles.flowNodeOuterSelected,
+        isCondition && styles.flowNodeOuterCondition,
+        isPolicy && styles.flowNodeOuterPolicy,
+        isAi && styles.flowNodeOuterAi,
+        isSelected && !editNodeMode && !isPill && !isAction && !isCondition && !isPolicy && !isAi && styles.flowNodeOuterSelected,
         isDragging && styles.flowNodeOuterDragging,
         isDragOver && styles.flowNodeOuterDragOver,
         isEditSelected && styles.flowNodeOuterEditSelected,
@@ -4560,21 +4572,58 @@ function FlowNode({
             <span>{triggerText}</span>
           </div>
         );
+      })() : isCondition ? (() => {
+        const conds = step.conditions ?? [];
+        const filled = conds.length > 0;
+        const isActive = conditionActive;
+
+        // Top-row summary text
+        let primary: string | null = null;
+        let secondary: string | null = null;
+        if (!filled) {
+          secondary = 'Add condition';
+        } else if (conds.length === 1) {
+          const c = conds[0];
+          const def = CONDITION_LIBRARY.find(d => d.id === c.fieldId) ?? null;
+          primary = def?.label ?? 'Condition';
+          const opLabel = OPERATOR_LABELS[c.operator] ?? c.operator;
+          secondary = c.values.length > 0
+            ? `${opLabel} ${c.values.join(', ')}`
+            : opLabel;
+        } else {
+          primary = conds
+            .map(c => {
+              const def = CONDITION_LIBRARY.find(d => d.id === c.fieldId) ?? null;
+              return def?.label ?? '?';
+            })
+            .join(' \u00B7 ');
+        }
+
+        return (
+          <div
+            className={styles.conditionNodeCard}
+            data-active={isActive ? 'true' : 'false'}
+            data-filled={filled ? 'true' : 'false'}
+          >
+            <div className={styles.conditionNodeTopRow}>
+              <span className={styles.conditionNodeIconBox} aria-label={cfg.label}>
+                <FilterLinesIcon size={14} />
+              </span>
+              <span className={styles.conditionNodeTopText}>
+                {primary && (
+                  <span className={styles.conditionNodeTopPrimary}>{primary}</span>
+                )}
+                {secondary && (
+                  <span className={styles.conditionNodeTopSecondary}>{secondary}</span>
+                )}
+              </span>
+              {/* No trailing spacer — dots menu floats outside the card's
+                  right edge (see .flowNodeOuterCondition .nodeDotsDropdown). */}
+            </div>
+          </div>
+        );
       })() : isAction ? (
         <>
-          <div className={styles.actionNodeHeader}>
-            <span
-              className={clsx(
-                styles.actionNodePill,
-                actionFocused && styles.actionNodePillFocused,
-              )}
-            >
-              <ArrowCircleBrokenRightIcon size={12} />
-              <span>Action</span>
-            </span>
-            {/* Spacer to balance absolutely-positioned dots button */}
-            <div style={{ width: 24 }} aria-hidden />
-          </div>
           <div
             className={clsx(
               styles.actionNodeCard,
@@ -4588,7 +4637,12 @@ function FlowNode({
               )}
               aria-label={cfg.label}
             >
-              {getStepIcon(step)}
+              {(() => {
+                const icon = getStepIcon(step);
+                return isValidElement(icon)
+                  ? cloneElement(icon as React.ReactElement<{ size?: number }>, { size: 20 })
+                  : <ArrowCircleBrokenRightIcon size={20} />;
+              })()}
             </span>
             <div className={styles.actionNodeContent}>
               {step.configured && step.selectedValue ? (
@@ -4620,7 +4674,71 @@ function FlowNode({
             </div>
           </div>
         </>
-      ) : (
+      ) : isAi ? (
+        <>
+          <div
+            className={clsx(
+              styles.aiNodeCard,
+              aiFocused && styles.aiNodeCardFocused,
+            )}
+          >
+            <span
+              className={clsx(
+                styles.aiNodeIconBox,
+                step.configured && step.selectedValue && styles.aiNodeIconBoxFilled,
+              )}
+              aria-label={cfg.label}
+            >
+              <TeambridgeAIIcon size={26} />
+            </span>
+            <div className={styles.actionNodeContent}>
+              {step.configured && step.selectedValue ? (
+                <div className={styles.nodeConfigSummary} data-type="ai">
+                  <span className={styles.nodeConfigLabel}>{step.selectedValue}</span>
+                </div>
+              ) : (
+                <span className={styles.aiNodePlaceholder}>Add a Specialist</span>
+              )}
+            </div>
+          </div>
+        </>
+      ) : isPolicy ? (() => {
+        const sel = parsePolicySelection(step.configValues);
+        const anySelected = sel.folders.length + sel.policies.length + sel.subPolicies.length > 0;
+        const filled = anySelected;
+        const isActive = policyActive;
+
+        let primary: string | null = null;
+        let secondary: string | null = null;
+        if (!filled) {
+          secondary = step.placeholder ?? 'Add policy';
+        } else {
+          primary = formatPolicySummary(sel);
+        }
+
+        return (
+          <div
+            className={styles.policyNodeCard}
+            data-active={isActive ? 'true' : 'false'}
+            data-filled={filled ? 'true' : 'false'}
+          >
+            <div className={styles.policyNodeTopRow}>
+              <span className={styles.policyNodeIconBox} aria-label={cfg.label}>
+                <TriangleUpIcon size={14} />
+              </span>
+              <span className={styles.policyNodeTopText}>
+                {primary && (
+                  <span className={styles.policyNodeTopPrimary}>{primary}</span>
+                )}
+                {secondary && (
+                  <span className={styles.policyNodeTopSecondary}>{secondary}</span>
+                )}
+              </span>
+              <div style={{ width: 24 }} aria-hidden />
+            </div>
+          </div>
+        );
+      })() : (
       <div className={styles.flowNode}>
         <div className={styles.nodeHeading}>
           {/* Type badge */}
@@ -4632,27 +4750,7 @@ function FlowNode({
         </div>
         <div className={styles.nodeBody}>
           <div className={styles.nodeSelectBox}>
-            {step.type === 'policy' ? (
-              (() => {
-                const sel = parsePolicySelection(step.configValues);
-                const thr = parsePolicyThreshold(step.configValues);
-                const anySelected = sel.folders.length + sel.policies.length + sel.subPolicies.length > 0;
-                return (
-                  <div className={styles.policyNodeSummary}>
-                    {anySelected ? (
-                      <span className={styles.policyNodeSummaryLine}>
-                        {formatPolicySummary(sel)}
-                      </span>
-                    ) : (
-                      <span className={styles.policyNodeSummaryPlaceholder}>{step.placeholder}</span>
-                    )}
-                    <span className={styles.policyNodeThresholdLine}>
-                      {formatThresholdLabel(thr)}
-                    </span>
-                  </div>
-                );
-              })()
-            ) : step.configured && step.selectedValue ? (
+            {step.configured && step.selectedValue ? (
               <div className={styles.nodeConfigSummary} data-type={step.type}>
                 {(() => {
                   const segs = buildNodeSnippet(step);
@@ -4710,15 +4808,7 @@ function FlowNode({
             onUpdateConditionConfig={onUpdateConditionConfig}
             onUpdateConfigField={onUpdateConfigField}
             onClose={() => setPopoverOpen(false)}
-            groupSiblings={groupSiblings}
-            onUpdateBranchValues={onUpdateBranchValues}
-            onUpdateBranchConfig={onUpdateBranchConfig}
-            onDeleteBranch={onDeleteBranch}
-            onUpdateBranchMode={onUpdateBranchMode}
-            onAddBranchValue={onAddBranchValue}
-            onRemoveBranchValue={onRemoveBranchValue}
-            onUpdateConditionBranch={onUpdateConditionBranch}
-            hasOutgoingConnections={hasOutgoingConnections}
+            onUpdateConditions={onUpdateConditions}
             triggerLabel={triggerLabel}
             onSave={onSaveNodePopover ? () => onSaveNodePopover(step.id) : undefined}
           />
@@ -4894,11 +4984,14 @@ interface NodeAiFloatingInputProps {
   /** Canvas-space position: center-x of node, just below node bottom */
   left: number;
   top: number;
+  /** Current canvas zoom — used to counter-scale so the input stays a
+   *  constant visual size regardless of zoom level. */
+  zoom: number;
   /** Submits the prompt to the shared left-panel thread. */
   onSubmit: (message: string, nodeType: StepType) => void;
 }
 
-function NodeAiFloatingInput({ step, left, top, onSubmit }: NodeAiFloatingInputProps) {
+function NodeAiFloatingInput({ step, left, top, zoom, onSubmit }: NodeAiFloatingInputProps) {
   const [aiPrompt, setAiPrompt] = useState('');
 
   const handleSend = useCallback(() => {
@@ -4911,7 +5004,15 @@ function NodeAiFloatingInput({ step, left, top, onSubmit }: NodeAiFloatingInputP
   return (
     <div
       className={styles.nodeAiFloat}
-      style={{ left, top }}
+      style={{
+        left,
+        top,
+        // Counter-scale the canvas zoom so this floating input keeps a
+        // constant on-screen size. Origin 'top center' anchors the
+        // horizontally-centered top edge to (left, top).
+        transform: `translateX(-50%) scale(${1 / zoom})`,
+        transformOrigin: 'top center',
+      }}
       onMouseDown={e => e.stopPropagation()}
     >
       <div className={styles.popoverAiWrap}>
@@ -4980,8 +5081,6 @@ function getConnectionError(
   fromId: string,
   toId: string,
   nodes: GraphNode[],
-  conditionGroups: ConditionGroupEntry[],
-  allowGroupChildTarget = false,
 ): string | null {
   if (fromId === toId) return "Can't connect to self";
 
@@ -5010,17 +5109,6 @@ function getConnectionError(
     return "Can't connect to a trigger";
   }
 
-  // Nodes inside a formal condition group cannot receive direct connections —
-  // the group's top anchor owns the input. Skipped when the target was
-  // resolved through a drop on the group itself (targetId is the group's
-  // first member by design in that path).
-  if (!allowGroupChildTarget) {
-    const formalGroupIds = new Set(conditionGroups.map(g => g.id));
-    if (toNode.branchGroupId && formalGroupIds.has(toNode.branchGroupId)) {
-      return "Connect to the group, not its child nodes";
-    }
-  }
-
   return null; // valid
 }
 
@@ -5039,26 +5127,21 @@ interface FlowCanvasProps {
   onUpdateNodeConfigField: (id: string, key: string, value: string) => void;
   onDuplicateNode: (id: string) => void;
   onDeleteNode: (id: string) => void;
-  onAddNodeAfter: (parentId: string | null, type: StepType, branch?: 'yes' | 'no', selectedValue?: string) => void;
+  onAddNodeAfter: (parentId: string | null, type: StepType, selectedValue?: string) => void;
   onAddRootTrigger: () => void;
   onInsertOnEdge: (edge: GraphEdge, type: StepType, value?: string) => void;
   onPositionChange: (id: string, x: number, y: number) => void;
   onSetAllPositions: (positions: Record<string, { x: number; y: number }>) => void;
-  onAddEdge: (fromNodeId: string, toNodeId: string, branch?: string) => void;
+  onAddEdge: (fromNodeId: string, toNodeId: string) => void;
   onDeleteEdge: (edgeId: string) => void;
   onCreateNodeAt: (type: StepType, x: number, y: number) => void;
-  onCreateNodeAndConnect: (fromId: string, type: StepType, x: number, y: number, branch?: string | null) => void;
-  onCanvasDropAtPos: (item: LibraryItem, x: number, y: number, targetGroupId?: string) => void;
+  onCreateNodeAndConnect: (fromId: string, type: StepType, x: number, y: number) => void;
+  onCanvasDropAtPos: (item: LibraryItem, x: number, y: number) => void;
   editNodeMode: boolean;
   editingNodeIds: Set<string>;
   onEditNodeToggle: (id: string, multi: boolean) => void;
-  onDetachFromGroup?: (nodeId: string) => void;
-  onUpdateBranchValues?: (nodeId: string, vals: string[]) => void;
-  onUpdateBranchConfig?: (nodeId: string, op: string, vals: string[]) => void;
-  onUpdateBranchMode?: (nodeId: string, mode: 'yes-no' | 'multi-value' | '') => void;
-  onAddBranchValue?: (nodeId: string) => void;
-  onRemoveBranchValue?: (nodeId: string, index: number) => void;
-  onUpdateConditionBranch?: (nodeId: string, index: number, operator: string, value: string) => void;
+  /** Update the full conditions list and logic operator for a condition node. */
+  onUpdateConditions?: (nodeId: string, conditions: ConditionEntry[], logic: 'AND' | 'OR') => void;
   autoTidyToken?: number;
   fitToken?: number;
   /** Submits a prompt from the floating node-level AI input into the main
@@ -5075,29 +5158,12 @@ function FlowCanvas({
   onDuplicateNode, onDeleteNode, onAddRootTrigger,
   onInsertOnEdge, onPositionChange, onSetAllPositions, onAddEdge, onDeleteEdge, onCreateNodeAt, onCreateNodeAndConnect, onCanvasDropAtPos,
   editNodeMode, editingNodeIds, onEditNodeToggle,
-  onUpdateBranchValues,
-  onUpdateBranchConfig,
-  onUpdateBranchMode,
-  onAddBranchValue,
-  onRemoveBranchValue,
-  onUpdateConditionBranch,
+  onUpdateConditions,
   autoTidyToken,
   fitToken,
   onNodeAiSubmit,
   onSaveNodePopover,
 }: FlowCanvasProps) {
-  // Condition-group feature has been removed; legacy code paths treat both
-  // collections as empty/no-ops. Safe to delete once the related rendering
-  // and drag logic is pruned.
-  const conditionGroups: ConditionGroupEntry[] = [];
-  const groupPositions: Record<string, { x: number; y: number }> = {};
-  const onGroupPositionChange: (id: string, x: number, y: number) => void = () => {};
-  const onNodeDroppedOnGroup: (nodeId: string, groupId: string) => void = () => {};
-  const onConnectToGroup: (fromNodeId: string, groupId: string) => void = () => {};
-  const onUpdateGroupOperator: (groupId: string, op: 'AND' | 'OR') => void = () => {};
-  const onAddConditionToGroup: (groupId: string) => void = () => {};
-  const onDeleteConditionGroup: (groupId: string) => void = () => {};
-  const onDetachFromGroup: (nodeId: string) => void = () => {};
 
   const canvasRef      = useRef<HTMLDivElement>(null);
   const graphContentRef = useRef<HTMLDivElement>(null);
@@ -5109,10 +5175,6 @@ function FlowCanvas({
   const [isTidying, setIsTidying] = useState(false);
   const [edgeInsert, setEdgeInsert] = useState<{ edge: GraphEdge; anchorRect: DOMRect } | null>(null);
   const [pendingEdge, setPendingEdge] = useState<PendingEdge | null>(null);
-  const [hoveringGroupId, setHoveringGroupId] = useState<string | null>(null);
-  const [draggingGroupId, setDraggingGroupId] = useState<string | null>(null);
-  const hoveringGroupIdRef = useRef<string | null>(null);
-  const groupDragRef = useRef<{ id: string; offsetX: number; offsetY: number } | null>(null);
   const [typePickerPos, setTypePickerPos] = useState<TypePickerPos | null>(null);
   const [edgeDragDrop, setEdgeDragDrop] = useState<EdgeDragDrop | null>(null);
   const [paletteDragPos, setPaletteDragPos] = useState<{ x: number; y: number } | null>(null);
@@ -5127,21 +5189,11 @@ function FlowCanvas({
     id: string;
     offsetX: number;
     offsetY: number;
-    groupOffsets?: { id: string; offsetX: number; offsetY: number }[];
   } | null>(null);
   const pendingEdgeRef         = useRef<PendingEdge | null>(null);
   const draggingOverNodeIdRef  = useRef<string | null>(null);
-  const draggingOverGroupIdRef = useRef<string | null>(null);
   const reconnectingEdgeIdRef  = useRef<string | null>(null);
-  const groupDragMovedRef      = useRef(false);
-  // Tracks a click that started on a populated condition-group frame (not on a child
-  // card). If mouseup happens without cursor movement, the group itself is selected;
-  // otherwise the click resolves as a group-drag via nodeDragRef.
-  const groupFrameClickIdRef   = useRef<string | null>(null);
-  const groupFrameMovedRef     = useRef(false);
   const [draggingOverNodeId, setDraggingOverNodeId] = useState<string | null>(null);
-  const [draggingOverGroupId, setDraggingOverGroupId] = useState<string | null>(null);
-  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const zoomRef        = useRef(zoom);
   zoomRef.current      = zoom;
 
@@ -5215,18 +5267,9 @@ function FlowCanvas({
       const fromNodeId = edgeHandleEl.getAttribute('data-edge-from')!;
       const gc = graphContentRef.current.getBoundingClientRect();
       // Anchor the pending line at the source node's bottom anchor for visual continuity
-      let fromAnchorEl = graphContentRef.current.querySelector(
+      const fromAnchorEl = graphContentRef.current.querySelector(
         `[data-anchor-node-id="${fromNodeId}"][data-anchor="bottom"]`
       ) as HTMLElement | null;
-      if (!fromAnchorEl) {
-        const fromNode = nodes.find(n => n.id === fromNodeId);
-        const gid = fromNode?.branchGroupId;
-        if (gid) {
-          fromAnchorEl = graphContentRef.current.querySelector(
-            `[data-anchor-group-id="${gid}"][data-anchor="bottom"]`
-          ) as HTMLElement | null;
-        }
-      }
       let startX: number, startY: number;
       if (fromAnchorEl) {
         const r = fromAnchorEl.getBoundingClientRect();
@@ -5248,28 +5291,22 @@ function FlowCanvas({
     // Check for anchor drag FIRST
     const anchorEl = target.closest('[data-anchor]') as HTMLElement | null;
     if (anchorEl && graphContentRef.current) {
-      // Resolve node ID — group anchors use data-anchor-group-id instead of data-anchor-node-id
-      let anchorNodeId = anchorEl.dataset.anchorNodeId;
-      if (!anchorNodeId) {
-        const gid = anchorEl.dataset.anchorGroupId;
-        if (gid) {
-          anchorNodeId = nodes
-            .filter(n => n.branchGroupId === gid)
-            .sort((a, b) => (nodePositions[a.id]?.x ?? 0) - (nodePositions[b.id]?.x ?? 0))[0]?.id;
-        }
-      }
+      const anchorNodeId = anchorEl.dataset.anchorNodeId;
       if (!anchorNodeId) return;
-      const anchorCase   = anchorEl.dataset.anchorCase ?? null;
-      // FIX 1: block drag from a handle that already has an outgoing edge
-      if (anchorCase) {
-        const alreadyConnected = edges.some(e => e.from === anchorNodeId && e.branch === anchorCase);
-        if (alreadyConnected) return;
+
+      // Connected handle → click disconnects the attached edge(s); no drag.
+      // The user must disconnect first before drawing a new connection.
+      if (anchorEl.dataset.connected === 'true') {
+        const edgeIds = (anchorEl.dataset.anchorEdgeId ?? '').split(',').filter(Boolean);
+        edgeIds.forEach(id => onDeleteEdge(id));
+        return;
       }
+
       const anchorRect   = anchorEl.getBoundingClientRect();
       const gc           = graphContentRef.current.getBoundingClientRect();
       const startX       = (anchorRect.left + anchorRect.width  / 2 - gc.left) / zoomRef.current;
       const startY       = (anchorRect.top  + anchorRect.height / 2 - gc.top)  / zoomRef.current;
-      pendingEdgeRef.current = { fromNodeId: anchorNodeId, fromCase: anchorCase, startX, startY, currentX: startX, currentY: startY };
+      pendingEdgeRef.current = { fromNodeId: anchorNodeId, fromCase: null, startX, startY, currentX: startX, currentY: startY };
       setPendingEdge(pendingEdgeRef.current);
       return;
     }
@@ -5288,66 +5325,19 @@ function FlowCanvas({
       const gc = graphContentRef.current.getBoundingClientRect();
       const mx = (e.clientX - gc.left) / zoomRef.current;
       const my = (e.clientY - gc.top)  / zoomRef.current;
-      // If the node belongs to a branch group, drag all siblings together
-      const draggedNode = nodes.find(n => n.id === nodeId);
-      const groupOffsets = draggedNode?.branchGroupId
-        ? nodes
-            .filter(n => n.branchGroupId === draggedNode.branchGroupId && n.id !== nodeId)
-            .map(n => {
-              const p = nodePositions[n.id] ?? { x: 0, y: 0 };
-              return { id: n.id, offsetX: mx - p.x, offsetY: my - p.y };
-            })
-        : undefined;
-      nodeDragRef.current = { id: nodeId, offsetX: mx - pos.x, offsetY: my - pos.y, groupOffsets };
+      nodeDragRef.current = { id: nodeId, offsetX: mx - pos.x, offsetY: my - pos.y };
       setDraggingNodeId(nodeId);
-      setSelectedGroupId(null);
       onSelectNode(nodeId);
-      return;
-    }
-
-    // Group container drag — fires when clicking the group background (not on a node inside it)
-    const groupEl = target.closest('[data-group-id]') as HTMLElement | null;
-    if (groupEl && graphContentRef.current) {
-      const groupId    = groupEl.dataset.groupId!;
-      const groupNodes = nodes.filter(n => n.branchGroupId === groupId);
-      const gc  = graphContentRef.current.getBoundingClientRect();
-      const mx  = (e.clientX - gc.left) / zoomRef.current;
-      const my  = (e.clientY - gc.top)  / zoomRef.current;
-      if (!groupNodes.length) {
-        // Standalone empty group — drag via groupDragRef (moves the groupPositions entry)
-        const gPos = groupPositions[groupId];
-        if (!gPos) return;
-        groupDragRef.current = { id: groupId, offsetX: mx - gPos.x, offsetY: my - gPos.y };
-        setDraggingGroupId(groupId);
-        return;
-      }
-      const [primary, ...rest] = groupNodes;
-      const pp  = nodePositions[primary.id] ?? { x: 0, y: 0 };
-      nodeDragRef.current = {
-        id: primary.id,
-        offsetX: mx - pp.x,
-        offsetY: my - pp.y,
-        groupOffsets: rest.map(n => {
-          const p = nodePositions[n.id] ?? { x: 0, y: 0 };
-          return { id: n.id, offsetX: mx - p.x, offsetY: my - p.y };
-        }),
-      };
-      setDraggingNodeId(primary.id);
-      // Track that this was a click on the group's frame (not on a child card),
-      // so mouseup can distinguish "click to select the group" from "drag the group".
-      groupFrameClickIdRef.current = groupId;
-      groupFrameMovedRef.current   = false;
       return;
     }
 
     // Canvas pan (skip if the target is a button-like focusable role)
     if (target.closest('[role="button"]')) return;
     onDeselectNode();
-    setSelectedGroupId(null);
     isPanning.current = true;
     panStart.current  = { mx: e.clientX, my: e.clientY, px: pan.x, py: pan.y };
     (e.currentTarget as HTMLElement).dataset.panning = 'true';
-  }, [pan, onDeselectNode, nodes, nodePositions, onSelectNode, editNodeMode, onEditNodeToggle]);
+  }, [pan, onDeselectNode, nodes, nodePositions, onSelectNode, editNodeMode, onEditNodeToggle, onDeleteEdge]);
 
   // ── MouseMove: draw pending edge OR drag node OR pan canvas ──
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
@@ -5358,61 +5348,36 @@ function FlowCanvas({
       pendingEdgeRef.current = { ...pendingEdgeRef.current, currentX, currentY, screenX: e.clientX, screenY: e.clientY };
       setPendingEdge({ ...pendingEdgeRef.current });
 
-      // Track which node the cursor is over so we can show its anchors and use it as the target
+      // Track which node the cursor is over so we can show its anchors and
+      // use it as the target. An exact-bbox hit wins; otherwise snap to the
+      // nearest candidate whose bbox is within SNAP_RADIUS of the cursor so
+      // connecting doesn't require pixel-perfect placement on the handle.
+      const SNAP_RADIUS = 60;
       const fromId    = pendingEdgeRef.current.fromNodeId;
-      const hitNode = nodes.find(n => {
-        if (n.id === fromId) return false;
+      const candidates = nodes.filter(n => n.id !== fromId && nodePositions[n.id]);
+      let hitNode = candidates.find(n => {
         const pos = nodePositions[n.id];
-        if (!pos) return false;
         return currentX >= pos.x && currentX <= pos.x + NODE_W &&
                currentY >= pos.y && currentY <= pos.y + NODE_H;
       });
+      if (!hitNode) {
+        let bestDist = SNAP_RADIUS;
+        for (const n of candidates) {
+          const pos = nodePositions[n.id];
+          const dx = Math.max(pos.x - currentX, 0, currentX - (pos.x + NODE_W));
+          const dy = Math.max(pos.y - currentY, 0, currentY - (pos.y + NODE_H));
+          const dist = Math.hypot(dx, dy);
+          if (dist < bestDist) {
+            bestDist = dist;
+            hitNode = n;
+          }
+        }
+      }
       const hoverId = hitNode ? hitNode.id : null;
       if (draggingOverNodeIdRef.current !== hoverId) {
         draggingOverNodeIdRef.current = hoverId;
         setDraggingOverNodeId(hoverId);
       }
-
-      // Track which condition group the cursor is over (only when not over a node).
-      // Primary detection uses the actual rendered DOM rect of each group frame
-      // (plus a small tolerance so the top/bottom anchor dots, which sit ~5px
-      // outside the frame, are also valid drop targets). This is more accurate
-      // than recomputing geometry from gPos, which can drift once members
-      // resize the frame.
-      let hoverGroupId: string | null = null;
-      if (!hitNode) {
-        const ANCHOR_TOLERANCE = 10; // px, covers the 10px anchor dot around the frame edges
-        const groupEls = graphContentRef.current.querySelectorAll<HTMLElement>('[data-group-id]');
-        for (const el of Array.from(groupEls)) {
-          const r = el.getBoundingClientRect();
-          if (
-            e.clientX >= r.left  - ANCHOR_TOLERANCE &&
-            e.clientX <= r.right + ANCHOR_TOLERANCE &&
-            e.clientY >= r.top   - ANCHOR_TOLERANCE &&
-            e.clientY <= r.bottom + ANCHOR_TOLERANCE
-          ) {
-            const gid = el.getAttribute('data-group-id');
-            if (gid && conditionGroups.some(g => g.id === gid)) {
-              hoverGroupId = gid;
-              break;
-            }
-          }
-        }
-        // Only formal groups (above) trigger group membership — informal
-        // "node-derived groups" no longer exist, so no further detection here.
-      }
-      if (draggingOverGroupIdRef.current !== hoverGroupId) {
-        draggingOverGroupIdRef.current = hoverGroupId;
-        setDraggingOverGroupId(hoverGroupId);
-      }
-      return;
-    }
-    if (groupDragRef.current && graphContentRef.current) {
-      const gc = graphContentRef.current.getBoundingClientRect();
-      const mx = (e.clientX - gc.left) / zoomRef.current;
-      const my = (e.clientY - gc.top)  / zoomRef.current;
-      groupDragMovedRef.current = true;
-      onGroupPositionChange(groupDragRef.current.id, mx - groupDragRef.current.offsetX, my - groupDragRef.current.offsetY);
       return;
     }
     if (nodeDragRef.current && graphContentRef.current) {
@@ -5424,46 +5389,6 @@ function FlowCanvas({
         mx - nodeDragRef.current.offsetX,
         my - nodeDragRef.current.offsetY,
       );
-      // Move all branch group siblings together (only for group-background drags)
-      if (nodeDragRef.current.groupOffsets) {
-        for (const { id, offsetX, offsetY } of nodeDragRef.current.groupOffsets) {
-          onPositionChange(id, mx - offsetX, my - offsetY);
-        }
-      }
-      // If this drag originated from a populated group's frame, flag movement so
-      // mouseup treats it as a drag (not a click-to-select).
-      if (groupFrameClickIdRef.current) {
-        groupFrameMovedRef.current = true;
-      }
-      // Group hover detection for condition nodes being dragged.
-      // Uses the group's live rendered rect (not reconstructed geometry from
-      // groupPositions + slot math) so membership detection stays accurate as
-      // the frame grows/shrinks with its members.
-      const draggedNode = nodes.find(n => n.id === nodeDragRef.current!.id);
-      if (draggedNode?.type === 'condition' && !nodeDragRef.current.groupOffsets) {
-        let hid: string | null = null;
-
-        if (!draggedNode.branchGroupId && graphContentRef.current) {
-          const groupEls = graphContentRef.current.querySelectorAll<HTMLElement>('[data-group-id]');
-          for (const el of Array.from(groupEls)) {
-            const gid = el.dataset.groupId;
-            if (!gid) continue;
-            if (!conditionGroups.some(g => g.id === gid)) continue;
-            const occupied = nodes.filter(n => n.branchGroupId === gid).length;
-            if (occupied >= MAX_GROUP_CONDITIONS) continue;
-            const r = el.getBoundingClientRect();
-            if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) {
-              hid = gid;
-              break;
-            }
-          }
-        }
-
-        if (hoveringGroupIdRef.current !== hid) {
-          hoveringGroupIdRef.current = hid;
-          setHoveringGroupId(hid);
-        }
-      }
       return;
     }
     if (isPanning.current) {
@@ -5472,7 +5397,7 @@ function FlowCanvas({
         y: panStart.current.py + (e.clientY - panStart.current.my),
       });
     }
-  }, [onPositionChange, onGroupPositionChange, nodes, nodePositions, conditionGroups, groupPositions, setDraggingOverGroupId]);
+  }, [onPositionChange, nodes, nodePositions]);
 
   // ── MouseUp: end pending edge OR node drag OR pan ──
   const handleMouseUp = useCallback((_e: React.MouseEvent<HTMLDivElement>) => {
@@ -5481,26 +5406,7 @@ function FlowCanvas({
       const isReconnect = reconnectingEdgeIdRef.current !== null;
       let   connectedSuccessfully = false;
 
-      // Resolve target: prefer a directly-hovered node, fall back to a hovered condition group
-      let targetId = draggingOverNodeIdRef.current;
-      const targetGroupId = draggingOverGroupIdRef.current;
-      let resolvedViaGroup = false;
-      if (!targetId && targetGroupId) {
-        const groupMembers = nodes
-          .filter(n => n.branchGroupId === targetGroupId)
-          .sort((a, b) => (nodePositions[a.id]?.x ?? 0) - (nodePositions[b.id]?.x ?? 0));
-        if (groupMembers.length > 0) {
-          targetId = groupMembers[0].id;
-          resolvedViaGroup = true;
-        } else {
-          // Empty group — create a condition node inside it and wire the edge
-          const sourceNode = nodes.find(n => n.id === fromNodeId);
-          if (sourceNode?.type !== 'action' && sourceNode?.type !== 'ai') {
-            onConnectToGroup?.(fromNodeId, targetGroupId);
-            connectedSuccessfully = true;
-          }
-        }
-      }
+      const targetId = draggingOverNodeIdRef.current;
 
       if (targetId && targetId !== fromNodeId) {
         // Silent rejection for cases like delay→delay — no toast, no edge, no snapback state
@@ -5508,17 +5414,15 @@ function FlowCanvas({
           if (isReconnect) reconnectingEdgeIdRef.current = null;
           pendingEdgeRef.current        = null;
           draggingOverNodeIdRef.current = null;
-          draggingOverGroupIdRef.current = null;
           setPendingEdge(null);
           setDraggingOverNodeId(null);
-          setDraggingOverGroupId(null);
           return;
         }
-        const connectionError = getConnectionError(fromNodeId, targetId, nodes, conditionGroups, resolvedViaGroup);
+        const connectionError = getConnectionError(fromNodeId, targetId, nodes);
 
         if (!connectionError) {
           if (isReconnect) onDeleteEdge(reconnectingEdgeIdRef.current!);
-          onAddEdge(fromNodeId, targetId, pendingEdgeRef.current?.fromCase ?? undefined);
+          onAddEdge(fromNodeId, targetId);
           connectedSuccessfully = true;
         } else {
           // Show inline error near the drop point, then clear after 1.8s
@@ -5531,14 +5435,12 @@ function FlowCanvas({
           }
           // Snap back: if reconnecting, restore original edge
           if (isReconnect) {
-            // do NOT call onDeleteEdge — leave original edge intact (snap back)
             reconnectingEdgeIdRef.current = null;
           }
         }
       }
 
       // Released on empty canvas during reconnect → just delete the original edge
-      // (skip if reconnectingEdgeIdRef was cleared due to a blocked/snapped-back connection)
       if (isReconnect && !connectedSuccessfully && reconnectingEdgeIdRef.current) {
         onDeleteEdge(reconnectingEdgeIdRef.current);
       }
@@ -5552,70 +5454,16 @@ function FlowCanvas({
 
       pendingEdgeRef.current        = null;
       draggingOverNodeIdRef.current = null;
-      draggingOverGroupIdRef.current = null;
       reconnectingEdgeIdRef.current = null;
       setPendingEdge(null);
       setDraggingOverNodeId(null);
-      setDraggingOverGroupId(null);
       return;
-    }
-    // Drop condition node onto a formal condition group — the only path that
-    // establishes group membership. Branch siblings never form an implicit group.
-    if (nodeDragRef.current && hoveringGroupIdRef.current) {
-      onNodeDroppedOnGroup(nodeDragRef.current.id, hoveringGroupIdRef.current);
-      hoveringGroupIdRef.current = null;
-      setHoveringGroupId(null);
-    } else if (nodeDragRef.current && !nodeDragRef.current.groupOffsets) {
-      // Check if a group-member node was dragged outside the group boundary → detach
-      const draggedNode = nodes.find(n => n.id === nodeDragRef.current!.id);
-      if (draggedNode?.branchGroupId) {
-        const otherMembers = nodes.filter(
-          n => n.branchGroupId === draggedNode.branchGroupId && n.id !== nodeDragRef.current!.id
-        );
-        const droppedPos = nodePositions[nodeDragRef.current.id];
-        if (otherMembers.length > 0 && droppedPos) {
-          const otherPoses = otherMembers.map(n => nodePositions[n.id]).filter(Boolean);
-          const gMinX = Math.min(...otherPoses.map(p => p.x)) - GROUP_PAD_X - NODE_W * 0.6;
-          const gMaxX = Math.max(...otherPoses.map(p => p.x + NODE_W)) + GROUP_PAD_X + NODE_W * 0.6;
-          const gMinY = Math.min(...otherPoses.map(p => p.y)) - GROUP_PAD_TOP - NODE_H * 0.5;
-          const gMaxY = Math.max(...otherPoses.map(p => p.y + NODE_H)) + GROUP_PAD_BOT + NODE_H * 0.5;
-          const cx = droppedPos.x + NODE_W / 2;
-          const cy = droppedPos.y + NODE_H / 2;
-          if (cx < gMinX || cx > gMaxX || cy < gMinY || cy > gMaxY) {
-            onDetachFromGroup?.(draggedNode.id);
-          }
-        }
-      }
     }
     nodeDragRef.current = null;
     setDraggingNodeId(null);
-    // Empty-group frame click (groupDragRef path): no movement → select the group
-    if (groupDragRef.current) {
-      const wasClick = !groupDragMovedRef.current;
-      const gid = groupDragRef.current.id;
-      groupDragRef.current = null;
-      groupDragMovedRef.current = false;
-      if (wasClick) {
-        setSelectedGroupId(gid);
-        onDeselectNode();
-      }
-    }
-    // Populated-group frame click (nodeDragRef path with groupFrameClickIdRef set):
-    // no movement → select the group frame; otherwise it was a group drag.
-    if (groupFrameClickIdRef.current) {
-      const wasClick = !groupFrameMovedRef.current;
-      const gid = groupFrameClickIdRef.current;
-      groupFrameClickIdRef.current = null;
-      groupFrameMovedRef.current   = false;
-      if (wasClick) {
-        setSelectedGroupId(gid);
-        onDeselectNode();
-      }
-    }
-    setDraggingGroupId(null);
     isPanning.current   = false;
     delete (_e.currentTarget as HTMLElement).dataset.panning;
-  }, [onAddEdge, onDeleteEdge, onNodeDroppedOnGroup, nodes, nodePositions, onDeselectNode]);
+  }, [onAddEdge, onDeleteEdge, nodes]);
 
   // ── Palette drag-over handlers — accept all types, track cursor position ──
   const handleCanvasDragOver = (e: React.DragEvent) => {
@@ -5628,62 +5476,23 @@ function FlowCanvas({
       const x = (e.clientX - gc.left) / zoomRef.current - NODE_W / 2;
       const y = (e.clientY - gc.top) / zoomRef.current - NODE_H / 2;
       setPaletteDragPos({ x, y });
-
-      // For condition nodes: detect overlap with a condition group frame
-      if (draggingLibNode.type === 'condition') {
-        const nodeLeft   = x;
-        const nodeRight  = x + NODE_W;
-        const nodeTop    = y;
-        const nodeBottom = y + NODE_H;
-        const SIBLING_PITCH_G = GROUP_SIBLING_PITCH;
-
-        let hoveredGroupId: string | null = null;
-
-        for (const group of conditionGroups) {
-          const gPos = groupPositions[group.id];
-          if (!gPos) continue;
-          const memberCount = nodes.filter(n => n.branchGroupId === group.id).length;
-          if (memberCount >= MAX_GROUP_CONDITIONS) continue;
-          const totalCols = Math.max(2, memberCount);
-          const gLeft   = gPos.x;
-          const gTop    = gPos.y;
-          const gRight  = gPos.x + (totalCols - 1) * GROUP_SIBLING_PITCH + NODE_W + 2 * GROUP_PAD_X;
-          const gBottom = gPos.y + GROUP_SLOT_H + GROUP_PAD_TOP + GROUP_PAD_BOT;
-          // Overlap check (any intersection)
-          if (nodeRight > gLeft && nodeLeft < gRight && nodeBottom > gTop && nodeTop < gBottom) {
-            hoveredGroupId = group.id;
-            break;
-          }
-        }
-
-        if (hoveringGroupIdRef.current !== hoveredGroupId) {
-          hoveringGroupIdRef.current = hoveredGroupId;
-          setHoveringGroupId(hoveredGroupId);
-        }
-      }
     }
   };
 
   const handleCanvasDragLeave = (e: React.DragEvent) => {
-    // Only clear when leaving the canvas itself (not entering a child element)
     if (!canvasRef.current?.contains(e.relatedTarget as Node)) {
       setCanvasDragOver(false);
       setPaletteDragPos(null);
-      hoveringGroupIdRef.current = null;
-      setHoveringGroupId(null);
     }
   };
 
   const handleCanvasDrop = (e: React.DragEvent) => {
     e.preventDefault();
     if (draggingLibNode && paletteDragPos) {
-      const targetGroupId = draggingLibNode.type === 'condition' ? hoveringGroupIdRef.current : null;
-      onCanvasDropAtPos(draggingLibNode, paletteDragPos.x, paletteDragPos.y, targetGroupId ?? undefined);
+      onCanvasDropAtPos(draggingLibNode, paletteDragPos.x, paletteDragPos.y);
     }
     setCanvasDragOver(false);
     setPaletteDragPos(null);
-    hoveringGroupIdRef.current = null;
-    setHoveringGroupId(null);
   };
 
   // ── Double-click on empty canvas: show type picker ──
@@ -5725,17 +5534,6 @@ function FlowCanvas({
       if (p) { xs.push(p.x, p.x + NODE_W); ys.push(p.y, p.y + NODE_H); }
     });
 
-    conditionGroups.forEach(g => {
-      const p = groupPositions[g.id];
-      if (p) {
-        const memberCount = nodes.filter(n => n.branchGroupId === g.id).length;
-        const totalCols = Math.max(2, memberCount);
-        const w = (totalCols - 1) * GROUP_SIBLING_PITCH + NODE_W + 2 * GROUP_PAD_X;
-        const h = GROUP_SLOT_H + GROUP_PAD_TOP + GROUP_PAD_BOT;
-        xs.push(p.x, p.x + w); ys.push(p.y, p.y + h);
-      }
-    });
-
     if (xs.length === 0) { setZoom(1); setPan({ x: INIT_PAN_X, y: 0 }); return; }
 
     const PAD = 40;
@@ -5761,80 +5559,7 @@ function FlowCanvas({
 
   // ── Tidy up: re-run layout algorithm, animate cards to their computed positions ──
   const handleTidyUp = () => {
-    // ─── Treat each formal condition group as a single atomic unit ───
-    // Collapse each group to its leftmost member (the "primary" — the node that
-    // already receives incoming edges per the connection wiring). Secondary
-    // members are removed from the layout graph; their edges rewrite through
-    // the primary. After layout, each secondary is shifted by the same delta
-    // the primary moved, preserving its relative position inside the group
-    // frame (so child-card offsets are never recalculated by the layout pass).
-    //
-    // The primary's slot width is inflated to the full group width so other
-    // subtrees at the same depth don't overlap the expanded frame.
-    const groupMembersByGid = new Map<string, GraphNode[]>();
-    for (const g of conditionGroups) {
-      const members = nodes.filter(n => n.branchGroupId === g.id);
-      if (members.length > 0) groupMembersByGid.set(g.id, members);
-    }
-
-    const primaryByGid = new Map<string, string>();
-    const secondaryToPrimary = new Map<string, string>();
-    groupMembersByGid.forEach((members, gid) => {
-      const sorted = [...members].sort(
-        (a, b) => (nodePositions[a.id]?.x ?? 0) - (nodePositions[b.id]?.x ?? 0)
-      );
-      const primary = sorted[0];
-      primaryByGid.set(gid, primary.id);
-      for (let i = 1; i < sorted.length; i++) {
-        secondaryToPrimary.set(sorted[i].id, primary.id);
-      }
-    });
-
-    const reducedNodes = nodes.filter(n => !secondaryToPrimary.has(n.id));
-    const seenEdgeKey = new Set<string>();
-    const reducedEdges: GraphEdge[] = [];
-    for (const e of edges) {
-      const from = secondaryToPrimary.get(e.from) ?? e.from;
-      const to   = secondaryToPrimary.get(e.to)   ?? e.to;
-      if (from === to) continue; // self-loop created by rewiring
-      const key = `${from}→${to}|${e.branch ?? ''}`;
-      if (seenEdgeKey.has(key)) continue;
-      seenEdgeKey.add(key);
-      reducedEdges.push({ ...e, from, to });
-    }
-
-    // Slot width for a group primary: group width plus the gap the layout
-    // normally reserves around a single node (H_SPACING - NODE_W).
-    const slotOverrides = new Map<string, number>();
-    groupMembersByGid.forEach((members, gid) => {
-      const primaryId = primaryByGid.get(gid)!;
-      const groupWidth = (members.length - 1) * GROUP_SIBLING_PITCH + NODE_W;
-      slotOverrides.set(primaryId, Math.max(H_SPACING, groupWidth + (H_SPACING - NODE_W)));
-    });
-
-    const layout = computeLayout(reducedNodes, reducedEdges, slotOverrides);
-
-    // Shift secondary group members by the same delta the primary moved.
-    groupMembersByGid.forEach((members, gid) => {
-      const primaryId = primaryByGid.get(gid)!;
-      const newPrimary = layout.get(primaryId);
-      const oldPrimary = nodePositions[primaryId];
-      if (!newPrimary || !oldPrimary) return;
-      const dx = newPrimary.x - oldPrimary.x;
-      const dy = newPrimary.y - oldPrimary.y;
-      for (const m of members) {
-        if (m.id === primaryId) continue;
-        const oldPos = nodePositions[m.id];
-        if (!oldPos) continue;
-        layout.set(m.id, { x: oldPos.x + dx, y: oldPos.y + dy });
-      }
-      // Keep the stored group position in sync (used for empty-group frame
-      // placement and drag-start offsets).
-      const oldGPos = groupPositions[gid];
-      if (oldGPos) {
-        onGroupPositionChange(gid, oldGPos.x + dx, oldGPos.y + dy);
-      }
-    });
+    const layout = computeLayout(nodes, edges);
 
     const next: Record<string, { x: number; y: number }> = {};
     layout.forEach((pos, id) => { next[id] = pos; });
@@ -5888,70 +5613,16 @@ function FlowCanvas({
   useEffect(() => {
     if ((fitToken ?? 0) !== prevFitToken.current) {
       prevFitToken.current = fitToken ?? 0;
-      // Pan to centre the latest group in the visible canvas strip (keep current zoom)
-      const latestGroup = conditionGroups[conditionGroups.length - 1];
-      if (!latestGroup || !canvasRef.current || !graphContentRef.current) return;
-      const gPos = groupPositions[latestGroup.id];
-      if (!gPos) return;
-      const memberCount = nodes.filter(n => n.branchGroupId === latestGroup.id).length;
-      const totalCols   = Math.max(2, memberCount);
-      const gW          = (totalCols - 1) * GROUP_SIBLING_PITCH + NODE_W + 2 * GROUP_PAD_X;
-      const gcHalfW     = graphContentRef.current.offsetWidth / 2;
-      const canvasW     = canvasRef.current.clientWidth;
-      const leftPanelEl = document.querySelector('[class*="leftPanel"]') as HTMLElement | null;
-      const leftOffset  = leftPanelEl ? leftPanelEl.offsetWidth : 0;
-      const effectiveCx = leftOffset + (canvasW - leftOffset) / 2;
-      const groupCentreX = gPos.x + gW / 2;
-      // screen_x = canvasW/2 + panX + (cx - gcHalfW) * zoom
-      // effectiveCx = canvasW/2 + panX + (groupCentreX - gcHalfW) * zoom → solve for panX
-      setPan(prev => ({
-        ...prev,
-        x: Math.round(effectiveCx - canvasW / 2 + (gcHalfW - groupCentreX) * zoomRef.current),
-      }));
+      // No-op: group fit behavior was tied to condition groups, which are removed.
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fitToken]);
 
   // ── Anchor position helper — reads DOM for pixel-accurate coordinates ──────────
-  // (During render, graphContentRef.current holds the DOM from the *previous* commit,
-  //  which has up-to-date anchor positions for all existing nodes.)
-  // anchorCase: when provided, narrows the query to [data-anchor-case="…"] so each
-  // labeled output handle (Yes, No, or multi-value labels) is resolved independently.
-  const getAnchorCenter = (nodeId: string, side: 'top' | 'bottom' | 'left' | 'right', anchorCase?: string): { x: number; y: number } | null => {
-    // For grouped nodes, route top/bottom edges through the group-level anchor
-    const node = nodes.find(n => n.id === nodeId);
-    if (node?.branchGroupId && (side === 'top' || side === 'bottom')) {
-      const gid = node.branchGroupId;
-      if (graphContentRef.current) {
-        const el = graphContentRef.current.querySelector(
-          `[data-anchor-group-id="${gid}"][data-anchor="${side}"]`
-        ) as HTMLElement | null;
-        if (el) {
-          const gc = graphContentRef.current.getBoundingClientRect();
-          const r  = el.getBoundingClientRect();
-          return {
-            x: (r.left + r.width  / 2 - gc.left) / zoom,
-            y: (r.top  + r.height / 2 - gc.top)  / zoom,
-          };
-        }
-      }
-      // Fallback: compute group bounding center
-      const gNodes = nodes.filter(n => n.branchGroupId === gid);
-      const poses  = gNodes.map(n => nodePositions[n.id]).filter(Boolean);
-      if (poses.length) {
-        const cx = (Math.min(...poses.map(p => p.x)) + Math.max(...poses.map(p => p.x + NODE_W))) / 2;
-        return side === 'top'
-          ? { x: cx, y: Math.min(...poses.map(p => p.y)) - 28 }
-          : { x: cx, y: Math.max(...poses.map(p => p.y + NODE_H)) + 6 };
-      }
-    }
-
+  const getAnchorCenter = (nodeId: string, side: 'top' | 'bottom' | 'left' | 'right'): { x: number; y: number } | null => {
     if (graphContentRef.current) {
-      // When a specific case is requested (e.g. 'Yes' / 'No' / multi-value label),
-      // narrow to the exact per-case anchor so each handle resolves independently.
-      const caseSelector = anchorCase ? `[data-anchor-case="${anchorCase}"]` : ':not([data-anchor-case])';
       const el = graphContentRef.current.querySelector(
-        `[data-anchor-node-id="${nodeId}"][data-anchor="${side}"]${caseSelector}`
+        `[data-anchor-node-id="${nodeId}"][data-anchor="${side}"]`
       ) as HTMLElement | null;
       if (el) {
         const gc = graphContentRef.current.getBoundingClientRect();
@@ -5965,17 +5636,6 @@ function FlowCanvas({
     // Fallback (first render before ref attaches, or missing anchor)
     const pos = nodePositions[nodeId];
     if (!pos) return null;
-    if (side === 'bottom' && anchorCase && node) {
-      // Distribute labeled output handles evenly across the node width
-      const cases = node.branchMode === 'yes-no'
-        ? ['Yes', 'No']
-        : (node.conditionBranches ?? []).map(b => b.value).filter(Boolean);
-      const idx = cases.indexOf(anchorCase);
-      const count = cases.length;
-      if (idx >= 0 && count > 0) {
-        return { x: pos.x + (NODE_W / (count + 1)) * (idx + 1), y: pos.y + NODE_H };
-      }
-    }
     if (side === 'bottom') return { x: pos.x + NODE_W / 2, y: pos.y + NODE_H };
     if (side === 'top')    return { x: pos.x + NODE_W / 2, y: pos.y };
     if (side === 'left')   return { x: pos.x,              y: pos.y + NODE_H / 2 };
@@ -6026,6 +5686,9 @@ function FlowCanvas({
               height: maxY,
               transform: `translate(calc(-50% + ${pan.x}px), ${pan.y + CANVAS_TOP}px) scale(${zoom})`,
               transformOrigin: 'top center',
+              // Inverse zoom — used by descendants (anchors, etc.) that need to
+              // hold a constant on-screen size regardless of canvas zoom.
+              ['--inv-zoom' as string]: String(1 / zoom),
             }}
           >
             {/* SVG edge overlay — bezier curves + pending edge.
@@ -6035,11 +5698,43 @@ function FlowCanvas({
               style={{ position: 'absolute', inset: 0, width: maxX, height: maxY, overflow: 'visible' }}
               aria-hidden
             >
+              {/* Chevron arrowhead marker — drawn at the end of every edge path.
+                  Shape matches the Vector 1.svg spec: downward V chevron,
+                  rounded joins, stroked in the same slate-border-secondary as
+                  the path line. `orient="auto"` aligns the tip with the curve
+                  tangent, `markerUnits="userSpaceOnUse"` keeps the size
+                  independent of strokeWidth. */}
+              <defs>
+                <marker
+                  id="edge-arrow"
+                  viewBox="0 0 8 8"
+                  refX="6.8"
+                  refY="3.7"
+                  markerUnits="userSpaceOnUse"
+                  markerWidth="8"
+                  markerHeight="8"
+                  orient="auto"
+                >
+                  {/* Chevron pointing along the marker's +x axis (orient=auto
+                      rotates +x to match the path tangent at the endpoint).
+                      Tip at (6.8, 3.7); wings at (3.5, 0.5) and (3.5, 6.9). */}
+                  <path
+                    d="M3.5 0.5 L6.8 3.7 L3.5 6.9"
+                    stroke="var(--color-slate-border-secondary)"
+                    strokeWidth="1"
+                    fill="none"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </marker>
+              </defs>
               {edges.map(edge => {
                 // ── Normal (vertical) edge ───────────────────────────────────────────────
-                // Pass edge.branch as anchorCase so per-handle edges resolve independently
-                const from = getAnchorCenter(edge.from, 'bottom', edge.branch ?? undefined);
-                let   to   = getAnchorCenter(edge.to,   'top');
+                // Anchors are offset 16px away from each node edge (see
+                // .anchorTop / .anchorBottom in CSS), so the path endpoints
+                // already float with a visual gap from the node surfaces.
+                const from = getAnchorCenter(edge.from, 'bottom');
+                const to   = getAnchorCenter(edge.to,   'top');
                 if (!from || !to) return null;
 
                 const { x: x1, y: y1 } = from;
@@ -6056,10 +5751,12 @@ function FlowCanvas({
                 //   P0=(x1,y1)  P1=(x1,y1+dy)  P2=(x2,y2-dy)  P3=(x2,y2)
                 return (
                   <g key={edge.id}>
-                    {/* Visual path */}
+                    {/* Visual path — chevron arrowhead attached at the end
+                        via <marker id="edge-arrow"> defined in <defs> above. */}
                     <path d={d}
                       stroke="var(--color-slate-border-secondary)" strokeWidth="1.5"
                       fill="none" strokeLinecap="round"
+                      markerEnd="url(#edge-arrow)"
                       style={{ pointerEvents: 'none' }}
                     />
                     {/* Boolean branch edge — no inline SVG pill; badge is in HTML layer below */}
@@ -6113,37 +5810,13 @@ function FlowCanvas({
               />
             )}
 
-            {/* Edge midpoint overlays — branch badge OR insert + button */}
+            {/* Edge midpoint overlays — insert + button */}
             {edges.map(edge => {
-              // Use branch-aware anchor so midpoint tracks the correct handle
-              const from = getAnchorCenter(edge.from, 'bottom', edge.branch ?? undefined);
+              const from = getAnchorCenter(edge.from, 'bottom');
               const to   = getAnchorCenter(edge.to,   'top');
               if (!from || !to) return null;
               const midX = (from.x + to.x) / 2;
               const midY = (from.y + to.y) / 2;
-
-              // Branch edges (Yes/No or multi-value) get a label badge, not a + button.
-              // All branch badges use the solid variant: Yes → solid green, No → solid
-              // red, multi-value → solid neutral (dark bg, white text).
-              if (edge.branch) {
-                const branchLower = edge.branch.toLowerCase();
-                const isYesNo = branchLower === 'yes' || branchLower === 'no';
-                const tagColor: import('@alloy/components/Tag').TagColor =
-                  branchLower === 'yes' ? 'green'
-                  : branchLower === 'no' ? 'red'
-                  : 'neutral';
-                return (
-                  <div
-                    key={`midbadge-${edge.id}`}
-                    className={styles.edgeBranchBadge}
-                    style={{ left: midX, top: midY }}
-                  >
-                    <Tag variant="solid" color={tagColor} size="sm">
-                      {isYesNo ? edge.branch.toUpperCase() : edge.branch}
-                    </Tag>
-                  </div>
-                );
-              }
 
               return (
                 <div
@@ -6167,186 +5840,6 @@ function FlowCanvas({
               );
             })}
 
-            {/* ── Condition group containers — rendered behind nodes ── */}
-            {(() => {
-              const SIBLING_PITCH_G = GROUP_SIBLING_PITCH;
-              const rendered: React.ReactNode[] = [];
-
-              // Build map of nodes per group
-              const nodeGroupMap = new Map<string, GraphNode[]>();
-              nodes.forEach(n => {
-                if (n.branchGroupId) {
-                  const g = nodeGroupMap.get(n.branchGroupId) ?? [];
-                  g.push(n);
-                  nodeGroupMap.set(n.branchGroupId, g);
-                }
-              });
-
-              conditionGroups.forEach(group => {
-                const memberNodes = nodeGroupMap.get(group.id) ?? [];
-                const isDropTarget = hoveringGroupId === group.id;
-                const isDragTarget = draggingOverGroupId === group.id;
-
-                // -- Determine geometry --
-                // For groups with a fixed position (groupPositions), use that for layout.
-                // For groups whose position derives from member nodes, compute from bounds.
-                const gPos = groupPositions[group.id];
-
-                let left: number, top: number, width: number, height: number;
-
-                if (gPos && memberNodes.length === 0) {
-                  // Empty group — use stored position with 2-slot size.
-                  // Slot height matches actual condition card height (same measurement as filled state).
-                  const conditionNode = nodes.find(n => n.type === 'condition');
-                  const condEl = conditionNode
-                    ? graphContentRef.current?.querySelector(`[data-node-id="${conditionNode.id}"]`) as HTMLElement | null
-                    : null;
-                  const slotH = condEl ? condEl.getBoundingClientRect().height / zoom : NODE_H;
-
-                  width  = SIBLING_PITCH_G + NODE_W + 2 * GROUP_PAD_X; // always 2 slots
-                  height = slotH + GROUP_PAD_TOP + GROUP_PAD_BOT;
-                  left   = gPos.x;
-                  top    = gPos.y;
-                } else if (memberNodes.length > 0) {
-                  // Size from member node positions
-                  const isGroupDrag = nodeDragRef.current?.groupOffsets != null;
-                  const stationaryNodes = (!isGroupDrag && draggingNodeId)
-                    ? memberNodes.filter(n => n.id !== draggingNodeId)
-                    : memberNodes;
-                  const posSource = stationaryNodes.length > 0 ? stationaryNodes : memberNodes;
-                  const poses = posSource.map(n => nodePositions[n.id]).filter(Boolean);
-                  if (poses.length === 0) return;
-
-                  const rawMinX = Math.min(...poses.map(p => p.x)) - GROUP_PAD_X;
-                  const rawMaxX = Math.max(...poses.map(p => p.x + NODE_W)) + GROUP_PAD_X;
-                  const rawMinY = Math.min(...poses.map(p => p.y)) - GROUP_PAD_TOP;
-                  const rawMaxY = Math.max(...posSource.map(n => {
-                    const pos = nodePositions[n.id];
-                    if (!pos) return 0;
-                    const el = graphContentRef.current?.querySelector(`[data-node-id="${n.id}"]`) as HTMLElement | null;
-                    const h = el ? el.getBoundingClientRect().height / zoom : NODE_H;
-                    return pos.y + h;
-                  })) + GROUP_PAD_BOT;
-
-                  // Extend frame to show remaining placeholder slots (until 2 conditions filled)
-                  const occupiedCount = stationaryNodes.length;
-                  const remainingSlots = Math.max(0, 2 - occupiedCount);
-                  const totalVisualCols = occupiedCount + remainingSlots; // = max(2, occupiedCount)
-                  const minWidth = (totalVisualCols - 1) * SIBLING_PITCH_G + NODE_W + 2 * GROUP_PAD_X;
-
-                  left   = rawMinX;
-                  top    = rawMinY;
-                  width  = Math.max(rawMaxX - rawMinX, minWidth);
-                  height = rawMaxY - rawMinY;
-
-                  // Keep groupPositions in sync so group drags start at right position
-                  if (gPos && (Math.abs(gPos.x - left) > 1 || Math.abs(gPos.y - top) > 1)) {
-                    // Position will be updated via onGroupPositionChange elsewhere; skip here
-                  }
-                } else {
-                  return; // no position and no members — skip
-                }
-
-                const bodyHeight = height - GROUP_PAD_TOP - GROUP_PAD_BOT;
-
-                // Sort member nodes by x position for badge placement
-                const sortedMembers = [...memberNodes].sort(
-                  (a, b) => (nodePositions[a.id]?.x ?? 0) - (nodePositions[b.id]?.x ?? 0)
-                );
-
-                // Remaining placeholder slots: show until 2 conditions are filled
-                const filledCount = sortedMembers.length;
-                const remainingSlots = Math.max(0, 2 - filledCount);
-                const isAtLimit = filledCount >= MAX_GROUP_CONDITIONS;
-
-                rendered.push(
-                  <div
-                    key={group.id}
-                    className={clsx(
-                      styles.groupContainer,
-                      isDropTarget && styles.groupContainerDropTarget,
-                      selectedGroupId === group.id && styles.groupContainerSelected,
-                      isAtLimit && styles.groupContainerAtLimit,
-                    )}
-                    data-group-id={group.id}
-                    data-drag-target={isDragTarget ? 'true' : undefined}
-                    style={{ left, top, width, height }}
-                  >
-                    {/* Clickable placeholder slots — shown until 2 conditions filled */}
-                    {remainingSlots > 0 && Array.from({ length: remainingSlots }, (_, i) => {
-                      const slotIndex = filledCount + i;
-                      return (
-                        <div
-                          key={`slot-${slotIndex}`}
-                          className={clsx(styles.groupSlot, isDropTarget && styles.groupSlotHover)}
-                          style={{ left: GROUP_PAD_X + slotIndex * SIBLING_PITCH_G, top: GROUP_PAD_TOP, width: NODE_W, height: bodyHeight }}
-                          onMouseDown={e => e.stopPropagation()}
-                          onClick={e => { e.stopPropagation(); onAddConditionToGroup(group.id); }}
-                          role="button"
-                          aria-label="Add condition"
-                        >
-                          <PlusIcon size={16} />
-                        </div>
-                      );
-                    })}
-
-                    {/* AND/OR badge — between slot 0 and slot 1 when both are visible (empty state) */}
-                    {remainingSlots >= 2 && (
-                      <div
-                        className={styles.groupAndOrBadge}
-                        style={{
-                          left: GROUP_PAD_X + NODE_W + (SIBLING_PITCH_G - NODE_W) / 2,
-                          top: GROUP_PAD_TOP + bodyHeight / 2,
-                        }}
-                      >
-                        {group.operator === 'AND' ? 'And' : 'Or'}
-                      </div>
-                    )}
-
-                    {/* AND/OR badges between adjacent member nodes */}
-                    {sortedMembers.length > 1 && sortedMembers.slice(0, -1).map((nodeA, i) => {
-                      const nodeB = sortedMembers[i + 1];
-                      const posA  = nodePositions[nodeA.id];
-                      const posB  = nodePositions[nodeB.id];
-                      if (!posA || !posB) return null;
-                      const badgeX = (posA.x - left) + NODE_W + (posB.x - posA.x - NODE_W) / 2;
-                      const badgeY = GROUP_PAD_TOP + bodyHeight / 2;
-                      return (
-                        <div
-                          key={`badge-${nodeA.id}`}
-                          className={styles.groupAndOrBadge}
-                          style={{ left: badgeX, top: badgeY }}
-                        >
-                          {group.operator === 'AND' ? 'And' : 'Or'}
-                        </div>
-                      );
-                    })}
-
-                    {/* AND/OR badge between last member and remaining placeholder slot (1 member) */}
-                    {filledCount === 1 && remainingSlots === 1 && (() => {
-                      const lastPos = nodePositions[sortedMembers[0].id];
-                      if (!lastPos) return null;
-                      const badgeX = (lastPos.x - left) + NODE_W + (SIBLING_PITCH_G - NODE_W) / 2;
-                      const badgeY = GROUP_PAD_TOP + bodyHeight / 2;
-                      return (
-                        <div
-                          className={styles.groupAndOrBadge}
-                          style={{ left: badgeX, top: badgeY }}
-                        >
-                          {group.operator === 'AND' ? 'And' : 'Or'}
-                        </div>
-                      );
-                    })()}
-
-                    <div className={clsx(styles.anchor, styles.anchorTop)} data-anchor="top" data-anchor-group-id={group.id} />
-                    <div className={clsx(styles.anchor, styles.anchorBottom)} data-anchor="bottom" data-anchor-group-id={group.id} />
-                  </div>
-                );
-              });
-
-              return rendered;
-            })()}
-
             {/* Nodes + connector anchors */}
             {nodes.map(node => {
               const pos = nodePositions[node.id] ?? { x: 0, y: 0 };
@@ -6360,16 +5853,20 @@ function FlowCanvas({
                   data-node-id={node.id}
                   data-selected={selectedId === node.id ? 'true' : undefined}
                   data-drag-target={draggingOverNodeId === node.id ? 'true' : undefined}
-                  data-in-group={node.branchGroupId ? 'true' : undefined}
                 >
-                  {/* Top anchor — non-trigger, non-grouped nodes only (grouped nodes use group-level anchor) */}
-                  {node.type !== 'trigger' && !node.branchGroupId && (
-                    <div
-                      className={clsx(styles.anchor, styles.anchorTop)}
-                      data-anchor="top"
-                      data-anchor-node-id={node.id}
-                    />
-                  )}
+                  {/* Top anchor — all non-trigger nodes */}
+                  {node.type !== 'trigger' && (() => {
+                    const inEdgeId = edges.find(e => e.to === node.id)?.id;
+                    return (
+                      <div
+                        className={clsx(styles.anchor, styles.anchorTop)}
+                        data-anchor="top"
+                        data-anchor-node-id={node.id}
+                        data-connected={inEdgeId ? 'true' : undefined}
+                        data-anchor-edge-id={inEdgeId}
+                      />
+                    );
+                  })()}
 
 
                   <FlowNode
@@ -6390,67 +5887,22 @@ function FlowCanvas({
                     onMoveDown={() => {}}
                     editNodeMode={editNodeMode}
                     isEditSelected={editingNodeIds.has(node.id)}
-                    groupSiblings={node.branchGroupId
-                      ? nodes
-                          .filter(n => n.branchGroupId === node.branchGroupId)
-                          .sort((a, b) => (nodePositions[a.id]?.x ?? 0) - (nodePositions[b.id]?.x ?? 0))
-                      : undefined}
-                    onUpdateBranchValues={onUpdateBranchValues}
-                    onUpdateBranchConfig={onUpdateBranchConfig}
-                    onDeleteBranch={nodeId => onDeleteNode(nodeId)}
-                    onUpdateBranchMode={onUpdateBranchMode ? (mode) => onUpdateBranchMode(node.id, mode) : undefined}
-                    onAddBranchValue={onAddBranchValue ? () => onAddBranchValue(node.id) : undefined}
-                    onRemoveBranchValue={onRemoveBranchValue ? (idx) => onRemoveBranchValue(node.id, idx) : undefined}
-                    onUpdateConditionBranch={onUpdateConditionBranch ? (idx, op, val) => onUpdateConditionBranch(node.id, idx, op, val) : undefined}
+                    onUpdateConditions={onUpdateConditions ? (conds, logic) => onUpdateConditions(node.id, conds, logic) : undefined}
                     hasOutgoingConnections={edges.some(e => e.from === node.id)}
                     triggerLabel={nodes.find(n => n.type === 'trigger')?.selectedValue}
                     onSaveNodePopover={onSaveNodePopover}
                   />
 
-                  {/* Bottom anchor / output ports — non-grouped nodes only.
-                      Standalone condition nodes show the single default anchor
-                      until a branch mode (yes/no or multi-value) is configured,
-                      at which point the labeled output ports take over. */}
-                  {!node.branchGroupId && (node.type !== 'condition' || !node.branchMode) && (
+                  {/* Bottom anchor — output handle. Always shows + and always
+                      allows drawing a new connection (multiple outgoing edges
+                      are permitted). Terminal action/ai nodes have no output. */}
+                  {node.type !== 'action' && node.type !== 'ai' && (
                     <div
                       className={clsx(styles.anchor, styles.anchorBottom)}
                       data-anchor="bottom"
                       data-anchor-node-id={node.id}
                     />
                   )}
-                  {/* Labeled output ports for standalone condition nodes — only when branch mode is configured */}
-                  {!node.branchGroupId && node.type === 'condition' && node.branchMode && (() => {
-                    const cases = node.branchMode === 'yes-no'
-                      ? ['Yes', 'No']
-                      : (node.conditionBranches ?? []).map(b => b.value).filter(Boolean);
-                    if (cases.length === 0) return null;
-                    // FIX 3: track which handles are already connected
-                    const connectedCases = new Set(
-                      edges.filter(e => e.from === node.id && e.branch).map(e => e.branch!)
-                    );
-                    return (
-                      <div className={styles.nodeOutputPorts}>
-                        {cases.map((label, i) => {
-                          const isConnected = connectedCases.has(label);
-                          return (
-                            <div key={i} className={styles.outputPortWrap}>
-                              {/* outputPortHandle is intentionally NOT .anchor — avoids CSS cascade conflict */}
-                              <div
-                                className={styles.outputPortHandle}
-                                data-anchor="bottom"
-                                data-anchor-node-id={node.id}
-                                data-anchor-case={label}
-                              />
-                              {/* FIX 3: hide label when this handle has a live connection */}
-                              {!isConnected && (
-                                <span className={styles.outputPortLabel}>{label}</span>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    );
-                  })()}
                 </div>
               );
             })}
@@ -6461,24 +5913,8 @@ function FlowCanvas({
               const selectedNode = nodes.find(n => n.id === selectedId);
               if (!pos || !selectedNode) return null;
 
-              // For branch groups: center the AI prompt below the whole group,
-              // not below the individual selected node.
-              let aiLeft = pos.x + NODE_W / 2;
-              let aiTop  = pos.y + selectedNodeH + 8;
-              if (selectedNode.branchGroupId) {
-                const groupNodes = nodes.filter(n => n.branchGroupId === selectedNode.branchGroupId);
-                if (groupNodes.length >= 2) {
-                  const sorted = [...groupNodes].sort(
-                    (a, b) => (nodePositions[a.id]?.x ?? 0) - (nodePositions[b.id]?.x ?? 0)
-                  );
-                  const lPos = nodePositions[sorted[0].id];
-                  const rPos = nodePositions[sorted[sorted.length - 1].id];
-                  if (lPos && rPos) {
-                    aiLeft = (lPos.x + rPos.x + NODE_W) / 2;
-                    aiTop  = lPos.y + selectedNodeH + 8; // all siblings at same Y
-                  }
-                }
-              }
+              const aiLeft = pos.x + NODE_W / 2;
+              const aiTop  = pos.y + selectedNodeH + 8;
 
               return (
                 <NodeAiFloatingInput
@@ -6486,6 +5922,7 @@ function FlowCanvas({
                   step={selectedNode}
                   left={aiLeft}
                   top={aiTop}
+                  zoom={zoom}
                   onSubmit={(message, nodeType) => onNodeAiSubmit?.(message, nodeType)}
                 />
               );
@@ -6531,20 +5968,22 @@ function FlowCanvas({
           style={{ position: 'fixed', left: typePickerPos.screenX, top: typePickerPos.screenY, zIndex: 900 }}
           onMouseDown={e => e.stopPropagation()}
         >
-          {(['trigger', 'condition', 'action', 'ai', 'delay', 'policy'] as StepType[]).map(type => {
+          {(['trigger', 'condition', 'action', 'delay', 'ai', 'policy'] as StepType[]).map(type => {
             const cfg = STEP_CONFIG[type];
             return (
-              <button
-                key={type}
-                className={clsx(styles.typePickerBtn, cfg.bgClass)}
-                onClick={() => {
-                  onCreateNodeAt(type, typePickerPos.canvasX, typePickerPos.canvasY);
-                  setTypePickerPos(null);
-                }}
-                title={cfg.label}
-              >
-                {cfg.icon}
-              </button>
+              <Tooltip key={type} content={STEP_TOOLTIP_LABEL[type]} offset={4}>
+                <button
+                  className={clsx(styles.typePickerBtn, cfg.bgClass)}
+                  data-step-type={type}
+                  onClick={() => {
+                    onCreateNodeAt(type, typePickerPos.canvasX, typePickerPos.canvasY);
+                    setTypePickerPos(null);
+                  }}
+                  aria-label={cfg.label}
+                >
+                  {TOOLBAR_NODE_ICON[type]}
+                </button>
+              </Tooltip>
             );
           })}
         </div>,
@@ -6581,20 +6020,21 @@ function FlowCanvas({
             ? ['action'] as StepType[]
             : edgeDragDrop.fromNodeType === 'delay'
               ? ['condition', 'action', 'ai'] as StepType[]  // Delay→Delay is disallowed
-              : ['condition', 'action', 'ai', 'delay'] as StepType[]
+              : ['condition', 'action', 'delay', 'ai'] as StepType[]
           ).map(type => {
             const cfg = STEP_CONFIG[type];
             return (
               <button
                 key={type}
                 className={clsx(styles.typePickerBtn, cfg.bgClass)}
+                data-step-type={type}
                 onClick={() => {
-                  onCreateNodeAndConnect(edgeDragDrop.fromNodeId, type, edgeDragDrop.canvasX, edgeDragDrop.canvasY, edgeDragDrop.fromCase);
+                  onCreateNodeAndConnect(edgeDragDrop.fromNodeId, type, edgeDragDrop.canvasX, edgeDragDrop.canvasY);
                   setEdgeDragDrop(null);
                 }}
                 title={cfg.label}
               >
-                {cfg.icon}
+                {TOOLBAR_NODE_ICON[type]}
               </button>
             );
           })}
@@ -6602,95 +6042,6 @@ function FlowCanvas({
         document.body,
       )}
 
-      {/* Group right panel — shown when a condition group is selected */}
-      {selectedGroupId && (() => {
-        const selGroup = conditionGroups.find(g => g.id === selectedGroupId);
-        if (!selGroup) return null;
-        const groupMembers = nodes
-          .filter(n => n.branchGroupId === selectedGroupId)
-          .sort((a, b) => (nodePositions[a.id]?.x ?? 0) - (nodePositions[b.id]?.x ?? 0));
-        const atLimit = groupMembers.length >= MAX_GROUP_CONDITIONS;
-        return createPortal(
-          <div className={styles.rightPanel} style={{ width: 360 }}>
-            <div className={styles.groupPanel}>
-              <div className={styles.groupPanelHeader}>
-                <span className={styles.groupPanelHeaderTitle}>Condition Group</span>
-                <button
-                  type="button"
-                  className={styles.groupPanelCloseBtn}
-                  onClick={() => setSelectedGroupId(null)}
-                  aria-label="Close"
-                >
-                  <XIcon size={14} />
-                </button>
-              </div>
-              <div className={styles.groupPanelBody}>
-                <label className={styles.groupPanelLabel} htmlFor={`grp-op-${selectedGroupId}`}>
-                  Logic operator
-                </label>
-                <select
-                  id={`grp-op-${selectedGroupId}`}
-                  className={styles.groupPanelSelect}
-                  value={selGroup.operator}
-                  onChange={e => onUpdateGroupOperator(selGroup.id, e.target.value as 'AND' | 'OR')}
-                >
-                  <option value="AND">AND — all conditions must match</option>
-                  <option value="OR">OR — any condition must match</option>
-                </select>
-
-                <div className={styles.groupPanelSection}>
-                  <span className={styles.groupPanelLabel}>
-                    Conditions {groupMembers.length > 0 && `(${groupMembers.length}/${MAX_GROUP_CONDITIONS})`}
-                  </span>
-                  <div className={styles.groupPanelList}>
-                    {groupMembers.length === 0 ? (
-                      <div className={styles.groupPanelEmpty}>No conditions added yet</div>
-                    ) : (
-                      groupMembers.map((member, i) => (
-                        <button
-                          key={member.id}
-                          type="button"
-                          className={styles.groupPanelListItem}
-                          onClick={() => { onSelectNode(member.id); setSelectedGroupId(null); }}
-                        >
-                          <span className={styles.groupPanelListIndex}>{i + 1}</span>
-                          <span className={styles.groupPanelListLabel}>
-                            {member.configured && member.label ? member.label : 'Empty condition'}
-                          </span>
-                        </button>
-                      ))
-                    )}
-                  </div>
-                  {!atLimit && (
-                    <button
-                      type="button"
-                      className={styles.groupPanelAddBtn}
-                      onClick={() => onAddConditionToGroup(selGroup.id)}
-                    >
-                      <PlusIcon size={14} />
-                      Add condition
-                    </button>
-                  )}
-                  {atLimit && (
-                    <p className={styles.groupPanelLimitNote}>
-                      Maximum {MAX_GROUP_CONDITIONS} conditions reached
-                    </p>
-                  )}
-                </div>
-
-                <button
-                  type="button"
-                  className={styles.groupPanelDeleteBtn}
-                  onClick={() => { onDeleteConditionGroup(selGroup.id); setSelectedGroupId(null); }}
-                >
-                  Delete group
-                </button>
-              </div>
-            </div>
-          </div>,
-          document.body,
-        );
-      })()}
     </div>
   );
 }
@@ -6698,6 +6049,51 @@ function FlowCanvas({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 let _nextId = 100;
+
+/** Short human-readable node identifier, e.g. "node_a1b2c3".
+ *  Collision-resistant enough for a single workflow; stable for the lifetime
+ *  of the node and persisted with its state. */
+function generateShortNodeId(): string {
+  const slug = Math.random().toString(36).slice(2, 8);
+  return `node_${slug}`;
+}
+
+/** Resolve the display name of the current editor — used for updatedBy.
+ *  Falls back to "System" when no user context is available. */
+function currentUserDisplayName(): string {
+  if (typeof window === 'undefined') return 'System';
+  // Prefer an explicit global if the shell sets one; otherwise derive from
+  // the email local-part surfaced in the build's CLAUDE context.
+  const globalName = (window as unknown as { __TB_USER__?: string }).__TB_USER__;
+  if (globalName) return globalName;
+  return 'Yizzy';
+}
+
+/** Format an ISO timestamp for the Info section.
+ *  Within 3 days → relative ("Just now", "N minutes ago", "N hours ago",
+ *  "N days ago"). Older than 3 days → absolute ("Apr 23, 2026 at 10:30 AM"). */
+function formatInfoTimestamp(iso: string | undefined): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  const nowMs = Date.now();
+  const diffMs = nowMs - d.getTime();
+  // Future timestamps fall through to the absolute format below.
+  if (diffMs >= 0) {
+    const sec = Math.floor(diffMs / 1000);
+    if (sec < 5) return 'Just now';
+    if (sec < 60) return `${sec} seconds ago`;
+    const min = Math.floor(sec / 60);
+    if (min < 60) return `${min} minute${min === 1 ? '' : 's'} ago`;
+    const hr = Math.floor(min / 60);
+    if (hr < 24) return `${hr} hour${hr === 1 ? '' : 's'} ago`;
+    const day = Math.floor(hr / 24);
+    if (day < 3) return `${day} day${day === 1 ? '' : 's'} ago`;
+  }
+  const date = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  return `${date} at ${time}`;
+}
 
 const INIT_NODES_NEW: GraphNode[] = [
   { id: 'trigger-1', type: 'trigger', label: 'Choose a trigger', placeholder: 'Search events', configured: false },
@@ -6723,7 +6119,23 @@ export function BuilderPage() {
   const [status] = useState<AutomationStatus>('draft');
   const [settingsOpen, setSettingsOpen] = useState(false);
 
-  const [nodes, setNodes] = useState<GraphNode[]>(isNew ? INIT_NODES_NEW : INIT_NODES_EDIT);
+  // Backfill Info metadata on every node — covers INIT_NODES (hardcoded
+   // without Info fields) and guarantees every node on the canvas exposes a
+   // stable nodeId in the right-panel Info section. Runs once at mount.
+  const seedInfoMetadata = (list: GraphNode[]): GraphNode[] => {
+    const now = new Date().toISOString();
+    const who = currentUserDisplayName();
+    return list.map(n => ({
+      ...n,
+      nodeId: n.nodeId ?? generateShortNodeId(),
+      createdAt: n.createdAt ?? now,
+      updatedAt: n.updatedAt ?? now,
+      updatedBy: n.updatedBy ?? who,
+    }));
+  };
+  const [nodes, setNodes] = useState<GraphNode[]>(() =>
+    seedInfoMetadata(isNew ? INIT_NODES_NEW : INIT_NODES_EDIT),
+  );
   const [edges, setEdges] = useState<GraphEdge[]>(isNew ? [] : INIT_EDGES_EDIT);
 
   // ── Free-positioning: store each node's canvas coordinates ──
@@ -6791,12 +6203,13 @@ export function BuilderPage() {
     }, delay);
   }, []);
 
-  const logActivity = useCallback((content: string, bankKey?: string) => {
+  // Canvas-triggered activity entry. The second `bankKey` argument is kept
+  // for call-site compatibility but no longer triggers an AI reaction — AI
+  // only responds to explicit user messages from the chat composer or the
+  // per-node prompt input.
+  const logActivity = useCallback((content: string, _bankKey?: string) => {
     appendThreadEntry({ kind: 'activity', content });
-    if (bankKey && AI_RESPONSES[bankKey]) {
-      scheduleAiReaction(AI_RESPONSES[bankKey], bankKey);
-    }
-  }, [appendThreadEntry, scheduleAiReaction]);
+  }, [appendThreadEntry]);
 
   // Welcome message — appended once when the thread is empty on mount.
   useEffect(() => {
@@ -6841,31 +6254,38 @@ export function BuilderPage() {
     }
   }, []);
 
-  const makeNode = (type: StepType): GraphNode => ({
-    id: `${type}-${++_nextId}`,
-    type,
-    label: `Add a ${type}`,
-    placeholder: {
-      trigger:   'Search events',
-      condition: 'Search condition',
-      action:    'Search actions',
-      ai:        'Describe AI task',
-      delay:     'Set delay...',
-      policy:    'Select policies...',
-    }[type],
-    configured: false,
-    ...(type === 'ai' ? { selectedValue: 'AI Specialist', configured: true } : {}),
-    ...(type === 'delay' ? { configValues: { unit: 'minutes' } } : {}),
-    ...(type === 'policy' ? {
-      configValues: { thresholdValue: '50', thresholdMode: 'score' },
-    } : {}),
-  });
+  const makeNode = (type: StepType): GraphNode => {
+    const now = new Date().toISOString();
+    return {
+      id: `${type}-${++_nextId}`,
+      type,
+      label: `Add a ${type}`,
+      placeholder: {
+        trigger:   'Search events',
+        condition: 'Search condition',
+        action:    'Search actions',
+        ai:        'Add a Specialist',
+        delay:     'Set delay...',
+        policy:    'Select policies...',
+      }[type],
+      configured: false,
+      // Short, human-readable, stable node identifier — surfaced in the
+      // right-panel Info section and used in prompt/activity references.
+      nodeId: generateShortNodeId(),
+      createdAt: now,
+      updatedAt: now,
+      updatedBy: currentUserDisplayName(),
+      ...(type === 'delay' ? { configValues: { unit: 'minutes' } } : {}),
+      ...(type === 'policy' ? {
+        configValues: { thresholdValue: '50', thresholdMode: 'score' },
+      } : {}),
+    };
+  };
 
   /** Add a new node connected after parentId (null = new root/workflow). */
   const addNodeAfter = (
     parentId: string | null,
     type: StepType,
-    branch?: 'yes' | 'no',
     selectedValue?: string,
   ) => {
     if (!canAddNodeAfter(parentId, type, nodes, edges)) return;
@@ -6876,14 +6296,11 @@ export function BuilderPage() {
     const parentPos = parentId ? nodePositions[parentId] : null;
     let initX: number, initY: number;
     if (parentId === null) {
-      // New root trigger — place to the right of all existing nodes
       const xs = Object.values(nodePositions).map(p => p.x);
       initX = xs.length > 0 ? Math.max(...xs) + H_SPACING : 0;
       initY = CANVAS_TOP;
     } else if (parentPos) {
-      // Below parent, shifted left/right for yes/no branches
-      const branchOffset = branch === 'no' ? NODE_W * 0.8 : branch === 'yes' ? -(NODE_W * 0.8) : 0;
-      initX = parentPos.x + branchOffset;
+      initX = parentPos.x;
       initY = parentPos.y + V_SPACING;
     } else {
       initX = 0; initY = CANVAS_TOP;
@@ -6892,7 +6309,7 @@ export function BuilderPage() {
 
     setNodes(prev => [...prev, n]);
     if (parentId !== null) {
-      const e: GraphEdge = { id: `edge-${++_nextId}`, from: parentId, to: n.id, branch };
+      const e: GraphEdge = { id: `edge-${++_nextId}`, from: parentId, to: n.id };
       setEdges(prev => [...prev, e]);
     }
     setSelectedId(n.id);
@@ -6939,107 +6356,69 @@ export function BuilderPage() {
   /** Add a fresh disconnected trigger — starts a new independent workflow. */
   const addRootTrigger = () => addNodeAfter(null, 'trigger');
 
-  // Each condition node — whether grouped or standalone — is its own independent
-  // unit. Updates never bleed into sibling group members: two conditions in the
-  // same group can check entirely different fields.
+  // ── Info metadata — updatedAt / updatedBy bump on every node mutation ──
+  // Centralised so callers can thread a node through this helper instead of
+  // each setter remembering to update timestamps.
+  const touchNode = <T extends GraphNode>(node: T): T => ({
+    ...node,
+    updatedAt: new Date().toISOString(),
+    updatedBy: currentUserDisplayName(),
+  });
+  /** Touch every node whose id is in `ids`. Used by edge mutations that
+   *  affect both endpoints of a connection change. */
+  const touchNodesById = (ids: string[]) =>
+    setNodes(prev => prev.map(n => (ids.includes(n.id) ? touchNode(n) : n)));
+
+  // Each condition node owns its own conditions[] list + conditionLogic operator.
   // NOTE: activity logging for config changes is deferred until the user
   // clicks Save in the right panel (see handleSaveNodePopover). This keeps
   // the state mutation silent while the popover is open.
   const updateNode = (id: string, selectedValue: string) =>
     setNodes(prev => prev.map(n => {
       if (n.id !== id) return n;
-      const condDef = n.type === 'condition'
-        ? CONDITION_LIBRARY.find(c => c.label === selectedValue) ?? null
-        : null;
       // Clearing an Action (selectedValue === '') also resets its configValues so
       // stale fields from the previous action don't bleed into the next selection.
       const clearing = selectedValue === '';
-      return {
+      return touchNode({
         ...n,
         selectedValue,
         configured: !clearing,
         configValues: clearing && n.type === 'action' ? {} : n.configValues,
-        conditionOperator: condDef
-          ? (n.conditionOperator ?? condDef.operators[0])
-          : n.conditionOperator,
-        conditionValues: condDef
-          ? (n.conditionValues ?? [])
-          : n.conditionValues,
-      };
+      });
     }));
 
+  /** Legacy single-op/value setter — still used by the AI tool handler for condition
+   *  steps. Persists into the first condition entry, creating one if needed. */
   const updateConditionConfig = (id: string, op: string, vals: string[]) =>
-    setNodes(prev => prev.map(n =>
-      n.id === id ? { ...n, conditionOperator: op, conditionValues: vals } : n,
-    ));
-
-  /** Update a single branch node's conditionValues without touching any sibling. */
-  const updateBranchValues = (nodeId: string, vals: string[]) =>
-    setNodes(prev => prev.map(n => n.id === nodeId ? { ...n, conditionValues: vals } : n));
-
-  /** Update a single branch node's operator+values without syncing across the group. */
-  const updateBranchConfig = (nodeId: string, op: string, vals: string[]) =>
-    setNodes(prev => prev.map(n =>
-      n.id === nodeId ? { ...n, conditionOperator: op, conditionValues: vals } : n
-    ));
-
-  /** Set the output branch mode for a standalone condition node. Pass '' to clear. */
-  const updateBranchMode = (nodeId: string, mode: 'yes-no' | 'multi-value' | '') => {
-    setEdges(prev => prev.filter(e => e.from !== nodeId));
     setNodes(prev => prev.map(n => {
-      if (n.id !== nodeId) return n;
-      const condDef = CONDITION_LIBRARY.find(c => c.label === n.selectedValue);
-      const defaultOp = condDef?.operators[0] ?? 'equals';
-      return {
-        ...n,
-        branchMode: mode === '' ? undefined : mode,
-        // Auto-populate first empty branch when switching to multi-value
-        conditionBranches: mode === 'multi-value'
-          ? (n.conditionBranches?.length ? n.conditionBranches : [{ operator: n.conditionOperator ?? defaultOp, value: '' }])
-          : n.conditionBranches,
-      };
-    }));
-  };
-
-  /** Add a new empty branch entry to a multi-value condition node. */
-  const addBranchValue = (nodeId: string) => {
-    const node = nodes.find(n => n.id === nodeId);
-    if (!node) return;
-    const condDef = CONDITION_LIBRARY.find(c => c.label === node.selectedValue);
-    const defaultOp = condDef?.operators[0] ?? 'equals';
-    setNodes(prev => prev.map(n =>
-      n.id === nodeId
-        ? { ...n, conditionBranches: [...(n.conditionBranches ?? []), { operator: defaultOp, value: '' }] }
-        : n
-    ));
-  };
-
-  /** Remove a branch entry from a multi-value condition node, and disconnect any edge using that branch's value label. */
-  const removeBranchValue = (nodeId: string, index: number) => {
-    const node = nodes.find(n => n.id === nodeId);
-    if (!node) return;
-    const branches = node.conditionBranches ?? [];
-    const removedVal = branches[index]?.value;
-    if (removedVal) {
-      setEdges(prev => prev.filter(e => !(e.from === nodeId && e.branch === removedVal)));
-    }
-    setNodes(prev => prev.map(n =>
-      n.id === nodeId ? { ...n, conditionBranches: branches.filter((_, i) => i !== index) } : n
-    ));
-  };
-
-  /** Update a specific branch entry's operator and/or value. Disconnects edge if value label changes. */
-  const updateConditionBranch = (nodeId: string, index: number, operator: string, value: string) => {
-    setNodes(prev => prev.map(n => {
-      if (n.id !== nodeId) return n;
-      const branches = [...(n.conditionBranches ?? [])];
-      const old = branches[index];
-      if (old && old.value && old.value !== value) {
-        // Value (= handle label) changed — disconnect edge that was wired to old label
-        setEdges(ep => ep.filter(e => !(e.from === nodeId && e.branch === old.value)));
+      if (n.id !== id || n.type !== 'condition') return n;
+      const conds = n.conditions ?? [];
+      if (conds.length === 0) {
+        return touchNode({
+          ...n,
+          conditions: [{ fieldId: '', operator: op, values: vals }],
+          conditionLogic: n.conditionLogic ?? 'AND',
+        });
       }
-      branches[index] = { operator, value };
-      return { ...n, conditionBranches: branches };
+      const next = conds.map((c, i) => i === 0 ? { ...c, operator: op, values: vals } : c);
+      return touchNode({ ...n, conditions: next });
+    }));
+
+  /** Replace the full conditions list + logic operator for a condition node. Also syncs
+   *  `selectedValue` and `configured` so legacy display paths (node icon, canvas
+   *  summary fallback) continue to work. */
+  const updateConditions = (nodeId: string, conditions: ConditionEntry[], logic: 'AND' | 'OR') => {
+    setNodes(prev => prev.map(n => {
+      if (n.id !== nodeId) return n;
+      const first = conditions[0];
+      const firstDef = first ? CONDITION_LIBRARY.find(d => d.id === first.fieldId) ?? null : null;
+      return touchNode({
+        ...n,
+        conditions,
+        conditionLogic: logic,
+        selectedValue: firstDef?.label ?? (conditions.length > 0 ? n.selectedValue : undefined),
+        configured: conditions.length > 0,
+      });
     }));
   };
 
@@ -7053,20 +6432,30 @@ export function BuilderPage() {
         // Keep the node's selectedValue/configured in sync with its live config
         // so the canvas card renders the duration summary or the placeholder.
         const summary = formatDelaySummary(nextVals);
-        return {
+        return touchNode({
           ...n,
           configValues: nextVals,
           selectedValue: summary ?? undefined,
           configured:    summary !== null,
-        };
+        });
       }
-      return { ...n, configValues: nextVals };
+      return touchNode({ ...n, configValues: nextVals });
     }));
 
   const duplicateNode = (id: string) => {
     const src = nodes.find(n => n.id === id);
     if (!src) return;
-    const copy: GraphNode = { ...src, id: `${src.type}-${++_nextId}` };
+    const now = new Date().toISOString();
+    const copy: GraphNode = {
+      ...src,
+      id: `${src.type}-${++_nextId}`,
+      // Duplicates get their own Info identity — fresh nodeId + createdAt,
+      // same-time updatedAt, and ownership assigned to the current user.
+      nodeId: generateShortNodeId(),
+      createdAt: now,
+      updatedAt: now,
+      updatedBy: currentUserDisplayName(),
+    };
     setNodes(prev => [...prev, copy]);
     const srcPos = nodePositions[id] ?? { x: 20, y: 20 };
     setNodePositions(prev => ({ ...prev, [copy.id]: { x: srcPos.x + 24, y: srcPos.y + 24 } }));
@@ -7102,8 +6491,8 @@ export function BuilderPage() {
     setNodePositions(prev => ({ ...prev, [n.id]: { x: initX, y: initY } }));
 
     // Replace old edge with two new edges: from→new, new→to
-    const e1: GraphEdge = { id: `edge-${++_nextId}`, from: edge.from, to: n.id,   branch: edge.branch };
-    const e2: GraphEdge = { id: `edge-${++_nextId}`, from: n.id,     to: edge.to  };
+    const e1: GraphEdge = { id: `edge-${++_nextId}`, from: edge.from, to: n.id   };
+    const e2: GraphEdge = { id: `edge-${++_nextId}`, from: n.id,     to: edge.to };
     setEdges(prev => [...prev.filter(e => e.id !== edge.id), e1, e2]);
     setNodes(prev => [...prev, n]);
     setSelectedId(n.id);
@@ -7111,17 +6500,13 @@ export function BuilderPage() {
 
   // ── Add edge between two existing nodes ──
   // Validation (getConnectionError) is performed by the sole caller in the
-  // drag-drop MouseUp handler, which has the context to know when the target
-  // was resolved through a group-drop and should bypass the
-  // "can't connect to a group child" rule. Re-running the strict check here
-  // would reject legitimate group drops.
-  const addEdge = (fromNodeId: string, toNodeId: string, branch?: string) => {
+  // drag-drop MouseUp handler.
+  const addEdge = (fromNodeId: string, toNodeId: string) => {
     if (edges.some(e => e.from === fromNodeId && e.to === toNodeId)) return;
-    // Silent rejection (e.g. delay → delay): no toast, no edge
     if (isConnectionSilentlyBlocked(fromNodeId, toNodeId, nodes)) return;
-    // FIX 1 & 2: each labeled handle (yes/no) may only have one outgoing edge
-    if (branch && edges.some(e => e.from === fromNodeId && e.branch === branch)) return;
-    setEdges(prev => [...prev, { id: `edge-${++_nextId}`, from: fromNodeId, to: toNodeId, ...(branch ? { branch } : {}) }]);
+    setEdges(prev => [...prev, { id: `edge-${++_nextId}`, from: fromNodeId, to: toNodeId }]);
+    // Connection changes count as mutations on both endpoint nodes for Info.
+    touchNodesById([fromNodeId, toNodeId]);
     const fromNode = nodes.find(n => n.id === fromNodeId);
     const toNode   = nodes.find(n => n.id === toNodeId);
     if (fromNode && toNode) {
@@ -7137,6 +6522,7 @@ export function BuilderPage() {
     const edge = edges.find(e => e.id === edgeId);
     setEdges(prev => prev.filter(e => e.id !== edgeId));
     if (edge) {
+      touchNodesById([edge.from, edge.to]);
       const fromNode = nodes.find(n => n.id === edge.from);
       const toNode   = nodes.find(n => n.id === edge.to);
       if (fromNode && toNode) {
@@ -7166,9 +6552,11 @@ export function BuilderPage() {
 
   /**
    * Fired when the user commits a node's configuration via the right-panel
-   * Save button. Emits a single activity entry summarizing the node's current
-   * state (plus an AI reaction) — regardless of how many field edits led up
-   * to it. Fields-in-flight don't log until the user explicitly hits Save.
+   * Save button. Emits a `node_change` thread entry so the inline
+   * NodeChangeCard renders in the AI thread. No AI reaction is scheduled —
+   * canvas-triggered activity is silent; AI only responds to explicit user
+   * messages from the chat composer or the per-node prompt input.
+   * Fields-in-flight don't log until the user explicitly hits Save.
    */
   const handleSaveNodePopover = useCallback((nodeId: string) => {
     const node = nodes.find(n => n.id === nodeId);
@@ -7177,8 +6565,18 @@ export function BuilderPage() {
     const segs = buildNodeSnippet(node);
     const summary = segs ? segs.map(s => s.text).join('').trim() : node.selectedValue;
     const content = summary ? `${label} configured \u2014 ${summary}` : `${label} saved`;
-    logActivity(content, 'configure');
-  }, [nodes, logActivity]);
+    appendThreadEntry({
+      kind: 'node_change',
+      content,
+      nodeChange: {
+        nodes: [{ id: node.id, type: node.type, name: summary || label }],
+        changeType: 'Configured',
+        headerLabel: `${label} configured`,
+        stats: [1],
+        side: 'outbound',
+      },
+    });
+  }, [nodes, appendThreadEntry]);
 
   /**
    * Shared entry point for the node-level floating AI input. Pipes the message
@@ -7206,11 +6604,11 @@ export function BuilderPage() {
     logActivity(`${STEP_CONFIG[type].label} added`, `add_${type}`);
   };
 
-  const createNodeAndConnect = (fromId: string, type: StepType, x: number, y: number, branch?: string | null) => {
+  const createNodeAndConnect = (fromId: string, type: StepType, x: number, y: number) => {
     const n = makeNode(type);
     setNodePositions(prev => ({ ...prev, [n.id]: { x: x - NODE_W / 2, y: y - NODE_H / 2 } }));
     setNodes(prev => [...prev, n]);
-    const edge: GraphEdge = { id: `edge-${++_nextId}`, from: fromId, to: n.id, ...(branch ? { branch } : {}) };
+    const edge: GraphEdge = { id: `edge-${++_nextId}`, from: fromId, to: n.id };
     setEdges(prev => [...prev, edge]);
     setSelectedId(n.id);
     logActivity(`${STEP_CONFIG[type].label} added`, `add_${type}`);
@@ -7234,6 +6632,7 @@ export function BuilderPage() {
 
   const updateNodePosition = (id: string, x: number, y: number) => {
     setNodePositions(prev => ({ ...prev, [id]: { x, y } }));
+    touchNodesById([id]);
   };
 
   return (
@@ -7263,9 +6662,6 @@ export function BuilderPage() {
           onLibNodeDragStart={(item) => setDraggingLibNode(item)}
           onLibNodeDragEnd={() => setDraggingLibNode(null)}
           onLibNodeSelect={(item) => { handleCanvasDropAtPos(item, 0, CANVAS_TOP); setSelectedId(null); }}
-          editNodeMode={editNodeMode}
-          editingCount={editingNodeIds.size}
-          onToggleEditMode={toggleEditMode}
           aiPrompt={globalAiPrompt}
           onAiPromptChange={setGlobalAiPrompt}
           aiTyping={aiTyping}
@@ -7299,12 +6695,7 @@ export function BuilderPage() {
           editNodeMode={editNodeMode}
           editingNodeIds={editingNodeIds}
           onEditNodeToggle={handleEditNodeToggle}
-          onUpdateBranchValues={updateBranchValues}
-          onUpdateBranchConfig={updateBranchConfig}
-          onUpdateBranchMode={updateBranchMode}
-          onAddBranchValue={addBranchValue}
-          onRemoveBranchValue={removeBranchValue}
-          onUpdateConditionBranch={updateConditionBranch}
+          onUpdateConditions={updateConditions}
           autoTidyToken={autoTidyToken}
           fitToken={fitToken}
           onNodeAiSubmit={handleNodeAiSubmit}

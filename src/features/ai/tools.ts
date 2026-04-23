@@ -29,11 +29,6 @@ export const GLOBAL_TOOLS: Anthropic.Tool[] = [
             'The exact label of the library item to select for this node. ' +
             'Must match one of the available labels for the given type.',
         },
-        branch: {
-          type: 'string',
-          enum: ['yes', 'no'],
-          description: 'For condition nodes only — which branch this node hangs on.',
-        },
       },
     },
   },
