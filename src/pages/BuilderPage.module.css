@@ -2270,18 +2270,20 @@
   opacity: 0;
   transition: opacity var(--duration-fast) var(--ease-default);
 }
+.nodeWrapper:hover .nodeDotsDropdown,
 .flowNodeOuter:hover .nodeDotsDropdown,
 .flowNodeOuter:focus-within .nodeDotsDropdown,
-.nodeWrapper[data-selected] .nodeDotsDropdown {
+.nodeWrapper[data-selected] .nodeDotsDropdown,
+.flowNodeOuter:has([data-active="true"]) .nodeDotsDropdown,
+.flowNodeOuter:has([data-filled="true"][data-active="true"]) .nodeDotsDropdown {
   opacity: 1;
 }
 
-/* Condition node — only in the active state (dark slate fill), flip the dots
-   icon to inverse-primary so it reads clearly against the saturated surface.
-   Other node types / states keep Alloy's default button color. */
+/* Condition node — keep the dots icon in the primary content color on
+   active state so it reads as dark, matching other node types. */
 .conditionNodeCard[data-active="true"] ~ .nodeDotsDropdown,
 .conditionNodeCard[data-active="true"] ~ .nodeDotsDropdown button {
-  color: var(--color-content-inverse-primary);
+  color: var(--color-content-primary);
 }
 
 .nodeIcon {
@@ -5430,6 +5432,115 @@
   color: var(--color-content-primary);
 }
 
+/* ── Condition groups ─────────────────────────────────────────────────────
+   Each group is a labeled AND frame; OR divider pill sits between frames. */
+
+.conditionGroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-md);
+}
+
+.conditionGroupHeader {
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--color-content-tertiary);
+}
+
+.conditionGroupRows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* "OR" divider between groups — centered pill on a horizontal baseline. */
+.conditionOrDivider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  margin: var(--space-1) 0;
+}
+.conditionOrDivider::before {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; top: 50%;
+  height: 1px;
+  background: var(--color-border-opaque);
+}
+.conditionOrBadge {
+  position: relative;
+  padding: 2px 10px;
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-full);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--tracking-wide);
+  color: var(--color-content-tertiary);
+  text-transform: uppercase;
+  line-height: var(--line-height-tight);
+}
+
+/* Inline AND/OR picker shown when the user clicks the global "+ Add
+   condition" while at least one condition exists. Vertical stack of two
+   choice buttons plus a small cancel X. */
+.conditionAddPrompt {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-md);
+  position: relative;
+}
+.conditionAddPromptOption {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-primary);
+  cursor: pointer;
+  transition: background var(--duration-fast), border-color var(--duration-fast);
+}
+.conditionAddPromptOption:hover {
+  background: var(--color-bg-secondary);
+  border-color: var(--color-border-focus);
+}
+.conditionAddPromptCancel {
+  position: absolute;
+  top: var(--space-1);
+  right: var(--space-1);
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--color-content-tertiary);
+  cursor: pointer;
+}
+.conditionAddPromptCancel:hover {
+  color: var(--color-content-primary);
+}
+
 /* ─── Condition node on the canvas — Figma-spec styling ─────────────────────── */
 
 /* Applied to .flowNode when the step is a condition type, to enforce the
@@ -5576,6 +5687,12 @@
 }
 .conditionNodeTopSecondary {
   color: var(--Alloy-slate-300);
+  /* Match delay pill font style — 14px / semibold / tracking-wide */
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-relaxed);
+  letter-spacing: var(--tracking-wide);
   white-space: nowrap;
   text-overflow: ellipsis;
   overflow: hidden;
@@ -5608,6 +5725,15 @@
 .flowNodeOuterPolicy {
   width: 260px;
   margin-inline: -30px;
+  overflow: visible;
+}
+/* Move the dots menu to the canvas just past the card's right edge so it
+   doesn't overlap the gradient card artwork — mirrors condition node. */
+.flowNodeOuterPolicy .nodeDotsDropdown {
+  top: 50%;
+  right: auto;
+  left: calc(100% + 8px);
+  transform: translateY(-50%);
 }
 
 /* Default: the policy gradient is tinted behind a near-opaque surface layer
@@ -5733,9 +5859,28 @@
 .policyNodeCard[data-active="true"] .policyNodeTopSecondary {
   color: var(--color-content-inverse-primary);
 }
+/* Empty + active — text picks up the coral stop so it matches the icon
+   stroke's perceived colour on the warm gradient card background. */
+.policyNodeCard[data-filled="false"][data-active="true"] .policyNodeTopSecondary,
+.policyNodeCard[data-filled="false"][data-active="true"] .policyNodeTopPrimary {
+  color: #FFA79B;
+  background: none;
+  -webkit-text-fill-color: currentColor;
+}
+/* Empty + default — icon stroke picks up the coral stop so it matches the
+   placeholder text colour. */
+.policyNodeCard[data-filled="false"]:not([data-active="true"]) .policyNodeIconBox {
+  color: #FFA79B;
+}
 .policyNodeTopSecondary {
   /* Coral stop from the policy gradient — matches dark-mode primary tint */
   color: #FFA79B;
+  /* Match delay pill font style — 14px / semibold / tracking-wide */
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-relaxed);
+  letter-spacing: var(--tracking-wide);
   white-space: nowrap;
   text-overflow: ellipsis;
   overflow: hidden;

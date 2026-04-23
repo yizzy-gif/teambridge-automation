@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, Fragment, isValidElement, cloneElement } from 'react';
+import { useState, useRef, useEffect, useMemo, useCallback, Fragment, isValidElement, cloneElement } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useParams } from 'react-router-dom';
 import { clsx } from 'clsx';
@@ -179,6 +179,13 @@ interface ConditionEntry {
   values: string[];
 }
 
+/** A group of conditions. Conditions inside the group are AND-ed together;
+ *  multiple groups on a node are OR-ed between each other. */
+interface ConditionGroup {
+  id: string;
+  conditions: ConditionEntry[];
+}
+
 interface GraphNode {
   id: string;
   type: StepType;
@@ -191,10 +198,14 @@ interface GraphNode {
   conditionOperator?: string;
   conditionValues?: string[];
   configValues?: Record<string, string>;
-  /** New multi-condition model for condition nodes. Up to 5 entries. */
+  /** Legacy flat-list model — kept for backwards compatibility. New code
+   *  reads `conditionGroups` and derives from this list when absent. */
   conditions?: ConditionEntry[];
-  /** Logic operator joining multiple conditions. Only meaningful when conditions.length >= 2. */
+  /** Legacy flat-list logic operator. */
   conditionLogic?: 'AND' | 'OR';
+  /** New group-based model: within-group = AND, between-groups = OR.
+   *  Example `(A && B) || C` → `[{ conditions: [A, B] }, { conditions: [C] }]`. */
+  conditionGroups?: ConditionGroup[];
 
   /** ── Info metadata — surfaced in the right-panel "Info" section ──
    *  `nodeId` is the stable short human-readable ID (e.g. "node_a1b2c3")
@@ -219,6 +230,95 @@ interface GraphEdge {
 type FlowStep = GraphNode;
 
 const MAX_CONDITIONS = 5;
+
+/** Return the group model for a step — falls back to the legacy flat list
+ *  when `conditionGroups` is absent. Pure AND → one group; pure OR → one
+ *  group per condition. Always returns a stable reference for empty. */
+function deriveConditionGroups(step: GraphNode): ConditionGroup[] {
+  if (step.conditionGroups) return step.conditionGroups;
+  const conds = step.conditions ?? [];
+  if (conds.length === 0) return [];
+  const logic = step.conditionLogic ?? 'AND';
+  if (logic === 'AND') return [{ id: 'g1', conditions: conds }];
+  return conds.map((c, i) => ({ id: `g${i + 1}`, conditions: [c] }));
+}
+
+/** Total condition count across all groups. */
+function countConditions(groups: ConditionGroup[]): number {
+  return groups.reduce((n, g) => n + g.conditions.length, 0);
+}
+
+/** Collapse groups to the legacy flat list + logic operator (for migration
+ *  back-compat). Mixed shapes that can't be cleanly represented default to
+ *  AND and concatenate — a lossy projection, but the canonical source of
+ *  truth for the UI is the `conditionGroups` field. */
+function flattenConditionGroups(groups: ConditionGroup[]): { conditions: ConditionEntry[]; conditionLogic: 'AND' | 'OR' } {
+  const all = groups.flatMap(g => g.conditions);
+  if (groups.length <= 1) return { conditions: all, conditionLogic: 'AND' };
+  if (groups.every(g => g.conditions.length === 1)) {
+    return { conditions: all, conditionLogic: 'OR' };
+  }
+  return { conditions: all, conditionLogic: 'AND' };
+}
+
+let _nextGroupId = 0;
+function makeGroupId(): string {
+  return `g${++_nextGroupId}_${Math.random().toString(36).slice(2, 6)}`;
+}
+
+function makeEmptyCondition(): ConditionEntry {
+  const def = CONDITION_LIBRARY[0];
+  return { fieldId: '', operator: def?.operators?.[0] ?? 'equals', values: [] };
+}
+
+/** Evaluate a single group — returns true if ALL its conditions pass.
+ *  Predicate is injected so callers can decide what "pass" means for a given
+ *  condition (e.g. runtime vs. editor-time placeholder check). */
+function groupPasses(group: ConditionGroup, pred: (c: ConditionEntry) => boolean): boolean {
+  if (group.conditions.length === 0) return false;
+  return group.conditions.every(pred);
+}
+
+/** Evaluate all groups — returns true if ANY group passes. */
+function groupsAnyPasses(groups: ConditionGroup[], pred: (c: ConditionEntry) => boolean): boolean {
+  if (groups.length === 0) return false;
+  return groups.some(g => groupPasses(g, pred));
+}
+
+/** Format a single condition entry as "Label op value(s)". */
+function formatConditionEntry(c: ConditionEntry): string {
+  const def = CONDITION_LIBRARY.find(d => d.id === c.fieldId) ?? null;
+  const opLabel = OPERATOR_LABELS[c.operator] ?? c.operator;
+  const parts: string[] = [def?.label ?? '?', opLabel];
+  if (c.values.length > 0) parts.push(c.values.join(', '));
+  return parts.filter(Boolean).join(' ');
+}
+
+/** Canvas expression formatter — uses `&&` within a group and `||` between
+ *  groups. Parentheses wrap multi-condition groups only when there are 2+
+ *  groups overall. */
+function formatConditionExpr(groups: ConditionGroup[]): string {
+  if (groups.length === 0) return '';
+  const totalCount = countConditions(groups);
+  // Single condition total — render the full "Label op value" form.
+  if (totalCount === 1) {
+    const only = groups[0].conditions[0];
+    return only ? formatConditionEntry(only) : '';
+  }
+  // Collapse each condition to its field label for readability in the multi
+  // case; the top-secondary row in the flow card surfaces operator + value
+  // separately when the node has exactly one condition.
+  const label = (c: ConditionEntry) =>
+    (CONDITION_LIBRARY.find(d => d.id === c.fieldId)?.label) ?? '?';
+  const formatGroup = (g: ConditionGroup): string => {
+    const inner = g.conditions.map(label).join(' && ');
+    // Parens only when there's at least 2 conditions in this group AND at
+    // least 2 groups overall (so we never paren a single-condition group,
+    // and never paren a single group regardless of its size).
+    return g.conditions.length >= 2 && groups.length >= 2 ? `(${inner})` : inner;
+  };
+  return groups.map(formatGroup).join(' || ');
+}
 
 // ─── Icons ──────────────────────────────────────────────────────────────────────
 
@@ -2490,11 +2590,289 @@ interface NodePopoverProps {
   onSave?: () => void;
   /** Update the full conditions list + logic operator for a condition node. */
   onUpdateConditions?: (conditions: ConditionEntry[], logic: 'AND' | 'OR') => void;
+  /** Group-based condition updater — replaces the node's `conditionGroups`. */
+  onUpdateConditionGroups?: (groups: ConditionGroup[]) => void;
   /** The selected label of the workflow's trigger step, used by the AI Specialist Test tab. */
   triggerLabel?: string;
 }
 
-function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpdateConfigField, onClose, onSave, onUpdateConditions, triggerLabel }: NodePopoverProps) {
+// ─── ConditionGroupsEditor ───────────────────────────────────────────────────
+// Group-based condition editor. Renders each group as a labeled "AND" frame
+// with its own condition rows + per-group "+ Add condition" button. Between
+// groups shows an "OR" divider badge. A global "+ Add condition" at the
+// bottom prompts the user to pick AND (same last group) or OR (new group)
+// when at least one condition exists.
+
+interface ConditionRowProps {
+  entry: ConditionEntry;
+  showRemove: boolean;
+  onRemove: () => void;
+  onPatch: (patch: Partial<ConditionEntry>) => void;
+  index: number;
+}
+
+function ConditionRow({ entry, showRemove, onRemove, onPatch, index }: ConditionRowProps) {
+  const def = entry.fieldId
+    ? CONDITION_LIBRARY.find(d => d.id === entry.fieldId) ?? null
+    : null;
+  const ops = def?.operators ?? [];
+  const op  = entry.operator || ops[0] || '';
+  const vals = entry.values;
+  const isNoVal  = ['is_empty', 'is_not_empty', 'missing_required'].includes(op);
+  const isIn     = op === 'in' || op === 'not_in';
+  const isWithin = op === 'within_next';
+  return (
+    <div className={styles.conditionRow}>
+      <div className={styles.conditionRowHead}>
+        <span className={styles.conditionRowIndex}>{index + 1}</span>
+        {showRemove && (
+          <button
+            type="button"
+            className={styles.conditionRowRemoveBtn}
+            onClick={onRemove}
+            aria-label="Remove condition"
+          >
+            <XIcon size={12} />
+          </button>
+        )}
+      </div>
+      <PopoverSelect
+        value={entry.fieldId}
+        onChange={newId => {
+          const newDef = CONDITION_LIBRARY.find(d => d.id === newId);
+          onPatch({ fieldId: newId, operator: newDef?.operators[0] ?? '', values: [] });
+        }}
+        placeholder="Select field…"
+        options={[
+          { value: '', label: 'Select field…' },
+          ...CONDITION_LIBRARY.map(d => ({ value: d.id, label: d.label })),
+        ]}
+      />
+      {def && (
+        <>
+          <PopoverSelect
+            value={op}
+            onChange={newOp => onPatch({ operator: newOp, values: [] })}
+            options={ops.map(o => ({ value: o, label: OPERATOR_LABELS[o] ?? o }))}
+          />
+          {!isNoVal && isIn && def.valueOptions && (
+            <div className={styles.popoverTags}>
+              {def.valueOptions.map(opt => {
+                const selected = vals.includes(opt);
+                return (
+                  <button
+                    key={opt}
+                    type="button"
+                    className={clsx(styles.popoverTag, selected && styles.popoverTagSelected)}
+                    onClick={() => onPatch({
+                      values: selected ? vals.filter(v => v !== opt) : [...vals, opt],
+                    })}
+                  >{opt}</button>
+                );
+              })}
+            </div>
+          )}
+          {!isNoVal && isIn && !def.valueOptions && (
+            <ConditionTagInput values={vals} onChange={next => onPatch({ values: next })} />
+          )}
+          {!isNoVal && isWithin && (
+            <div className={styles.conditionWithinNext}>
+              <NumberField
+                size="md" min={1} placeholder="30"
+                value={vals[0] ?? ''}
+                onChange={e => onPatch({ values: [e.target.value, vals[1] ?? 'days'] })}
+                aria-label="Time amount"
+                className={styles.conditionWithinNextNum}
+              />
+              <PopoverSelect
+                value={vals[1] ?? 'days'}
+                onChange={unit => onPatch({ values: [vals[0] ?? '', unit] })}
+                className={styles.conditionWithinNextUnit}
+                options={[
+                  { value: 'hours', label: 'hours' },
+                  { value: 'days',  label: 'days'  },
+                  { value: 'weeks', label: 'weeks' },
+                ]}
+              />
+            </div>
+          )}
+          {!isNoVal && !isIn && !isWithin && def.valueOptions && (
+            <PopoverSelect
+              value={vals[0] ?? ''}
+              onChange={v => onPatch({ values: [v] })}
+              placeholder="Select value…"
+              options={[
+                { value: '', label: 'Select value…' },
+                ...def.valueOptions.map(opt => ({ value: opt, label: opt })),
+              ]}
+            />
+          )}
+          {!isNoVal && !isIn && !isWithin && !def.valueOptions && (
+            <TextField
+              size="md" placeholder="Enter value…"
+              value={vals[0] ?? ''}
+              onChange={e => onPatch({ values: [e.target.value] })}
+              aria-label="Condition value"
+            />
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+interface ConditionGroupsEditorProps {
+  step: FlowStep;
+  onUpdateConditionGroups?: (groups: ConditionGroup[]) => void;
+}
+
+function ConditionGroupsEditor({ step, onUpdateConditionGroups }: ConditionGroupsEditorProps) {
+  const groups = useMemo(() => deriveConditionGroups(step), [step]);
+  const total = countConditions(groups);
+  // Local-only "Add condition" prompt state (AND vs OR). Non-null = showing
+  // the inline picker; null = idle. Only relevant when there's already at
+  // least one condition on the node.
+  const [addPromptOpen, setAddPromptOpen] = useState(false);
+
+  const commit = (next: ConditionGroup[]) => onUpdateConditionGroups?.(next);
+
+  const patchCondition = (gIdx: number, cIdx: number, patch: Partial<ConditionEntry>) => {
+    commit(groups.map((g, gi) =>
+      gi === gIdx
+        ? { ...g, conditions: g.conditions.map((c, ci) => ci === cIdx ? { ...c, ...patch } : c) }
+        : g
+    ));
+  };
+
+  const removeCondition = (gIdx: number, cIdx: number) => {
+    const next = groups
+      .map((g, gi) => gi === gIdx
+        ? { ...g, conditions: g.conditions.filter((_, ci) => ci !== cIdx) }
+        : g)
+      // Drop any group left with zero conditions.
+      .filter(g => g.conditions.length > 0);
+    commit(next);
+  };
+
+  /** Add an empty condition to the last group (AND path). */
+  const addToLastGroup = () => {
+    if (total >= MAX_CONDITIONS) return;
+    if (groups.length === 0) {
+      commit([{ id: makeGroupId(), conditions: [makeEmptyCondition()] }]);
+      return;
+    }
+    const last = groups[groups.length - 1];
+    commit([
+      ...groups.slice(0, -1),
+      { ...last, conditions: [...last.conditions, makeEmptyCondition()] },
+    ]);
+  };
+
+  /** Add an empty condition as a brand-new group (OR path). */
+  const addAsNewGroup = () => {
+    if (total >= MAX_CONDITIONS) return;
+    commit([...groups, { id: makeGroupId(), conditions: [makeEmptyCondition()] }]);
+  };
+
+  /** First-condition add — no prompt, always just creates the first group. */
+  const addFirst = () => addToLastGroup();
+
+  return (
+    <>
+      <div className={styles.popoverDivider} />
+      <div className={styles.popoverSection}>
+        <p className={styles.popoverSectionLabel}>Conditions</p>
+        {groups.length === 0 && (
+          <p className={styles.popoverConfigPlaceholder}>
+            No conditions yet. Add one to check a field.
+          </p>
+        )}
+
+        {groups.map((group, gIdx) => (
+          <Fragment key={group.id}>
+            <div className={styles.conditionGroup}>
+              <div className={styles.conditionGroupHeader}>AND</div>
+              <div className={styles.conditionGroupRows}>
+                {group.conditions.map((c, cIdx) => (
+                  <ConditionRow
+                    key={cIdx}
+                    entry={c}
+                    index={cIdx}
+                    showRemove={total > 1}
+                    onRemove={() => removeCondition(gIdx, cIdx)}
+                    onPatch={(patch) => patchCondition(gIdx, cIdx, patch)}
+                  />
+                ))}
+              </div>
+              {/* Per-group add (AND — same group). Respects the 5-total cap. */}
+              {total < MAX_CONDITIONS && (
+                <button
+                  type="button"
+                  className={styles.addConditionBtn}
+                  onClick={() => {
+                    if (total >= MAX_CONDITIONS) return;
+                    commit(groups.map((g, gi) => gi === gIdx
+                      ? { ...g, conditions: [...g.conditions, makeEmptyCondition()] }
+                      : g));
+                  }}
+                >
+                  <PlusIcon size={10} />
+                  Add condition
+                </button>
+              )}
+            </div>
+            {gIdx < groups.length - 1 && (
+              <div className={styles.conditionOrDivider} aria-hidden>
+                <span className={styles.conditionOrBadge}>OR</span>
+              </div>
+            )}
+          </Fragment>
+        ))}
+
+        {/* Global add. With 0 conditions: add the first. Otherwise prompt
+            the user to choose AND (same group) or OR (new group). */}
+        {total < MAX_CONDITIONS && !addPromptOpen && (
+          <button
+            type="button"
+            className={styles.addConditionBtn}
+            onClick={() => (total === 0 ? addFirst() : setAddPromptOpen(true))}
+          >
+            <PlusIcon size={10} />
+            Add condition
+          </button>
+        )}
+        {addPromptOpen && (
+          <div className={styles.conditionAddPrompt} role="group" aria-label="Add condition — choose logic">
+            <button
+              type="button"
+              className={styles.conditionAddPromptOption}
+              onClick={() => { addToLastGroup(); setAddPromptOpen(false); }}
+            >
+              AND — add to same group
+            </button>
+            <button
+              type="button"
+              className={styles.conditionAddPromptOption}
+              onClick={() => { addAsNewGroup(); setAddPromptOpen(false); }}
+            >
+              OR — add as new group
+            </button>
+            <button
+              type="button"
+              className={styles.conditionAddPromptCancel}
+              onClick={() => setAddPromptOpen(false)}
+              aria-label="Cancel"
+            >
+              <XIcon size={12} />
+            </button>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpdateConfigField, onClose, onSave, onUpdateConditions, onUpdateConditionGroups, triggerLabel }: NodePopoverProps) {
   const cfg = STEP_CONFIG[step.type];
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
@@ -2901,193 +3279,15 @@ function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpda
       )}
 
       {/* ══════════════════════════════════════════════════════════════════
-          CONDITION NODE — multi-condition list with AND/OR logic operator.
+          CONDITION NODE — group-based logic model.
+          Within-group = AND, between-groups = OR. Up to 5 conditions total.
           ══════════════════════════════════════════════════════════════════ */}
-      {step.type === 'condition' && (() => {
-        const conds  = step.conditions ?? [];
-        const logic  = step.conditionLogic ?? 'AND';
-        const update = (next: ConditionEntry[], nextLogic: 'AND' | 'OR' = logic) =>
-          onUpdateConditions?.(next, nextLogic);
-
-        const addCondition = () => {
-          if (conds.length >= MAX_CONDITIONS) return;
-          const def = CONDITION_LIBRARY[0];
-          update([...conds, { fieldId: '', operator: def?.operators[0] ?? 'equals', values: [] }]);
-        };
-        const removeCondition = (i: number) => {
-          const next = conds.filter((_, j) => j !== i);
-          update(next);
-        };
-        const patchCondition = (i: number, patch: Partial<ConditionEntry>) => {
-          const next = conds.map((c, j) => j === i ? { ...c, ...patch } : c);
-          update(next);
-        };
-
-        return (
-          <>
-            {/* ── AND/OR toggle — only for 2+ conditions ── */}
-            {conds.length >= 2 && (
-              <div className={styles.popoverSection}>
-                <div className={styles.conditionLogicToggle} role="group" aria-label="Condition logic">
-                  {(['AND', 'OR'] as const).map(op => (
-                    <button
-                      key={op}
-                      type="button"
-                      className={clsx(
-                        styles.conditionLogicOption,
-                        logic === op && styles.conditionLogicOptionActive,
-                      )}
-                      onClick={() => update(conds, op)}
-                      aria-pressed={logic === op}
-                    >
-                      {op === 'AND' ? 'AND — all pass' : 'OR — at least one passes'}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <div className={styles.popoverDivider} />
-
-            {/* ── Conditions list ── */}
-            <div className={styles.popoverSection}>
-              <p className={styles.popoverSectionLabel}>Conditions</p>
-              {conds.length === 0 && (
-                <p className={styles.popoverConfigPlaceholder}>
-                  No conditions yet. Add one to check a field.
-                </p>
-              )}
-              {conds.map((c, i) => {
-                const def = c.fieldId
-                  ? CONDITION_LIBRARY.find(d => d.id === c.fieldId) ?? null
-                  : null;
-                const ops = def?.operators ?? [];
-                const op  = c.operator || ops[0] || '';
-                const vals = c.values;
-                const isNoVal  = ['is_empty', 'is_not_empty', 'missing_required'].includes(op);
-                const isIn     = op === 'in' || op === 'not_in';
-                const isWithin = op === 'within_next';
-                return (
-                  <div key={i} className={styles.conditionRow}>
-                    <div className={styles.conditionRowHead}>
-                      <span className={styles.conditionRowIndex}>{i + 1}</span>
-                      {conds.length > 1 && (
-                        <button
-                          type="button"
-                          className={styles.conditionRowRemoveBtn}
-                          onClick={() => removeCondition(i)}
-                          aria-label={`Remove condition ${i + 1}`}
-                        >
-                          <XIcon size={12} />
-                        </button>
-                      )}
-                    </div>
-                    {/* Field dropdown */}
-                    <PopoverSelect
-                      value={c.fieldId}
-                      onChange={newId => {
-                        const newDef = CONDITION_LIBRARY.find(d => d.id === newId);
-                        patchCondition(i, {
-                          fieldId: newId,
-                          operator: newDef?.operators[0] ?? '',
-                          values: [],
-                        });
-                      }}
-                      placeholder="Select field…"
-                      options={[
-                        { value: '', label: 'Select field…' },
-                        ...CONDITION_LIBRARY.map(d => ({ value: d.id, label: d.label })),
-                      ]}
-                    />
-                    {def && (
-                      <>
-                        <PopoverSelect
-                          value={op}
-                          onChange={newOp => patchCondition(i, { operator: newOp, values: [] })}
-                          options={ops.map(o => ({ value: o, label: OPERATOR_LABELS[o] ?? o }))}
-                        />
-                        {!isNoVal && isIn && def.valueOptions && (
-                          <div className={styles.popoverTags}>
-                            {def.valueOptions.map(opt => {
-                              const selected = vals.includes(opt);
-                              return (
-                                <button
-                                  key={opt}
-                                  type="button"
-                                  className={clsx(styles.popoverTag, selected && styles.popoverTagSelected)}
-                                  onClick={() => patchCondition(i, {
-                                    values: selected ? vals.filter(v => v !== opt) : [...vals, opt],
-                                  })}
-                                >{opt}</button>
-                              );
-                            })}
-                          </div>
-                        )}
-                        {!isNoVal && isIn && !def.valueOptions && (
-                          <ConditionTagInput
-                            values={vals}
-                            onChange={next => patchCondition(i, { values: next })}
-                          />
-                        )}
-                        {!isNoVal && isWithin && (
-                          <div className={styles.conditionWithinNext}>
-                            <NumberField
-                              size="md" min={1} placeholder="30"
-                              value={vals[0] ?? ''}
-                              onChange={e => patchCondition(i, { values: [e.target.value, vals[1] ?? 'days'] })}
-                              aria-label="Time amount"
-                              className={styles.conditionWithinNextNum}
-                            />
-                            <PopoverSelect
-                              value={vals[1] ?? 'days'}
-                              onChange={unit => patchCondition(i, { values: [vals[0] ?? '', unit] })}
-                              className={styles.conditionWithinNextUnit}
-                              options={[
-                                { value: 'hours', label: 'hours' },
-                                { value: 'days',  label: 'days'  },
-                                { value: 'weeks', label: 'weeks' },
-                              ]}
-                            />
-                          </div>
-                        )}
-                        {!isNoVal && !isIn && !isWithin && def.valueOptions && (
-                          <PopoverSelect
-                            value={vals[0] ?? ''}
-                            onChange={v => patchCondition(i, { values: [v] })}
-                            placeholder="Select value…"
-                            options={[
-                              { value: '', label: 'Select value…' },
-                              ...def.valueOptions.map(opt => ({ value: opt, label: opt })),
-                            ]}
-                          />
-                        )}
-                        {!isNoVal && !isIn && !isWithin && !def.valueOptions && (
-                          <TextField
-                            size="md" placeholder="Enter value…"
-                            value={vals[0] ?? ''}
-                            onChange={e => patchCondition(i, { values: [e.target.value] })}
-                            aria-label="Condition value"
-                          />
-                        )}
-                      </>
-                    )}
-                  </div>
-                );
-              })}
-              {conds.length < MAX_CONDITIONS && (
-                <button
-                  type="button"
-                  className={styles.addConditionBtn}
-                  onClick={addCondition}
-                >
-                  <PlusIcon size={10} />
-                  Add condition
-                </button>
-              )}
-            </div>
-          </>
-        );
-      })()}
+      {step.type === 'condition' && (
+        <ConditionGroupsEditor
+          step={step}
+          onUpdateConditionGroups={onUpdateConditionGroups}
+        />
+      )}
 
       {/* ══════════════════════════════════════════════════════════════════
           AI SPECIALIST — tabs (Configure | Test) at the top of the panel
@@ -4376,6 +4576,8 @@ interface FlowNodeProps {
   isEditSelected?: boolean;
   /** Update the full conditions list + logic operator for a condition node. */
   onUpdateConditions?: (conditions: ConditionEntry[], logic: 'AND' | 'OR') => void;
+  /** Group-based condition updater — forwarded to NodePopover. */
+  onUpdateConditionGroups?: (groups: ConditionGroup[]) => void;
   hasOutgoingConnections?: boolean;
   /** Label of the workflow's trigger step — forwarded to NodePopover for the AI Specialist Test tab. */
   triggerLabel?: string;
@@ -4403,6 +4605,7 @@ function FlowNode({
   editNodeMode = false,
   isEditSelected = false,
   onUpdateConditions,
+  onUpdateConditionGroups,
   triggerLabel,
   onSaveNodePopover,
 }: FlowNodeProps) {
@@ -4573,30 +4776,30 @@ function FlowNode({
           </div>
         );
       })() : isCondition ? (() => {
-        const conds = step.conditions ?? [];
-        const filled = conds.length > 0;
+        const groups = deriveConditionGroups(step);
+        const total = countConditions(groups);
+        const filled = total > 0;
         const isActive = conditionActive;
 
-        // Top-row summary text
+        // Top-row summary text — reads from the group model so && / || show
+        // correctly on the canvas card. Parens wrap multi-condition groups
+        // only when there are 2+ groups overall.
         let primary: string | null = null;
         let secondary: string | null = null;
         if (!filled) {
           secondary = 'Add condition';
-        } else if (conds.length === 1) {
-          const c = conds[0];
-          const def = CONDITION_LIBRARY.find(d => d.id === c.fieldId) ?? null;
+        } else if (total === 1) {
+          // Keep the original one-condition layout: label on primary line,
+          // operator + values on the secondary line.
+          const only = groups[0].conditions[0];
+          const def = CONDITION_LIBRARY.find(d => d.id === only.fieldId) ?? null;
           primary = def?.label ?? 'Condition';
-          const opLabel = OPERATOR_LABELS[c.operator] ?? c.operator;
-          secondary = c.values.length > 0
-            ? `${opLabel} ${c.values.join(', ')}`
+          const opLabel = OPERATOR_LABELS[only.operator] ?? only.operator;
+          secondary = only.values.length > 0
+            ? `${opLabel} ${only.values.join(', ')}`
             : opLabel;
         } else {
-          primary = conds
-            .map(c => {
-              const def = CONDITION_LIBRARY.find(d => d.id === c.fieldId) ?? null;
-              return def?.label ?? '?';
-            })
-            .join(' \u00B7 ');
+          primary = formatConditionExpr(groups);
         }
 
         return (
@@ -4809,6 +5012,7 @@ function FlowNode({
             onUpdateConfigField={onUpdateConfigField}
             onClose={() => setPopoverOpen(false)}
             onUpdateConditions={onUpdateConditions}
+            onUpdateConditionGroups={onUpdateConditionGroups}
             triggerLabel={triggerLabel}
             onSave={onSaveNodePopover ? () => onSaveNodePopover(step.id) : undefined}
           />
@@ -5142,6 +5346,8 @@ interface FlowCanvasProps {
   onEditNodeToggle: (id: string, multi: boolean) => void;
   /** Update the full conditions list and logic operator for a condition node. */
   onUpdateConditions?: (nodeId: string, conditions: ConditionEntry[], logic: 'AND' | 'OR') => void;
+  /** Group-based condition updater — forwards `(nodeId, groups)`. */
+  onUpdateConditionGroups?: (nodeId: string, groups: ConditionGroup[]) => void;
   autoTidyToken?: number;
   fitToken?: number;
   /** Submits a prompt from the floating node-level AI input into the main
@@ -5159,6 +5365,7 @@ function FlowCanvas({
   onInsertOnEdge, onPositionChange, onSetAllPositions, onAddEdge, onDeleteEdge, onCreateNodeAt, onCreateNodeAndConnect, onCanvasDropAtPos,
   editNodeMode, editingNodeIds, onEditNodeToggle,
   onUpdateConditions,
+  onUpdateConditionGroups,
   autoTidyToken,
   fitToken,
   onNodeAiSubmit,
@@ -5888,6 +6095,7 @@ function FlowCanvas({
                     editNodeMode={editNodeMode}
                     isEditSelected={editingNodeIds.has(node.id)}
                     onUpdateConditions={onUpdateConditions ? (conds, logic) => onUpdateConditions(node.id, conds, logic) : undefined}
+                    onUpdateConditionGroups={onUpdateConditionGroups ? (groups) => onUpdateConditionGroups(node.id, groups) : undefined}
                     hasOutgoingConnections={edges.some(e => e.from === node.id)}
                     triggerLabel={nodes.find(n => n.type === 'trigger')?.selectedValue}
                     onSaveNodePopover={onSaveNodePopover}
@@ -6393,15 +6601,19 @@ export function BuilderPage() {
     setNodes(prev => prev.map(n => {
       if (n.id !== id || n.type !== 'condition') return n;
       const conds = n.conditions ?? [];
+      // The AI tool writes the legacy flat list. Clear `conditionGroups` so
+      // the editor re-derives from this fresh legacy list the next time it
+      // reads; otherwise a stale group snapshot would hide the new values.
       if (conds.length === 0) {
         return touchNode({
           ...n,
           conditions: [{ fieldId: '', operator: op, values: vals }],
           conditionLogic: n.conditionLogic ?? 'AND',
+          conditionGroups: undefined,
         });
       }
       const next = conds.map((c, i) => i === 0 ? { ...c, operator: op, values: vals } : c);
-      return touchNode({ ...n, conditions: next });
+      return touchNode({ ...n, conditions: next, conditionGroups: undefined });
     }));
 
   /** Replace the full conditions list + logic operator for a condition node. Also syncs
@@ -6418,6 +6630,28 @@ export function BuilderPage() {
         conditionLogic: logic,
         selectedValue: firstDef?.label ?? (conditions.length > 0 ? n.selectedValue : undefined),
         configured: conditions.length > 0,
+      });
+    }));
+  };
+
+  /** Group-based updater — replaces the full `conditionGroups` list on a
+   *  condition node, and projects the flat `conditions + conditionLogic`
+   *  legacy fields so existing readers still work. */
+  const updateConditionGroups = (nodeId: string, groups: ConditionGroup[]) => {
+    const flat = flattenConditionGroups(groups);
+    const firstCond = flat.conditions[0];
+    const firstDef = firstCond
+      ? CONDITION_LIBRARY.find(d => d.id === firstCond.fieldId) ?? null
+      : null;
+    setNodes(prev => prev.map(n => {
+      if (n.id !== nodeId) return n;
+      return touchNode({
+        ...n,
+        conditionGroups: groups,
+        conditions: flat.conditions,
+        conditionLogic: flat.conditionLogic,
+        selectedValue: firstDef?.label ?? (flat.conditions.length > 0 ? n.selectedValue : undefined),
+        configured: flat.conditions.length > 0,
       });
     }));
   };
@@ -6696,6 +6930,7 @@ export function BuilderPage() {
           editingNodeIds={editingNodeIds}
           onEditNodeToggle={handleEditNodeToggle}
           onUpdateConditions={updateConditions}
+          onUpdateConditionGroups={updateConditionGroups}
           autoTidyToken={autoTidyToken}
           fitToken={fitToken}
           onNodeAiSubmit={handleNodeAiSubmit}
