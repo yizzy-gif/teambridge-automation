@@ -1,4 +1,4 @@
-import React, { Fragment, useCallback, useMemo, useState, type ReactNode } from 'react';
+import React, { Fragment, useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { Button } from '@alloy/components/Button';
@@ -7,7 +7,6 @@ import type { TagColor } from '@alloy/components/Tag';
 import { Tabs } from '@alloy/components/Tabs';
 import { SearchField, SelectField } from '@alloy/components/Input';
 import { FilterPill } from '@alloy/components/FilterPill';
-import { Checkbox } from '@alloy/components/Checkbox';
 import { BookmarkIcon } from '@alloy/components/icons/BookmarkIcon';
 import { Divider } from '@alloy/components/Divider';
 import { Target04Icon } from '@alloy/components/icons/Target04Icon';
@@ -17,11 +16,24 @@ import { Bell01Icon } from '@alloy/components/icons/Bell01Icon';
 import { ClipboardCheckIcon } from '@alloy/components/icons/ClipboardCheckIcon';
 import { ListBulletIcon } from '@alloy/components/icons/ListBulletIcon';
 import { Edit03Icon } from '@alloy/components/icons/Edit03Icon';
+import { Mail01Icon } from '@alloy/components/icons/Mail01Icon';
+import { Announcement02Icon } from '@alloy/components/icons/Announcement02Icon';
+// Same icon set the bottom toolbar uses on the live builder canvas. Used
+// by the preview node renderers below so the diagram exactly mirrors the
+// real node treatment.
+import { FilterLinesIcon } from '@alloy/components/icons/FilterLinesIcon';
+import { CircularArrowIcon } from '@alloy/components/icons/CircularArrowIcon';
+import { TeambridgeAIIcon } from '@alloy/components/icons/TeambridgeAIIcon';
+import { TriangleUpIcon } from '@alloy/components/icons/TriangleUpIcon';
 import styles from './TemplatesPage.module.css';
+// Re-use the live builder's node CSS modules so the preview chrome (pill,
+// circle, condition card, policy gradient, AI gradient) is byte-for-byte
+// identical to the real canvas — no duplicated style values.
+import builderStyles from './BuilderPage.module.css';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type StepType = 'trigger' | 'condition' | 'action';
+type StepType = 'trigger' | 'condition' | 'action' | 'delay' | 'ai' | 'policy';
 
 // Matches the `category` field on trigger items in ALL_LIBRARY_ITEMS (BuilderPage)
 type TriggerCategory =
@@ -56,63 +68,270 @@ interface TemplateCategory {
   workflows: TemplateWorkflow[];
 }
 
-// ─── Mini flow diagram (used inside the expanded card only) ──────────────────
+// ─── Mini flow diagram — re-uses the live builder's node chrome ─────────────
+// Renders each step using the actual `BuilderPage.module.css` classes
+// (`triggerPill`, `delayPill`, `conditionNodeCard`, `actionNodeIconBox`,
+// `aiNodeIconBox`, `policyNodeCard`) so the preview is byte-for-byte
+// identical to what the canvas paints. A scale-to-fit wrapper measures the
+// natural row width via ResizeObserver and applies `transform: scale(s)`
+// so longer flows shrink to fit the preview card width without scrolling.
 
-const NODE_COLORS: Record<StepType, string> = {
-  trigger:   '#b45309',
-  condition: '#1454cb',
-  action:    '#15803d',
+/** Generic short-form labels for the non-trigger steps. We don't carry per-
+ *  template configuration, so these stand in as believable filled-state
+ *  text on the preview cards. The trigger uses the real category label. */
+const STEP_PREVIEW_LABEL: Record<Exclude<StepType, 'trigger'>, string> = {
+  action:    'Send notification',
+  condition: 'Match criteria',
+  delay:     'Wait',
+  ai:        'AI Specialist',
+  policy:    'Apply policy',
 };
 
-const NODE_BG: Record<StepType, string> = {
-  trigger:   '#fae1c0',
-  condition: '#d1e1ff',
-  action:    '#bbf7d0',
-};
+/* ── Action icon resolution ─────────────────────────────────────────────────
+   Mirrors the live builder's `buildTemplateGraph` logic (BuilderPage.tsx) —
+   when a template is opened, the builder synthesizes the action chain by
+   selecting "Send feed message" for the 1st action and "Send email" for
+   every action after that. The canvas resolves their icons via
+   `ACTION_ITEM_ICON`:
+     · notifications_send_feed_message → Announcement02Icon
+     · notifications_send_email        → Mail01Icon
+   The preview maps the same way so the icon you see in the diagram is the
+   exact icon the canvas paints once you click "Use Template". Index is
+   the 0-based action index within the steps array (skipping non-action
+   steps in the count). */
+function getTemplateActionIcon(actionIndex: number): ReactNode {
+  if (actionIndex === 0) return <Announcement02Icon size={20} />;
+  return <Mail01Icon size={20} />;
+}
 
-/** Read-only flow preview SVG. Displays up to the first 4 nodes so long
- *  templates don't make the preview illegible. */
-function TemplatePreviewDiagram({ steps }: { steps: StepType[] }) {
-  const display = steps.slice(0, 4);
-  const nodeW = 96;
-  const nodeH = 48;
-  const gap   = 22;
-  const svgW  = display.length * nodeW + (display.length - 1) * gap + 24;
-  const svgH  = 96;
-  const startX = 12;
-  const y      = (svgH - nodeH) / 2;
+/** Render a single preview node using the builder's actual CSS module
+ *  classes so all chrome (border, gradient, icon-box, typography) carries
+ *  over from the live canvas. Filled state is pinned to `true` so the
+ *  preview reads as a configured workflow, not an empty scaffold.
+ *
+ *  `actionIcon` overrides the default action glyph so each preview row can
+ *  show the icon the live canvas would paint for the configured action. */
+function PreviewNode({
+  type,
+  label,
+  actionIcon,
+}: {
+  type: StepType;
+  label: string;
+  actionIcon?: ReactNode;
+}) {
+  if (type === 'trigger') {
+    return (
+      <div className={clsx(builderStyles.triggerPill, builderStyles.triggerPillFilled)}>
+        {/* Same Play glyph the live trigger pill draws inline */}
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+          <path
+            d="M4 2.75L10.5 7L4 11.25V2.75Z"
+            stroke="currentColor"
+            strokeWidth="1.4"
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
+        </svg>
+        <span>{label}</span>
+      </div>
+    );
+  }
+  if (type === 'delay') {
+    return (
+      <div className={clsx(builderStyles.delayPill, builderStyles.delayPillFilled)}>
+        <ClockIcon size={14} />
+        <span>{label}</span>
+      </div>
+    );
+  }
+  if (type === 'action') {
+    return (
+      <span
+        className={clsx(builderStyles.actionNodeIconBox, builderStyles.actionNodeIconBoxFilled)}
+        aria-label="Action"
+      >
+        {actionIcon ?? <CircularArrowIcon size={20} />}
+      </span>
+    );
+  }
+  if (type === 'ai') {
+    return (
+      <span
+        className={clsx(builderStyles.aiNodeIconBox, builderStyles.aiNodeIconBoxFilled)}
+        aria-label="AI"
+      >
+        <TeambridgeAIIcon size={26} />
+      </span>
+    );
+  }
+  if (type === 'condition') {
+    return (
+      <div
+        className={builderStyles.conditionNodeCard}
+        data-active="false"
+        data-filled="true"
+        // Builder uses 260px for condition cards; pin width here so the card
+        // doesn't collapse to its content. Layout otherwise comes from the
+        // CSS module — we don't override font, padding, etc.
+        style={{ width: 260 }}
+      >
+        <div className={builderStyles.conditionNodeTopRow}>
+          <span className={builderStyles.conditionNodeIconBox} aria-label="Condition">
+            <FilterLinesIcon size={14} />
+          </span>
+          <span className={builderStyles.conditionNodeTopText}>
+            <span className={builderStyles.conditionNodeTopPrimary}>{label}</span>
+          </span>
+        </div>
+      </div>
+    );
+  }
+  if (type === 'policy') {
+    return (
+      <div
+        className={builderStyles.policyNodeCard}
+        data-active="false"
+        data-filled="true"
+        style={{ width: 260 }}
+      >
+        <div className={builderStyles.policyNodeTopRow}>
+          <span className={builderStyles.policyNodeIconBox} aria-label="Policy">
+            <TriangleUpIcon size={14} />
+          </span>
+          <span className={builderStyles.policyNodeTopText}>
+            <span className={builderStyles.policyNodeTopPrimary}>{label}</span>
+          </span>
+        </div>
+      </div>
+    );
+  }
+  return null;
+}
 
+/** Inline horizontal connector with the same chevron marker geometry the
+ *  builder canvas paints (see `<marker id="edge-arrow">` in BuilderPage).
+ *  Each connector embeds its own marker so we don't depend on a shared
+ *  page-level <defs> block. */
+function PreviewConnector() {
   return (
     <svg
-      viewBox={`0 0 ${svgW} ${svgH}`}
-      className={styles.previewSvg}
+      width={40}
+      height={12}
+      viewBox="0 0 40 12"
       aria-hidden
-      preserveAspectRatio="xMidYMid meet"
+      style={{ flexShrink: 0, display: 'block' }}
     >
-      {display.map((type, i) => {
-        const x = startX + i * (nodeW + gap);
-        const mx = x - gap;
-        const my = y + nodeH / 2;
-        return (
-          <g key={i}>
-            {i > 0 && (
-              <>
-                <line x1={mx} y1={my} x2={x} y2={my} stroke="#e2e8f0" strokeWidth="1.5" />
-                <polygon
-                  points={`${x - 4},${my - 3} ${x},${my} ${x - 4},${my + 3}`}
-                  fill="#cbd5e1"
-                />
-              </>
-            )}
-            <rect x={x} y={y} width={nodeW} height={nodeH} rx="6" ry="6" fill="white" stroke="#e2e8f0" strokeWidth="1" />
-            <circle cx={x + 14} cy={y + nodeH / 2} r="6" fill={NODE_BG[type]} />
-            <circle cx={x + 14} cy={y + nodeH / 2} r="3.5" fill={NODE_COLORS[type]} />
-            <rect x={x + 26} y={y + 12} width={nodeW - 34} height={5} rx="2.5" fill="#e2e8f0" />
-            <rect x={x + 26} y={y + 26} width={nodeW - 46} height={5} rx="2.5" fill="#f1f5f9" />
-          </g>
-        );
-      })}
+      <defs>
+        <marker
+          id="tplPreviewArrow"
+          viewBox="0 0 8 8"
+          refX="6.8"
+          refY="3.7"
+          markerUnits="userSpaceOnUse"
+          markerWidth="8"
+          markerHeight="8"
+          orient="auto"
+        >
+          <path
+            d="M3.5 0.5 L6.8 3.7 L3.5 6.9"
+            stroke="var(--color-slate-border-secondary)"
+            strokeWidth="1"
+            fill="none"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </marker>
+      </defs>
+      <line
+        x1="0"
+        y1="6"
+        x2="36"
+        y2="6"
+        stroke="var(--color-slate-border-secondary)"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        markerEnd="url(#tplPreviewArrow)"
+      />
     </svg>
+  );
+}
+
+/** Preview diagram — horizontal node row + scale-to-fit container. */
+function TemplatePreviewDiagram({
+  steps,
+  triggerLabel,
+}: {
+  steps: StepType[];
+  triggerLabel: string;
+}) {
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const [scale, setScale] = useState(1);
+  const [naturalH, setNaturalH] = useState(60);
+
+  // Re-measure on mount, on step-count change, and on container resize.
+  // `transform` doesn't affect layout, so contentRef's offsetWidth/Height
+  // always report natural (un-scaled) size — perfect for computing scale.
+  useLayoutEffect(() => {
+    const wrapper = wrapperRef.current;
+    const content = contentRef.current;
+    if (!wrapper || !content) return;
+    const compute = () => {
+      // Wrapper has 24px padding on each side, so usable width = clientW − 48.
+      const containerW = wrapper.clientWidth - 48;
+      const w = content.offsetWidth;
+      const h = content.offsetHeight;
+      if (w <= 0 || containerW <= 0) return;
+      setScale(Math.min(1, containerW / w));
+      setNaturalH(h);
+    };
+    compute();
+    const ro = new ResizeObserver(compute);
+    ro.observe(wrapper);
+    ro.observe(content);
+    return () => ro.disconnect();
+  }, [steps.length]);
+
+  const scaledH = naturalH * scale;
+
+  return (
+    <div className={styles.expandedDiagram} ref={wrapperRef}>
+      {/* Inner block reserves the scaled height; absolutely-positioned scaler
+          paints the natural-size row and shrinks visually around its left-top
+          origin so any flow longer than the card width fits without scroll. */}
+      <div
+        className={styles.expandedDiagramFrame}
+        style={{ height: scaledH }}
+      >
+        <div
+          className={styles.expandedDiagramScaler}
+          style={{ transform: `scale(${scale})` }}
+        >
+          <div className={styles.expandedDiagramRow} ref={contentRef}>
+            {(() => {
+              // Walk the steps and assign each action its own index so the
+              // 1st action gets the Announcement icon and 2nd+ actions
+              // get the Mail icon — exactly matching how the builder
+              // canvas selects action library items in `buildTemplateGraph`.
+              let actionIdx = 0;
+              return steps.map((type, i) => {
+                const label =
+                  type === 'trigger' ? triggerLabel : STEP_PREVIEW_LABEL[type];
+                const actionIcon =
+                  type === 'action' ? getTemplateActionIcon(actionIdx++) : undefined;
+                return (
+                  <Fragment key={i}>
+                    {i > 0 && <PreviewConnector />}
+                    <PreviewNode type={type} label={label} actionIcon={actionIcon} />
+                  </Fragment>
+                );
+              });
+            })()}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -222,17 +441,6 @@ const STEP_TYPE_LABEL: Record<StepType, string> = {
   action:    'Action',
 };
 
-const MAX_CLUSTER_ICONS = 3;
-
-/** Icon shown inside each rounded square in the collapsed-card cluster. The
- *  first slot uses the workflow's trigger-category icon for specificity; the
- *  remaining slots use step-type icons. */
-function StepClusterIcon({ step, triggerIcon }: { step: StepType; triggerIcon: ReactNode }) {
-  if (step === 'trigger') return <>{triggerIcon}</>;
-  if (step === 'condition') return <ClipboardCheckIcon size={14} />;
-  return <Bell01Icon size={14} />;
-}
-
 // ─── Template Card ────────────────────────────────────────────────────────────
 
 function TemplateCard({
@@ -258,8 +466,6 @@ function TemplateCard({
 }) {
   const stepCount = workflow.steps.length;
   const triggerMeta = TRIGGER_CATEGORY_META[workflow.triggerCategory];
-  const clusterSteps = workflow.steps.slice(0, MAX_CLUSTER_ICONS);
-  const overflow = workflow.steps.length - clusterSteps.length;
 
   const handleCardClick = (e: React.MouseEvent<HTMLDivElement>) => {
     // Let nested interactive elements (checkbox, chevron, buttons) handle
@@ -288,27 +494,20 @@ function TemplateCard({
       onClick={handleCardClick}
       onKeyDown={handleKey}
     >
-      {/* ── Top row: checkbox · icon cluster · spacer · step count · chevron ── */}
+      {/* ── Top row: name (fills row) · save · step count · chevron ──
+          The save button moved up here from the footer so it lives
+          alongside the other top-right controls. */}
       <div className={styles.cardTop}>
-        <span data-card-action onClick={e => e.stopPropagation()}>
-          <Checkbox
-            size="sm"
-            checked={isSelected}
-            onChange={onToggleSelect}
-            aria-label={`Select ${workflow.name}`}
-          />
-        </span>
-        <div className={styles.iconCluster} aria-hidden>
-          {clusterSteps.map((step, i) => (
-            <span key={i} className={styles.iconDot}>
-              <StepClusterIcon step={step} triggerIcon={triggerMeta.Icon()} />
-            </span>
-          ))}
-          {overflow > 0 && (
-            <span className={clsx(styles.iconDot, styles.iconOverflow)}>+{overflow}</span>
-          )}
-        </div>
-        <span className={styles.cardTopSpacer} />
+        <button
+          type="button"
+          data-card-action
+          className={clsx(styles.saveBtn, saved && styles.saveBtnActive)}
+          onClick={e => { e.stopPropagation(); onSave(); }}
+          aria-label={saved ? 'Unsave template' : 'Save template'}
+        >
+          <BookmarkIcon size={14} />
+        </button>
+        <span className={styles.cardName}>{workflow.name}</span>
         <span className={styles.cardStepCount} title={`${stepCount} ${stepCount === 1 ? 'step' : 'steps'}`}>
           <ListBulletIcon size={12} />
           {stepCount} {stepCount === 1 ? 'step' : 'steps'}
@@ -325,9 +524,6 @@ function TemplateCard({
         </button>
       </div>
 
-      {/* ── Body: template name (3-line clamp) ── */}
-      <span className={styles.cardName}>{workflow.name}</span>
-
       {/* ── Bottom row: trigger label · dot · category tag pills ── */}
       <div className={styles.cardFooter}>
         <span className={styles.cardFooterTrigger}>
@@ -337,80 +533,52 @@ function TemplateCard({
         {workflow.tags.length > 0 && <span className={styles.cardFooterDot} />}
         <div className={styles.cardFooterTags}>
           {workflow.tags.map(t => (
-            <Tag key={t.label} variant="subtle" size="sm" color={t.color}>
+            <Tag key={t.label} variant="subtle" size="sm" color="neutral">
               {t.label}
             </Tag>
           ))}
         </div>
-        <span className={styles.cardFooterSpacer} />
-        <button
-          type="button"
-          data-card-action
-          className={clsx(styles.saveBtn, saved && styles.saveBtnActive)}
-          onClick={e => { e.stopPropagation(); onSave(); }}
-          aria-label={saved ? 'Unsave template' : 'Save template'}
-        >
-          <BookmarkIcon size={14} />
-        </button>
       </div>
 
       {/* ── Expanded panel — full-width inside the grid row ── */}
       {isExpanded && (
         <div className={styles.cardExpanded} data-card-action>
-          <div className={styles.expandedDiagram}>
-            <TemplatePreviewDiagram steps={workflow.steps} />
-          </div>
+          <TemplatePreviewDiagram
+            steps={workflow.steps}
+            triggerLabel={triggerMeta.label}
+          />
 
-          <div className={styles.expandedSection}>
-            <h3 className={styles.expandedHeading}>About this template</h3>
-            <p className={styles.expandedDescription}>
-              {triggerMeta.label} flow: &ldquo;{workflow.name}&rdquo;. Uses {stepCount}{' '}
-              step{stepCount === 1 ? '' : 's'} to accomplish its task.
-            </p>
-          </div>
-
-          <div className={styles.expandedSection}>
-            <h3 className={styles.expandedHeading}>Steps</h3>
-            <ol className={styles.expandedStepList}>
-              {workflow.steps.map((step, i) => (
-                <li key={i} className={styles.expandedStep}>
-                  <span className={styles.expandedStepIndex}>{i + 1}</span>
-                  <span className={clsx(styles.expandedStepDot, styles[`stepDot_${step}`])} />
-                  <span className={styles.expandedStepLabel}>{STEP_TYPE_LABEL[step]}</span>
-                </li>
-              ))}
-            </ol>
+          {/* About row — copy on the left, Use Template button anchored to
+              the right. The button vertically centers against the section
+              block so it lines up with the description rather than the
+              eyebrow. */}
+          <div className={styles.expandedAboutRow}>
+            <div className={clsx(styles.expandedSection, styles.expandedAboutCopy)}>
+              <h3 className={styles.expandedHeading}>About this template</h3>
+              <p className={styles.expandedDescription}>
+                {triggerMeta.label} flow: &ldquo;{workflow.name}&rdquo;. Uses {stepCount}{' '}
+                step{stepCount === 1 ? '' : 's'} to accomplish its task.
+              </p>
+            </div>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={onUseTemplate}
+              className={styles.expandedAboutCta}
+            >
+              Use Template
+            </Button>
           </div>
 
           <div className={styles.expandedSection}>
             <h3 className={styles.expandedHeading}>Tags</h3>
             <div className={styles.expandedTags}>
               {workflow.tags.map(t => (
-                <Tag key={t.label} variant="subtle" size="sm" color={t.color}>
+                <Tag key={t.label} variant="subtle" size="sm" color="neutral">
                   {t.label}
                 </Tag>
               ))}
             </div>
-          </div>
-
-          <div className={styles.expandedActions}>
-            <Button
-              variant="primary"
-              size="sm"
-              className={styles.expandedActionBtn}
-              onClick={onUseTemplate}
-            >
-              Use Template
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              leadingArtwork={<Edit03Icon size={14} />}
-              className={styles.expandedActionBtn}
-              onClick={onEditTemplate}
-            >
-              Edit Template
-            </Button>
           </div>
         </div>
       )}
@@ -628,8 +796,32 @@ export function TemplatesPage() {
     setExpandedId(curr => (curr === id ? null : id));
   }, []);
 
-  const useTemplate = useCallback((_id: string) => navigate('/automations/new'), [navigate]);
-  const editTemplate = useCallback((_id: string) => navigate('/automations/new'), [navigate]);
+  // Navigate to the builder with the selected template's metadata attached
+   // via router state. BuilderPage reads this and synthesizes the initial
+   // graph (trigger + action chain / optional condition / delay) procedurally
+   // from `steps` + `triggerCategory`, so every template slot in the library
+   // produces a dedicated, prefilled canvas without per-template graph data.
+  const findTemplate = useCallback((id: string) => {
+    for (const cat of CATEGORIES) {
+      for (const w of cat.workflows) if (w.id === id) return w;
+    }
+    return undefined;
+  }, []);
+  const openTemplate = useCallback((id: string) => {
+    const tpl = findTemplate(id);
+    navigate('/automations/new', {
+      state: tpl
+        ? {
+            templateId:       tpl.id,
+            templateName:     tpl.name,
+            templateSteps:    tpl.steps,
+            triggerCategory:  tpl.triggerCategory,
+          }
+        : undefined,
+    });
+  }, [navigate, findTemplate]);
+  const useTemplate = openTemplate;
+  const editTemplate = openTemplate;
 
   const visible = useMemo(() => {
     const q = search.toLowerCase().trim();

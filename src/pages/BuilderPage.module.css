@@ -12,26 +12,46 @@
   user-select: none;
 }
 
-/* Canvas fills the whole viewport — top bar + left panel float on top */
+/* Two-column layout — fixed 2:8 ratio, full page height.
+   Left column hosts the AI chat (thread + composer). Right column hosts
+   the topBar, canvas, toolbar, and right-panel popover stacked vertically.
+   A 1px divider runs full height between them. */
 .body {
   position: absolute;
   inset: 0;
-  display: flex; /* FlowCanvas (flex:1) expands to fill */
+  display: grid;
+  grid-template-columns: 360px 1px 1fr;
+}
+
+/* Right column — stacks topBar above the canvas */
+.rightColumn {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Vertical divider between the two columns */
+.bodyDivider {
+  background: var(--color-border-opaque);
+  width: 1px;
+  height: 100%;
 }
 
 /* ─── Top bar — floating, transparent ────────────────────────────────────────── */
 
 .topBar {
-  position: absolute;
-  top: 0; left: 0; right: 0;
+  flex: 0 0 48px;
   height: 48px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 var(--space-4);
-  /* no background, no border — floats over canvas */
+  padding: 0 8px;
+  background: var(--color-bg-primary);
+  border-bottom: 1px solid var(--color-border-opaque);
   z-index: var(--z-sticky);
-  pointer-events: none; /* pass clicks through to canvas */
   gap: var(--space-3);
 }
 
@@ -42,9 +62,16 @@
 .topBarLeft {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-1);
   min-width: 0;
   pointer-events: auto;
+}
+
+/* Status tag gets an extra 4px on its left so the name → tag spacing
+   reads as 8px (4px flex gap + 4px margin) while the rest of topBarLeft
+   keeps its tighter 4px rhythm. */
+.topBarStatusTag {
+  margin-left: var(--space-1);
 }
 
 /* Subtle vertical separator between back button and name */
@@ -119,34 +146,62 @@
   to   { opacity: 1; transform: translateY(0); }
 }
 
-/* ─── Left panel — floating overlay on canvas ──────────────────────────────── */
+/* ─── Left panel — first grid column (AI chat) ──────────────────────────── */
 
 .leftPanel {
-  position: absolute;
-  top: calc(48px + 16px); /* header height + gap */
-  left: 0;
-  bottom: 0;
-  width: 360px;
-  z-index: var(--z-raised);
-  pointer-events: none;
+  position: relative;
+  width: auto;
+  height: 100%;
+  background: var(--color-bg-primary);
   display: flex;
   flex-direction: column;
-  transition: width var(--duration-base) var(--ease-default);
+  overflow: hidden;
+  pointer-events: auto;
 }
 
+/* Collapse no longer applies in the fixed-ratio grid; preserve attribute
+   support but let the grid cell drive width. */
 .leftPanel[data-collapsed="true"] {
-  /* Collapsed width overrides any inline resized width */
-  width: 52px !important;
+  width: auto !important;
 }
+
+/* Left-panel header — Teambridge AI wordmark + close button. Sits above
+   leftPanelInner; matches the topBar's 48px height for visual symmetry. */
+.leftPanelHeader {
+  flex: 0 0 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--color-border-opaque);
+  pointer-events: auto;
+}
+
+.leftPanelHeaderLogo {
+  height: 28px;
+  width: auto;
+  display: block;
+  user-select: none;
+}
+.leftPanelHeaderLogoDark { display: none; }
+
+@media (prefers-color-scheme: dark) {
+  :root:not(:global(.light)) .leftPanelHeaderLogoLight { display: none; }
+  :root:not(:global(.light)) .leftPanelHeaderLogoDark  { display: block; }
+}
+:global(.dark) .leftPanelHeaderLogoLight { display: none; }
+:global(.dark) .leftPanelHeaderLogoDark  { display: block; }
 
 .leftPanelInner {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-  padding: 0 var(--space-4) var(--space-4);
-  height: 100%;
+  padding: 0;
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
-  pointer-events: none;
+  pointer-events: auto;
 }
 
 .leftPanel[data-collapsed="true"] .leftPanelInner {
@@ -164,20 +219,10 @@
   pointer-events: auto;
 }
 
-/* Panel collapse toggle pill — right edge of left panel */
+/* Panel collapse toggle pill — hidden under the fixed-ratio two-column
+   layout (the column divider replaces it). */
 .leftPanelHandle {
-  position: absolute;
-  right: -7px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 14px;
-  height: 40px;
-  cursor: ew-resize;
-  pointer-events: auto;
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: none;
 }
 
 .leftPanelHandle::after {
@@ -382,42 +427,34 @@
   min-height: 0;
 }
 
-/* Shell: unified card wrapping chat thread + input */
-.aiComposerShell {
+/* Shell: layout-only wrapper — chrome (border/bg/shadow/radius) removed so
+   the thread + composer sit flush against the left-column surface. The
+   double-class selector outranks Alloy's `.shell` defaults. */
+.aiComposer .aiComposerShell {
   display: flex;
   flex-direction: column;
   flex: 1 1 0;
   min-height: 0;
-  border: 1px solid var(--color-border-opaque);
-  border-radius: var(--radius-lg);
   overflow: hidden;
-  background: var(--color-bg-primary);
-  box-shadow: var(--shadow-below-md);
-  transition: border-color var(--duration-fast), background var(--duration-fast), box-shadow var(--duration-fast);
   position: relative;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
-/* Top fade — 48px gradient from the panel background (100%) to transparent
-   (0%) so thread entries dissolve softly as they scroll under the rounded
-   top edge of the shell instead of snapping off abruptly. */
-.aiComposerShell::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 48px;
-  pointer-events: none;
-  z-index: 1;
-  background: linear-gradient(
-    to bottom,
-    var(--color-bg-primary) 0%,
-    color-mix(in srgb, var(--color-bg-primary) 0%, transparent) 100%
-  );
-}
+/* Top/bottom fade is now handled by Alloy AIThread's data-fade-top /
+   data-fade-bottom — they only show once content actually overflows. */
+
 /* Wrapper: 8px inset around the input card */
 .aiComposerWrapper {
   padding: 8px;
+}
+
+/* Round the AIComposerInput card to 12px (Alloy default is radius-md). */
+.aiComposerInputWrapper > div,
+.aiComposerInputWrapper > div > div {
+  border-radius: 12px;
 }
 
 /* Inner card — the visible "input box" with 6px radius; secondary bg so it
@@ -994,15 +1031,30 @@
    pill's visual chrome lives on `.toolbar`. */
 .paletteRoot {
   position: fixed;
-  left: 50%;
-  bottom: var(--space-6); /* 24px from viewport bottom */
+  /* Centered within the right column. Left column is a fixed 360px + 1px
+     divider, so the right column starts at 361px. */
+  left: calc(361px + (100vw - 361px) / 2);
+  bottom: var(--space-4);
   transform: translateX(-50%);
   z-index: 20;
-  max-width: calc(100vw - var(--space-6) * 2);
+  max-width: calc(100vw - 361px - var(--space-6) * 2);
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: var(--space-2);
+}
+
+/* Narrow viewports: the right column is too tight to center the toolbar
+   without it bumping into the zoom controls on the right edge. Anchor to
+   the left of the right column with a 16px inset instead. The same rule
+   applies to the search popup so its panel + toolbar both align left. */
+@media (max-width: 1200px) {
+  .paletteRoot {
+    left: calc(361px + var(--space-4));
+    transform: none;
+    align-items: flex-start;
+    max-width: calc(100vw - 361px - var(--space-4) * 2);
+  }
 }
 
 /* Toolbar: width hugs content, hugs button height, 8px corner radius. */
@@ -1126,6 +1178,25 @@
   border-radius: var(--radius-md); /* 8px */
   box-shadow: var(--shadow-below-md);
   overflow: hidden;
+
+  /* ── Show / hide transition ───────────────────────────────────────────
+     The panel is mounted with `data-open` absent for the first frame so
+     the off-state styles (opacity 0, translated 8px down + slight scale
+     down) commit before `data-open` flips on. CSS then transitions to
+     the on-state. On close, `data-open` flips off and the same transition
+     plays in reverse before React unmounts the node. */
+  opacity: 0;
+  transform: translateY(8px) scale(0.98);
+  transform-origin: center bottom;
+  transition:
+    opacity   180ms var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1)),
+    transform 180ms var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1));
+  will-change: opacity, transform;
+}
+
+.searchResultsPanel[data-open] {
+  opacity: 1;
+  transform: translateY(0) scale(1);
 }
 
 .searchInputRow {
@@ -2474,7 +2545,7 @@
 .popoverHeaderLeft {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-1);
   min-width: 0;
 }
 
@@ -2482,7 +2553,7 @@
 .popoverHeaderActions {
   display: flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: 8px;
 }
 
 /* Info icon button in the popover header — muted at rest, steps to
@@ -2904,6 +2975,16 @@
 
 .popoverAiWrap { display: flex; flex-direction: column; gap: var(--space-2); }
 
+/* ── Bottom AI drawer inside NodePopover ──────────────────────────────────
+   Pinned to the bottom of the right panel with a top divider so the shared
+   popoverAiCard reads as a drawer (not another scrolling section). */
+.popoverAiDrawer {
+  flex-shrink: 0;
+  padding: var(--space-3);
+  border-top: 1px solid var(--color-border-opaque);
+  background: var(--color-bg-primary);
+}
+
 /* Composer card — row layout: textarea left, buttons top-right */
 .popoverAiCard {
   display: flex;
@@ -3199,8 +3280,8 @@
 
 .canvasBottomBar {
   position: absolute;
-  bottom: var(--space-2);
-  right: var(--space-2);
+  bottom: var(--space-4);
+  right: var(--space-4);
   pointer-events: none;
 }
 
@@ -3213,7 +3294,6 @@
   flex-direction: row;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-4);
 }
 
 .zoomBtn {
@@ -4864,6 +4944,26 @@
   line-height: var(--line-height-relaxed);
 }
 
+/* AI Specialist persona picker — visual tweaks layered on top of the
+   shared .actionSelectorRow markup so the persona rows feel distinct
+   from the action library. */
+.personaPickerAvatar {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: var(--radius-md);
+  background: var(--color-brand);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.personaPickerRole {
+  margin-left: var(--space-1);
+  font-weight: var(--font-weight-regular);
+  color: var(--color-content-secondary);
+}
+
 .actionSelectorEmpty {
   margin: 0;
   padding: var(--space-4) var(--space-2);
@@ -5319,11 +5419,12 @@
   color: var(--Alloy-purple-600);
 }
 
-/* Focused (selected): drop the veil to reveal the gradient + glow */
+/* Focused (selected): drop the veil to reveal the gradient + glow.
+   Stroke goes pure white so the icon reads crisply on the saturated fill. */
 .aiNodeCardFocused .aiNodeIconBox {
   background: var(--gradient-ai);
   border-color: transparent;
-  color: var(--Alloy-purple-200);
+  color: var(--Alloy-white);
   box-shadow: 0 0 7px 0 var(--color-purple-bg-secondary);
 }
 .aiNodeCardFocused .aiNodeIconBoxFilled {
@@ -5399,20 +5500,22 @@
 }
 
 /* Operator + value on a single line — verb takes its natural width, the
-   value widget fills the remaining space. Wraps gracefully when tight. */
+   value widget fills the remaining space. No wrap so they always sit on
+   the same row regardless of panel width. */
 .conditionRowOpValue {
   display: flex;
   align-items: flex-start;
   gap: var(--space-2);
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 .conditionRowOpSelect {
   flex: 0 0 auto;
-  min-width: 90px;
+  width: auto;
+  min-width: 80px;
 }
 .conditionRowValue {
   flex: 1 1 0;
-  min-width: 120px;
+  min-width: 0;
 }
 .conditionRowHead {
   display: flex;
@@ -5605,12 +5708,130 @@
   }
 }
 :global(.dark) .conditionNodeCard[data-filled="true"]:not([data-active="true"]) {
+  background: var(--Alloy-slate-900);
   border-color: var(--Alloy-slate-600);
+}
+/* Dark-mode filled default — text + icon colour, leading badge bg */
+@media (prefers-color-scheme: dark) {
+  :root:not(:global(.light)) .conditionNodeCard[data-filled="true"]:not([data-active="true"]) {
+    background: var(--Alloy-slate-900);
+  }
+  :root:not(:global(.light)) .conditionNodeCard[data-filled="true"]:not([data-active="true"]) .conditionNodeIconBox {
+    background: var(--Alloy-slate-800);
+    color: var(--Alloy-slate-200);
+  }
+  :root:not(:global(.light)) .conditionNodeCard[data-filled="true"]:not([data-active="true"]) .conditionNodeTopText,
+  :root:not(:global(.light)) .conditionNodeCard[data-filled="true"]:not([data-active="true"]) .conditionNodeTopSecondary,
+  :root:not(:global(.light)) .conditionNodeCard[data-filled="true"]:not([data-active="true"]) .conditionNodeTopPrimary {
+    color: var(--Alloy-slate-200);
+  }
+}
+:global(.dark) .conditionNodeCard[data-filled="true"]:not([data-active="true"]) .conditionNodeIconBox {
+  background: var(--Alloy-slate-800);
+  color: var(--Alloy-slate-200);
+}
+:global(.dark) .conditionNodeCard[data-filled="true"]:not([data-active="true"]) .conditionNodeTopText,
+:global(.dark) .conditionNodeCard[data-filled="true"]:not([data-active="true"]) .conditionNodeTopSecondary,
+:global(.dark) .conditionNodeCard[data-filled="true"]:not([data-active="true"]) .conditionNodeTopPrimary {
+  color: var(--Alloy-slate-200);
+}
+
+/* Dark-mode empty default — distinct bg/border/text/badge palette:
+   bg slate-900, border theme-slate-primary, text+icon slate-300,
+   leading badge bg slate-800. */
+@media (prefers-color-scheme: dark) {
+  :root:not(:global(.light)) .conditionNodeCard[data-filled="false"]:not([data-active="true"]) {
+    background: var(--Alloy-slate-900);
+    border-color: var(--Alloy-slate-600);
+  }
+  :root:not(:global(.light)) .conditionNodeCard[data-filled="false"]:not([data-active="true"]) .conditionNodeTopText,
+  :root:not(:global(.light)) .conditionNodeCard[data-filled="false"]:not([data-active="true"]) .conditionNodeTopSecondary,
+  :root:not(:global(.light)) .conditionNodeCard[data-filled="false"]:not([data-active="true"]) .conditionNodeTopPrimary,
+  :root:not(:global(.light)) .conditionNodeCard[data-filled="false"]:not([data-active="true"]) .conditionNodeIconBox {
+    color: var(--Alloy-slate-300);
+  }
+  :root:not(:global(.light)) .conditionNodeCard[data-filled="false"]:not([data-active="true"]) .conditionNodeIconBox {
+    background: var(--Alloy-slate-800);
+  }
+}
+:global(.dark) .conditionNodeCard[data-filled="false"]:not([data-active="true"]) {
+  background: var(--Alloy-slate-900);
+  border-color: var(--Alloy-slate-600);
+}
+:global(.dark) .conditionNodeCard[data-filled="false"]:not([data-active="true"]) .conditionNodeTopText,
+:global(.dark) .conditionNodeCard[data-filled="false"]:not([data-active="true"]) .conditionNodeTopSecondary,
+:global(.dark) .conditionNodeCard[data-filled="false"]:not([data-active="true"]) .conditionNodeTopPrimary,
+:global(.dark) .conditionNodeCard[data-filled="false"]:not([data-active="true"]) .conditionNodeIconBox {
+  color: var(--Alloy-slate-300);
+}
+:global(.dark) .conditionNodeCard[data-filled="false"]:not([data-active="true"]) .conditionNodeIconBox {
+  background: var(--Alloy-slate-800);
+}
+
+/* Dark-mode empty hover — lift to slate-700 bg + slate-150 border, leading
+   badge steps up to slate-600; text/icon colour stays slate-300. */
+@media (prefers-color-scheme: dark) {
+  :root:not(:global(.light)) .flowNodeOuter:hover .conditionNodeCard[data-filled="false"]:not([data-active="true"]) {
+    background: var(--Alloy-slate-700);
+    border-color: var(--Alloy-slate-150);
+  }
+  :root:not(:global(.light)) .flowNodeOuter:hover .conditionNodeCard[data-filled="false"]:not([data-active="true"]) .conditionNodeIconBox {
+    background: var(--Alloy-slate-600);
+  }
+}
+:global(.dark) .flowNodeOuter:hover .conditionNodeCard[data-filled="false"]:not([data-active="true"]) {
+  background: var(--Alloy-slate-700);
+  border-color: var(--Alloy-slate-150);
+}
+:global(.dark) .flowNodeOuter:hover .conditionNodeCard[data-filled="false"]:not([data-active="true"]) .conditionNodeIconBox {
+  background: var(--Alloy-slate-600);
+}
+
+/* Dark-mode empty active — palette per Figma spec:
+   card bg slate-200, border slate-150, leading badge slate-150,
+   icon stroke + text slate-300. */
+@media (prefers-color-scheme: dark) {
+  :root:not(:global(.light)) .conditionNodeCard[data-filled="false"][data-active="true"] {
+    background: var(--Alloy-slate-200);
+    border-color: var(--Alloy-slate-150);
+  }
+  :root:not(:global(.light)) .conditionNodeCard[data-filled="false"][data-active="true"] .conditionNodeIconBox {
+    background: var(--Alloy-slate-150);
+    color: var(--Alloy-slate-300);
+  }
+  :root:not(:global(.light)) .conditionNodeCard[data-filled="false"][data-active="true"] .conditionNodeTopText,
+  :root:not(:global(.light)) .conditionNodeCard[data-filled="false"][data-active="true"] .conditionNodeTopSecondary,
+  :root:not(:global(.light)) .conditionNodeCard[data-filled="false"][data-active="true"] .conditionNodeTopPrimary {
+    color: var(--Alloy-slate-300);
+  }
+}
+:global(.dark) .conditionNodeCard[data-filled="false"][data-active="true"] {
+  background: var(--Alloy-slate-200);
+  border-color: var(--Alloy-slate-150);
+}
+:global(.dark) .conditionNodeCard[data-filled="false"][data-active="true"] .conditionNodeIconBox {
+  background: var(--Alloy-slate-150);
+  color: var(--Alloy-slate-300);
+}
+:global(.dark) .conditionNodeCard[data-filled="false"][data-active="true"] .conditionNodeTopText,
+:global(.dark) .conditionNodeCard[data-filled="false"][data-active="true"] .conditionNodeTopSecondary,
+:global(.dark) .conditionNodeCard[data-filled="false"][data-active="true"] .conditionNodeTopPrimary {
+  color: var(--Alloy-slate-300);
 }
 .conditionNodeCard[data-active="true"] {
   background: var(--color-slate-bg-secondary);
   border-color: var(--color-slate-bg-primary);
   box-shadow: 0 0 7px color-mix(in srgb, var(--color-slate-bg-primary) 50%, transparent);
+}
+/* Dark mode active — glow uses slate-150 so it reads as a bright halo
+   against the deep slate canvas surface. */
+@media (prefers-color-scheme: dark) {
+  :root:not(:global(.light)) .conditionNodeCard[data-active="true"] {
+    box-shadow: 0 0 7px color-mix(in srgb, var(--Alloy-slate-150) 50%, transparent);
+  }
+}
+:global(.dark) .conditionNodeCard[data-active="true"] {
+  box-shadow: 0 0 7px color-mix(in srgb, var(--Alloy-slate-150) 50%, transparent);
 }
 
 /* Hover — subtle lift when not active. Mirrors the trigger/delay hover
@@ -5699,20 +5920,36 @@
 .conditionNodeCard[data-filled="true"][data-active="true"] .conditionNodeTopPrimary {
   color: var(--Alloy-white);
 }
-/* Dark mode filled + active — flip card to white with black primary text */
+/* Dark mode filled + active — Figma spec palette:
+   card bg slate-100, border slate-150, leading badge slate-150,
+   icon stroke + text slate-300. */
 @media (prefers-color-scheme: dark) {
   :root:not(:global(.light)) .conditionNodeCard[data-filled="true"][data-active="true"] {
-    background: var(--Alloy-white);
+    background: var(--Alloy-slate-100);
+    border-color: var(--Alloy-slate-150);
   }
-  :root:not(:global(.light)) .conditionNodeCard[data-filled="true"][data-active="true"] .conditionNodeTopPrimary {
-    color: var(--Alloy-black);
+  :root:not(:global(.light)) .conditionNodeCard[data-filled="true"][data-active="true"] .conditionNodeIconBox {
+    background: var(--Alloy-slate-150);
+    color: var(--Alloy-slate-300);
+  }
+  :root:not(:global(.light)) .conditionNodeCard[data-filled="true"][data-active="true"] .conditionNodeTopPrimary,
+  :root:not(:global(.light)) .conditionNodeCard[data-filled="true"][data-active="true"] .conditionNodeTopSecondary,
+  :root:not(:global(.light)) .conditionNodeCard[data-filled="true"][data-active="true"] .conditionNodeTopText {
+    color: var(--Alloy-slate-300);
   }
 }
 :global(.dark) .conditionNodeCard[data-filled="true"][data-active="true"] {
-  background: var(--Alloy-white);
+  background: var(--Alloy-slate-100);
+  border-color: var(--Alloy-slate-150);
 }
-:global(.dark) .conditionNodeCard[data-filled="true"][data-active="true"] .conditionNodeTopPrimary {
-  color: var(--Alloy-black);
+:global(.dark) .conditionNodeCard[data-filled="true"][data-active="true"] .conditionNodeIconBox {
+  background: var(--Alloy-slate-150);
+  color: var(--Alloy-slate-300);
+}
+:global(.dark) .conditionNodeCard[data-filled="true"][data-active="true"] .conditionNodeTopPrimary,
+:global(.dark) .conditionNodeCard[data-filled="true"][data-active="true"] .conditionNodeTopSecondary,
+:global(.dark) .conditionNodeCard[data-filled="true"][data-active="true"] .conditionNodeTopText {
+  color: var(--Alloy-slate-300);
 }
 .conditionNodeTopPrimary {
   font-weight: var(--font-weight-medium);
@@ -5772,36 +6009,199 @@
   transform: translateY(-50%);
 }
 
-/* Default: the policy gradient is tinted behind a near-opaque surface layer
-   so the card reads as a pale warm wash in light mode and a dim warm wash in
-   dark mode — mode-aware via var(--color-bg-primary). */
+/* ─── Policy node (mirrors AI node three-state pattern with policy gradient) ─
+   Matches the .aiNodeIconBox approach: default = 3-layer bg (veil + full
+   gradient + 30% alpha gradient border); hover = ::before overlay with
+   thinner veil + 60% alpha border; active = pure gradient fill + glow.
+   All layers reference --color-bg-primary so light/dark come free. */
+
+/* Base (default) — policy gradient veiled at 82%, 30%-alpha gradient border */
 .policyNodeCard {
+  position: relative;
+  isolation: isolate;
   background:
     linear-gradient(
-      color-mix(in srgb, var(--color-bg-primary) 86%, transparent),
-      color-mix(in srgb, var(--color-bg-primary) 86%, transparent)
-    ),
-    var(--gradient-policy-engine);
-  /* Coral stop from the policy gradient, 0.3 alpha */
-  border: 1px solid rgba(255, 167, 155, 0.3);
+      color-mix(in srgb, var(--color-bg-primary) 82%, transparent),
+      color-mix(in srgb, var(--color-bg-primary) 82%, transparent)
+    ) padding-box,
+    var(--gradient-policy-engine) padding-box,
+    linear-gradient(
+      to right,
+      rgba(255, 167, 155, 0.3)  5.75%,
+      rgba(255, 136,  37, 0.3) 34.95%,
+      rgba(252, 102, 132, 0.3) 65.93%,
+      rgba(253,  66, 116, 0.3) 100%
+    ) border-box;
+  border: 1px solid transparent;
   border-radius: 8px;
   overflow: hidden;
   box-shadow: none;
   transition:
     background var(--duration-fast) var(--ease-default),
+    color var(--duration-fast) var(--ease-default),
     box-shadow var(--duration-fast) var(--ease-default);
 }
-/* Active: full-opacity policy gradient on the entire card background,
-   rose-stop border from the policy gradient, + multi-stop gradient glow
-   (stacked box-shadows offset per-stop to mirror the gradient direction). */
-.policyNodeCard[data-active="true"] {
-  background: var(--gradient-policy-engine);
+
+/* Hover overlay — thinner veil + brighter 60% border, faded via opacity */
+.policyNodeCard::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-default);
+  background:
+    linear-gradient(
+      color-mix(in srgb, var(--color-bg-primary) 60%, transparent),
+      color-mix(in srgb, var(--color-bg-primary) 60%, transparent)
+    ) padding-box,
+    var(--gradient-policy-engine) padding-box,
+    /* Fully-opaque policy gradient on the border ring — strong hover border
+       matching the stepped-up border treatment on other node types. */
+    var(--gradient-policy-engine) border-box;
+  border: 1px solid transparent;
+  z-index: 0;
+}
+
+/* Keep content above the ::before overlay */
+.policyNodeCard > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* Hover: fade in the overlay (non-active only) */
+.flowNodeOuter:hover .policyNodeCard:not([data-active="true"])::before {
+  opacity: 1;
+}
+/* Dark-mode hover — set the rose-accent border directly on the card so it
+   reads as a crisp 1px stroke (the ::before overlay's border-box layer sits
+   outside the card and reads more subtly). */
+@media (prefers-color-scheme: dark) {
+  :root:not(:global(.light)) .flowNodeOuter:hover .policyNodeCard:not([data-active="true"]) {
+    border-color: var(--color-policy-accent);
+  }
+}
+:global(.dark) .flowNodeOuter:hover .policyNodeCard:not([data-active="true"]) {
   border-color: var(--color-policy-accent);
-  /* Single-stop policy glow — same 7px blur / 0 0 offset as the trigger pill
-     (see .triggerPillFocused), but using the policy gradient's rose mid-stop
-     as a single tokenized color so light/dark behaves uniformly. */
+}
+/* Dark-mode hover — bump border-box gradient to 0.8 alpha for a brighter
+   edge against the dark canvas. */
+@media (prefers-color-scheme: dark) {
+  :root:not(:global(.light)) .policyNodeCard::before {
+    background:
+      linear-gradient(
+        color-mix(in srgb, var(--color-bg-primary) 60%, transparent),
+        color-mix(in srgb, var(--color-bg-primary) 60%, transparent)
+      ) padding-box,
+      var(--gradient-policy-engine) padding-box,
+      linear-gradient(var(--color-policy-accent), var(--color-policy-accent)) border-box;
+  }
+}
+:global(.dark) .policyNodeCard::before {
+  background:
+    linear-gradient(
+      color-mix(in srgb, var(--color-bg-primary) 60%, transparent),
+      color-mix(in srgb, var(--color-bg-primary) 60%, transparent)
+    ) padding-box,
+    var(--gradient-policy-engine) padding-box,
+    linear-gradient(var(--color-policy-accent), var(--color-policy-accent)) border-box;
+}
+
+/* Active (focused/selected) — drop the veil, pure gradient fill scoped to
+   padding-box so the 1px rose-accent border sits cleanly above, + glow. */
+.policyNodeCard[data-active="true"] {
+  background: var(--gradient-policy-engine) padding-box;
+  border: 1px solid var(--color-policy-accent);
   box-shadow: 0 0 7px 0 var(--color-policy-accent);
 }
+.policyNodeCard[data-active="true"]::before {
+  opacity: 0;
+}
+
+/* Icon box + text colors per state (preserved from prior design) */
+.policyNodeCard[data-filled="false"]:not([data-active="true"]) .policyNodeIconBox {
+  background: rgba(252, 102, 132, 0.15);
+  color: #FFA79B;
+}
+/* Filled + default — darker rose-tinted badge so the icon reads against
+   the warmly-veiled card. Dark mode drops to a solid near-black rose tint
+   on just the badge. */
+.policyNodeCard[data-filled="true"]:not([data-active="true"]) .policyNodeIconBox {
+  background: rgba(252, 102, 132, 0.25);
+  color: var(--step-policy-fg);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not(:global(.light)) .policyNodeCard[data-filled="true"]:not([data-active="true"]) .policyNodeIconBox {
+    background: rgba(252, 102, 132, 0.15);
+    color: #FFA79B;
+  }
+}
+:global(.dark) .policyNodeCard[data-filled="true"]:not([data-active="true"]) .policyNodeIconBox {
+  background: rgba(252, 102, 132, 0.15);
+  color: #FFA79B;
+}
+/* Default text — coral in both modes, regardless of filled state */
+.policyNodeCard:not([data-active="true"]) .policyNodeTopPrimary,
+.policyNodeCard:not([data-active="true"]) .policyNodeTopSecondary,
+.policyNodeCard:not([data-active="true"]) .policyNodeTopText {
+  color: #FFA79B;
+}
+.policyNodeCard[data-active="true"] .policyNodeIconBox {
+  background: color-mix(in srgb, var(--color-bg-primary) 20%, transparent);
+  color: var(--Alloy-white);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not(:global(.light)) .policyNodeCard[data-active="true"] {
+    background: linear-gradient(
+      to right,
+      rgba(255, 167, 155, 0.6)  5.75%,
+      rgba(255, 136,  37, 0.6) 34.95%,
+      rgba(252, 102, 132, 0.6) 65.93%,
+      rgba(253,  66, 116, 0.6) 100%
+    );
+  }
+  :root:not(:global(.light)) .policyNodeCard[data-active="true"] .policyNodeIconBox {
+    background: rgba(255, 255, 255, 0.2);
+    color: #FFE1D6;
+  }
+  :root:not(:global(.light)) .policyNodeCard[data-active="true"] .policyNodeTopPrimary,
+  :root:not(:global(.light)) .policyNodeCard[data-active="true"] .policyNodeTopSecondary {
+    color: #FFE1D6;
+  }
+}
+:global(.dark) .policyNodeCard[data-active="true"] {
+  background: linear-gradient(
+    to right,
+    rgba(255, 167, 155, 0.6)  5.75%,
+    rgba(255, 136,  37, 0.6) 34.95%,
+    rgba(252, 102, 132, 0.6) 65.93%,
+    rgba(253,  66, 116, 0.6) 100%
+  );
+}
+:global(.dark) .policyNodeCard[data-active="true"] .policyNodeIconBox {
+  background: rgba(255, 255, 255, 0.2);
+  color: #FFE1D6;
+}
+:global(.dark) .policyNodeCard[data-active="true"] .policyNodeTopPrimary,
+:global(.dark) .policyNodeCard[data-active="true"] .policyNodeTopSecondary {
+  color: #FFE1D6;
+}
+.policyNodeCard[data-active="true"] .policyNodeTopPrimary,
+.policyNodeCard[data-active="true"] .policyNodeTopSecondary {
+  color: var(--color-content-inverse-primary);
+  background: none;
+  -webkit-text-fill-color: currentColor;
+}
+/* Empty + active — text follows the white icon stroke for parity. */
+.policyNodeCard[data-filled="false"][data-active="true"] .policyNodeTopSecondary,
+.policyNodeCard[data-filled="false"][data-active="true"] .policyNodeTopPrimary {
+  color: var(--Alloy-white);
+  background: none;
+  -webkit-text-fill-color: currentColor;
+}
+
+/* ── Shared chrome (layout + typography) ──────────────────────────────── */
 .policyNodeTopRow {
   display: flex;
   align-items: center;
@@ -5816,26 +6216,10 @@
   width: 32px;
   height: 32px;
   border-radius: 6px;
-  /* Default (empty) — solid coral surface w/ coral icon, using the project's
-     existing --step-policy-* tokens so the badge reads in the policy color
-     family consistently with the popover/activity chip. */
   background: var(--step-policy-bg);
   color: var(--step-policy-fg);
   flex-shrink: 0;
   transition: background var(--duration-fast) var(--ease-default);
-}
-/* Active: translucent surface — 20% of --color-bg-primary */
-.policyNodeCard[data-active="true"] .policyNodeIconBox {
-  background: color-mix(in srgb, var(--color-bg-primary) 20%, transparent);
-}
-/* Dark mode active — keep white 20% so the badge reads on the gradient card */
-@media (prefers-color-scheme: dark) {
-  :root:not(.light) .policyNodeCard[data-active="true"] .policyNodeIconBox {
-    background: rgba(255, 255, 255, 0.2);
-  }
-}
-.dark .policyNodeCard[data-active="true"] .policyNodeIconBox {
-  background: rgba(255, 255, 255, 0.2);
 }
 .policyNodeTopText {
   font-family: var(--font-sans);
@@ -5861,55 +6245,7 @@
   text-overflow: ellipsis;
   overflow-wrap: anywhere;
 }
-/* Dark mode — default: coral stop from the policy gradient + 0.3 alpha border.
-   Active: white (keep contrast on the rose→deep-pink card). */
-@media (prefers-color-scheme: dark) {
-  :root:not(.light) .policyNodeTopPrimary,
-  :root:not(.light) .policyNodeCard:not([data-active="true"]) .policyNodeTopSecondary {
-    color: #FFA79B;
-  }
-  :root:not(.light) .policyNodeCard:not([data-active="true"]) {
-    border-color: rgba(255, 167, 155, 0.3);
-  }
-  :root:not(.light) .policyNodeCard[data-active="true"] .policyNodeTopPrimary,
-  :root:not(.light) .policyNodeCard[data-active="true"] .policyNodeTopSecondary {
-    color: var(--Alloy-white);
-  }
-}
-.dark .policyNodeTopPrimary,
-.dark .policyNodeCard:not([data-active="true"]) .policyNodeTopSecondary {
-  color: #FFA79B;
-}
-.dark .policyNodeCard:not([data-active="true"]) {
-  border-color: rgba(255, 167, 155, 0.3);
-}
-.dark .policyNodeCard[data-active="true"] .policyNodeTopPrimary,
-.dark .policyNodeCard[data-active="true"] .policyNodeTopSecondary {
-  color: var(--Alloy-white);
-}
-.policyNodeCard[data-active="true"] .policyNodeTopPrimary {
-  color: var(--color-content-inverse-primary);
-  background: none;
-  -webkit-text-fill-color: currentColor;
-}
-.policyNodeCard[data-active="true"] .policyNodeTopSecondary {
-  color: var(--color-content-inverse-primary);
-}
-/* Empty + active — text picks up the coral stop so it matches the icon
-   stroke's perceived colour on the warm gradient card background. */
-.policyNodeCard[data-filled="false"][data-active="true"] .policyNodeTopSecondary,
-.policyNodeCard[data-filled="false"][data-active="true"] .policyNodeTopPrimary {
-  color: #FFA79B;
-  background: none;
-  -webkit-text-fill-color: currentColor;
-}
-/* Empty + default — icon stroke picks up the coral stop so it matches the
-   placeholder text colour. */
-.policyNodeCard[data-filled="false"]:not([data-active="true"]) .policyNodeIconBox {
-  color: #FFA79B;
-}
 .policyNodeTopSecondary {
-  /* Coral stop from the policy gradient — matches dark-mode primary tint */
   color: #FFA79B;
   /* Match delay pill font style — 14px / semibold / tracking-wide */
   font-family: var(--font-sans);
@@ -5920,13 +6256,5 @@
   white-space: nowrap;
   text-overflow: ellipsis;
   overflow: hidden;
-}
-
-/* Policy node — on hover, shift the primary & placeholder text to the rose
-   accent (same token as the focused glow/border) for a clear affordance.
-   Applies to both empty and active states. */
-.flowNodeOuter:hover .policyNodeCard .policyNodeTopSecondary,
-.flowNodeOuter:hover .policyNodeCard .policyNodeTopPrimary {
-  color: var(--color-policy-accent);
 }
 

@@ -325,13 +325,17 @@
   color: var(--color-content-secondary);
 }
 
-/* ── Body ── */
+/* ── Card name — now lives in the top row alongside the step count +
+      chevron. flex: 1 + min-width: 0 lets it absorb the available width
+      while the line-clamp trims long names instead of forcing overflow. */
 .cardName {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
   line-clamp: 3;
   overflow: hidden;
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: var(--text-base);
   font-weight: var(--font-weight-semibold);
   line-height: var(--line-height-snug);
@@ -411,7 +415,9 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
-  margin: var(--space-3) calc(-1 * var(--space-4)) calc(-1 * var(--space-3));
+  /* Tighten the space between the card body and the expanded panel —
+     the `.card` flex gap already supplies the breathing room. */
+  margin: 0 calc(-1 * var(--space-4)) calc(-1 * var(--space-3));
   padding: var(--space-4);
   background: var(--color-bg-secondary);
   border-top: 1px solid var(--color-border-opaque);
@@ -419,18 +425,47 @@
   border-bottom-right-radius: var(--radius-lg);
 }
 
+/* Preview diagram wrapper — paints the same surface as a builder canvas
+   tile: card-style background, 24px padding on every side. The scale wrapper
+   inside transforms the natural-size node row to fit the card width. */
 .expandedDiagram {
+  position: relative;
   background: var(--color-bg-primary);
   border: 1px solid var(--color-border-opaque);
   border-radius: var(--radius-md);
-  padding: var(--space-3);
-  overflow-x: auto;
+  padding: 24px;
+  overflow: hidden;
 }
 
-.expandedDiagram .previewSvg {
-  display: block;
-  max-width: 100%;
-  height: auto;
+/* Inner frame — height is set inline to the *scaled* row height so the
+   surrounding card collapses around the diagram. The scaler is positioned
+   absolutely against this frame so its un-scaled width doesn't influence
+   layout. */
+.expandedDiagramFrame {
+  position: relative;
+  width: 100%;
+}
+
+/* Scaler — `transform: scale()` set inline on the element. Origin is
+   left/top so the visual top-left lines up with the frame's top-left and
+   the rest of the row trails to the right at scaled size. */
+.expandedDiagramScaler {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: left top;
+}
+
+/* The actual horizontal node row — flex layout with the connectors as
+   flex items between adjacent nodes. align-items: center keeps tall nodes
+   (60px circles) and short nodes (36px pills) on the same horizontal axis.
+   `gap: 16px` adds breathing room between each node and the arrow path
+   on either side. */
+.expandedDiagramRow {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4); /* 16px */
+  white-space: nowrap;
 }
 
 .expandedSection {
@@ -516,6 +551,35 @@
 .expandedActionBtn {
   width: 100%;
   justify-content: center;
+}
+
+/* Single-button row sitting just below the preview diagram. Right-aligns
+   the "Use Template" CTA so it reads as a follow-on action to the
+   diagram above. */
+.expandedDiagramActions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* About-row layout — pairs the "About this template" copy block with the
+   Use Template CTA on a single horizontal row. Copy block grows to absorb
+   the available width; CTA hugs the right edge. The CTA centres against
+   the copy block so it tracks the description rather than the eyebrow. */
+.expandedAboutRow {
+  display: flex;
+  /* Anchor the Use Template CTA to the top so it sits level with the
+     "About this template" heading, not centered against the description. */
+  align-items: flex-start;
+  gap: var(--space-4);
+}
+
+.expandedAboutCopy {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.expandedAboutCta {
+  flex-shrink: 0;
 }
 
 /* ─── Empty State ───────────────────────────────────────────────────────────── */

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo, useCallback, Fragment, isValidElement, cloneElement } from 'react';
 import { createPortal } from 'react-dom';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { Button } from '@alloy/components/Button';
 import { Tag } from '@alloy/components/Tag';
@@ -22,6 +22,8 @@ import { ArrowCircleBrokenRightIcon } from '@alloy/components/icons/ArrowCircleB
 import { ChevronDownIcon } from '@alloy/components/icons/ChevronDownIcon';
 import { Grid01Icon } from '@alloy/components/icons/Grid01Icon';
 import { XIcon } from '@alloy/components/icons/XIcon';
+import tbAiLightLogo from '../assets/tb-ai-light.svg';
+import tbAiDarkLogo from '../assets/tb-ai-dark.svg';
 import { CheckCircleIcon } from '@alloy/components/icons/CheckCircleIcon';
 import { Users03Icon } from '@alloy/components/icons/Users03Icon';
 import { File04Icon } from '@alloy/components/icons/File04Icon';
@@ -44,6 +46,15 @@ import { ChevronRightIcon } from '@alloy/components/icons/ChevronRightIcon';
 import { ScrollArea } from '@alloy/components/ScrollArea';
 import { Divider } from '@alloy/components/Divider';
 import { AILoader } from '@alloy/components/ai/AILoader';
+import { AIComposer, AIComposerInput } from '@alloy/components/ai/AIComposer';
+import { AIThread, AIAssistantMessage, AIUserMessage } from '@alloy/components/ai/AIThread';
+import { AIActivityTrail, AIActivityStep } from '@alloy/components/ai/AIActivityTrail';
+import {
+  ComposerActions,
+  ComposerSendButton,
+  ComposerVoiceButton,
+  ComposerAttachment,
+} from '@alloy/components/ComposerActions';
 import { ToggleButton } from '@alloy/components/ToggleButton';
 import { Trash03Icon } from '@alloy/components/icons/Trash03Icon';
 import { RefreshCw04Icon } from '@alloy/components/icons/RefreshCw04Icon';
@@ -59,6 +70,7 @@ import styles from './BuilderPage.module.css';
 import { callFlowAgent } from '@/features/ai/client';
 import { GLOBAL_TOOLS, STEP_TOOLS } from '@/features/ai/tools';
 import { buildGlobalSystemPrompt, buildStepSystemPrompt } from '@/features/ai/systemPrompts';
+import { AI_PERSONAS, getPersonaById, type AiPersona } from '@/features/ai/personas';
 import { PolicyMatchingModal } from '@/components/PolicyMatchingModal';
 
 // ─── Workflow settings persistence ─────────────────────────────────────────────
@@ -1373,8 +1385,8 @@ function canAddNodeAfter(
   if (parentId === null) return false;
   const parent = nodes.find(n => n.id === parentId);
   if (!parent) return false;
-  // Can't place a condition after an action or ai step
-  if ((parent.type === 'action' || parent.type === 'ai') && type === 'condition') return false;
+  // Action / AI specialist nodes only chain to another action or AI.
+  if ((parent.type === 'action' || parent.type === 'ai') && type !== 'action' && type !== 'ai') return false;
   // Delay-to-delay is disallowed
   if (parent.type === 'delay' && type === 'delay') return false;
   // Policy-to-policy is disallowed
@@ -1391,7 +1403,7 @@ const NODE_W        = 200;
 const NODE_H        = 130;   // approximate rendered card height (actual ~132px)
 const H_SPACING     = 300;   // centre-to-centre column pitch
 const V_SPACING     = 210;   // centre-to-centre row pitch (~80px gap between cards)
-const CANVAS_TOP    = 48;    // initial top padding
+const CANVAS_TOP    = 16;    // initial top padding
 const LEFT_PANEL_W  = 360;   // left panel width — pan offset so content starts in visible area
 // With graphContent at `left: 50%` of viewport the natural center is at ~50% of viewport.
 // We offset pan.x by this value so nodes centre in the area to the right of the panel.
@@ -1806,15 +1818,99 @@ const AI_ENGAGE_TARGETS    = [
   { value: 'Specific Group',                   label: 'Specific Group' },
 ];
 
+/* ─── AiSpecialistPersonaPicker ─────────────────────────────────────────────
+   Empty-state picker shown when an AI Specialist node is first added — the
+   user picks one of the preset personas before any configuration UI is
+   exposed. Pattern mirrors <ActionSelector>: a search field on top, a
+   scrolling list of rows below, no group headers (the persona library is
+   small enough to display as a single flat list).
+
+   Selecting a row commits two writes:
+     · selectedValue          → 'AI Specialist'  (flips the popover into the
+                                                  configured branch)
+     · configValues.ai_persona_id → persona.id   (so AiSpecialistMeta can
+                                                  show the chosen persona) */
+
+interface AiSpecialistPersonaPickerProps {
+  onSelect: (persona: AiPersona) => void;
+}
+
+function AiSpecialistPersonaPicker({ onSelect }: AiSpecialistPersonaPickerProps) {
+  const [search, setSearch] = useState('');
+  const q = search.trim().toLowerCase();
+  const filtered = q
+    ? AI_PERSONAS.filter(p =>
+        p.name.toLowerCase().includes(q) ||
+        p.role.toLowerCase().includes(q) ||
+        p.description.toLowerCase().includes(q) ||
+        p.tags.some(t => t.toLowerCase().includes(q))
+      )
+    : AI_PERSONAS;
+
+  return (
+    <div className={styles.actionSelectorRoot}>
+      <div className={styles.actionSelectorSearch}>
+        <SearchField
+          size="sm"
+          placeholder="Search personas..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          onClear={() => setSearch('')}
+          aria-label="Search personas"
+        />
+      </div>
+
+      <div className={styles.actionSelectorList}>
+        {filtered.length === 0 ? (
+          <p className={styles.actionSelectorEmpty}>No personas match "{search}"</p>
+        ) : (
+          filtered.map(persona => (
+            <button
+              key={persona.id}
+              type="button"
+              className={styles.actionSelectorRow}
+              onClick={() => onSelect(persona)}
+            >
+              {/* Avatar uses the brand fill + a diamond glyph — same visual
+                  language as the configured AiSpecialistMeta card so the
+                  transition from picker → configured feels continuous. */}
+              <span className={styles.personaPickerAvatar} aria-hidden>
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                  <path d="M8 2L13 8L8 14L3 8L8 2Z" fill="white" fillOpacity="0.92" />
+                </svg>
+              </span>
+              <span className={styles.actionSelectorRowText}>
+                <span className={styles.actionSelectorRowLabel}>
+                  {persona.name}
+                  <span className={styles.personaPickerRole}>· {persona.role}</span>
+                </span>
+                <span className={styles.actionSelectorRowDesc}>{persona.description}</span>
+              </span>
+            </button>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
 /** Action + Specialist Persona rows — rendered above the Configuration divider */
 function AiSpecialistMeta({
   step,
   onUpdateConfigField,
+  onChangePersona,
 }: {
   step: FlowStep;
   onUpdateConfigField: (key: string, value: string) => void;
+  /** Reset the selection so the popover falls back to the persona picker. */
+  onChangePersona?: () => void;
 }) {
-  void onUpdateConfigField; // persona change not wired yet
+  void onUpdateConfigField; // direct persona writes not wired yet — change button routes back to the picker
+  // Resolve the selected persona from configValues; falls back to the first
+  // entry so the card still renders something even when an upgrade left a
+  // node without an `ai_persona_id` set.
+  const personaId = step.configValues?.ai_persona_id;
+  const persona = getPersonaById(personaId) ?? AI_PERSONAS[0];
   return (
     <div className={styles.aiSpecRows}>
       {/* Specialist Persona row */}
@@ -1829,15 +1925,15 @@ function AiSpecialistMeta({
           </div>
           <div className={styles.aiSpecPersonaInfo}>
             <div className={styles.aiSpecPersonaName}>
-              Corvus
+              {persona.name}
               <div className={styles.aiSpecVoicePill}>
                 <div className={styles.aiSpecVoicePillIcon}><VolumeMaxIcon size={12} /></div>
-                <span className={styles.aiSpecVoicePillLabel}>Ana</span>
+                <span className={styles.aiSpecVoicePillLabel}>{persona.voice}</span>
               </div>
             </div>
-            <div className={styles.aiSpecPersonaRole}>Scheduler</div>
+            <div className={styles.aiSpecPersonaRole}>{persona.role}</div>
           </div>
-          <Button variant="ghost" size="xs" onClick={() => {}}>
+          <Button variant="ghost" size="xs" onClick={onChangePersona}>
             Change
           </Button>
         </div>
@@ -2241,10 +2337,13 @@ function buildSpecialistReply(
 interface AiSpecialistTestProps {
   specialistName: string;
   specialistRole: string;
+  /** Voice label (e.g. 'alloy', 'nova') — drives the small voice pill in the
+   *  header card so the Test tab matches the Configure tab styling. */
+  specialistVoice?: string;
   triggerLabel: string | undefined;
 }
 
-function AiSpecialistTest({ specialistName, specialistRole, triggerLabel }: AiSpecialistTestProps) {
+function AiSpecialistTest({ specialistName, specialistRole, specialistVoice, triggerLabel }: AiSpecialistTestProps) {
   const record = getTriggerRecordType(triggerLabel);
 
   const [selectedRecord, setSelectedRecord] = useState<string>('');
@@ -2338,16 +2437,28 @@ function AiSpecialistTest({ specialistName, specialistRole, triggerLabel }: AiSp
     }, 1000);
   };
 
+  // Mirrors the Configure-tab persona card (`AiSpecialistMeta`) so both tabs
+  // present the chosen specialist with the same chrome — outlined card, small
+  // diamond avatar on a brand fill, name + voice pill inline, role below.
+  // No Change button here since the Test tab is read-only display.
   const specialistHeaderCard = (
-    <div className={styles.aiTestSpecHeaderCard}>
-      <div className={styles.aiTestSpecHeaderAvatar} aria-hidden>
-        <svg width="20" height="20" viewBox="0 0 16 16" fill="none">
-          <path d="M8 2L13 8L8 14L3 8L8 2Z" fill="white" fillOpacity="0.95" />
+    <div className={styles.aiSpecPersonaCard}>
+      <div className={styles.aiSpecPersonaAvatar}>
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
+          <path d="M8 2L13 8L8 14L3 8L8 2Z" fill="white" fillOpacity="0.92" />
         </svg>
       </div>
-      <div className={styles.aiTestSpecHeaderText}>
-        <div className={styles.aiTestSpecHeaderName}>{specialistName}</div>
-        <div className={styles.aiTestSpecHeaderRole}>{specialistRole}</div>
+      <div className={styles.aiSpecPersonaInfo}>
+        <div className={styles.aiSpecPersonaName}>
+          {specialistName}
+          {specialistVoice && (
+            <div className={styles.aiSpecVoicePill}>
+              <div className={styles.aiSpecVoicePillIcon}><VolumeMaxIcon size={12} /></div>
+              <span className={styles.aiSpecVoicePillLabel}>{specialistVoice}</span>
+            </div>
+          )}
+        </div>
+        <div className={styles.aiSpecPersonaRole}>{specialistRole}</div>
       </div>
     </div>
   );
@@ -2522,9 +2633,14 @@ function ActionSelector({ onSelect }: ActionSelectorProps) {
     .filter(group => group.items.length > 0);
 
   const renderRow = (item: LibraryItem) => {
-    const icon = ACTION_ITEM_ICON[item.id]
+    const baseIcon = ACTION_ITEM_ICON[item.id]
       ?? ACTION_CATEGORY_ICON[item.category]
       ?? STEP_CONFIG.action.icon;
+    // Upsize the base 12px icon to 14px for the selector list without
+    // duplicating every ACTION_*_ICON record.
+    const icon = isValidElement(baseIcon)
+      ? cloneElement(baseIcon as React.ReactElement<{ size?: number }>, { size: 14 })
+      : baseIcon;
     const description = ACTION_DESCRIPTION[item.id]
       ?? ACTION_CATEGORY_LABEL[item.category]
       ?? item.category.replace(/_/g, ' ');
@@ -2592,6 +2708,8 @@ interface NodePopoverProps {
   onUpdateConditions?: (conditions: ConditionEntry[], logic: 'AND' | 'OR') => void;
   /** Group-based condition updater — replaces the node's `conditionGroups`. */
   onUpdateConditionGroups?: (groups: ConditionGroup[]) => void;
+  /** Forwarded to the bottom AI input; submits a prompt into the shared thread. */
+  onNodeAiSubmit?: (message: string, nodeType: StepType) => void;
   /** The selected label of the workflow's trigger step, used by the AI Specialist Test tab. */
   triggerLabel?: string;
 }
@@ -2876,7 +2994,7 @@ function ConditionGroupsEditor({ step, onUpdateConditionGroups }: ConditionGroup
   );
 }
 
-function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpdateConfigField, onClose, onSave, onUpdateConditions, onUpdateConditionGroups, triggerLabel }: NodePopoverProps) {
+function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpdateConfigField, onClose, onSave, onUpdateConditions, onUpdateConditionGroups, onNodeAiSubmit, triggerLabel }: NodePopoverProps) {
   const cfg = STEP_CONFIG[step.type];
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
@@ -2910,9 +3028,17 @@ function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpda
   }, [infoOpen]);
   // A specialist is "configured" when the AI Specialist library item is selected.
   const specialistConfigured = isAiSpecialist;
-  // Specialist identity — currently a hardcoded default, overridable via configValues when wired.
-  const specialistName = step.configValues?.ai_specialist_name ?? 'Corvus';
-  const specialistRole = step.configValues?.ai_specialist_role ?? 'Scheduler';
+  // Specialist identity — derived from the persona picked on the Configure
+  // tab via `ai_persona_id`. Explicit `ai_specialist_name` / `_role` overrides
+  // win when set, so future per-node renaming still flows through here.
+  // Falls back to the first preset persona for AI nodes that pre-date the
+  // picker (no persona id stored yet).
+  const selectedPersona =
+    getPersonaById(step.configValues?.ai_persona_id) ?? AI_PERSONAS[0];
+  const specialistName =
+    step.configValues?.ai_specialist_name ?? selectedPersona.name;
+  const specialistRole =
+    step.configValues?.ai_specialist_role ?? selectedPersona.role;
 
   const handleAiSend = async () => {
     if (!aiPrompt.trim() || aiLoading) return;
@@ -2979,10 +3105,20 @@ function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpda
           <span className={styles.popoverTitle}>{POPOVER_TITLES[step.type]}</span>
         </div>
         <div className={styles.popoverHeaderActions}>
-          <button
+          {!(isAiSpecialist && aiSpecTab === 'test') && (
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => { onSave?.(); onClose(); }}
+            >
+              Save
+            </Button>
+          )}
+          <Button
             ref={infoTriggerRef}
-            type="button"
-            className={styles.popoverInfoTrigger}
+            variant="ghost"
+            size="xs"
+            iconOnly
             onClick={() => setInfoOpen(v => !v)}
             aria-label="Node info"
             aria-expanded={infoOpen}
@@ -2990,7 +3126,7 @@ function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpda
             data-active={infoOpen ? 'true' : undefined}
           >
             <InfoCircleIcon size={16} />
-          </button>
+          </Button>
           <Button
             variant="ghost"
             size="xs"
@@ -3114,6 +3250,20 @@ function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpda
             </div>
           )}
         </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════════
+          AI SPECIALIST NODE — persona picker shown until a persona is chosen
+          ══════════════════════════════════════════════════════════════════ */}
+      {step.type === 'ai' && isEmpty && (
+        <AiSpecialistPersonaPicker
+          onSelect={(persona) => {
+            // Persist the persona choice first so the configured branch can
+            // read it on the same render that flips selectedValue on.
+            onUpdateConfigField('ai_persona_id', persona.id);
+            onSelectSuggestion('AI Specialist');
+          }}
+        />
       )}
 
       {/* ══════════════════════════════════════════════════════════════════
@@ -3324,6 +3474,7 @@ function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpda
         <AiSpecialistTest
           specialistName={specialistName}
           specialistRole={specialistRole}
+          specialistVoice={selectedPersona.voice}
           triggerLabel={triggerLabel}
         />
       )}
@@ -3336,7 +3487,11 @@ function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpda
           {/* AI Specialist: Action + Persona rows above the Configuration divider */}
           {step.type === 'ai' && step.selectedValue === 'AI Specialist' && (
             <div className={styles.popoverSection}>
-              <AiSpecialistMeta step={step} onUpdateConfigField={onUpdateConfigField} />
+              <AiSpecialistMeta
+                step={step}
+                onUpdateConfigField={onUpdateConfigField}
+                onChangePersona={() => onSelectSuggestion('')}
+              />
             </div>
           )}
           <div className={styles.popoverDivider} />
@@ -3484,18 +3639,65 @@ function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpda
 
       </div>{/* end popoverBody */}
 
-      {/* ── 6. Footer — Save (hidden on AI Specialist Test tab) ── */}
-      {!(isAiSpecialist && aiSpecTab === 'test') && (
-        <div className={styles.popoverFooter}>
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={() => { onSave?.(); onClose(); }}
-          >
-            Save
-          </Button>
-        </div>
+      {/* ── AI input drawer — relocated from the canvas float into the
+            popover's bottom slot. Submits into the left-panel thread via
+            the onNodeAiSubmit callback; mirrors the NodeAiFloatingInput
+            markup so the composer styling / keyboard handling is shared. */}
+      {onNodeAiSubmit && (
+        <NodePopoverAiDrawer step={step} onSubmit={onNodeAiSubmit} />
       )}
+    </div>
+  );
+}
+
+// ─── NodePopoverAiDrawer ─────────────────────────────────────────────────────
+// Inline copy of the old floating AI input, stripped of canvas-coordinate
+// positioning. Lives at the bottom of NodePopover.
+
+interface NodePopoverAiDrawerProps {
+  step: FlowStep;
+  onSubmit: (message: string, nodeType: StepType) => void;
+}
+
+function NodePopoverAiDrawer({ step, onSubmit }: NodePopoverAiDrawerProps) {
+  const [aiPrompt, setAiPrompt] = useState('');
+  const handleSend = useCallback(() => {
+    const text = aiPrompt.trim();
+    if (!text) return;
+    onSubmit(text, step.type);
+    setAiPrompt('');
+  }, [aiPrompt, step.type, onSubmit]);
+  return (
+    <div className={styles.popoverAiDrawer}>
+      <div className={styles.popoverAiCard}>
+        <textarea
+          className={styles.aiComposerTextarea}
+          placeholder="Tell AI what you want to build..."
+          rows={1}
+          value={aiPrompt}
+          onChange={e => {
+            setAiPrompt(e.target.value);
+            const t = e.target;
+            t.style.height = 'auto';
+            t.style.height = t.scrollHeight + 'px';
+          }}
+          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+        />
+        <div className={styles.popoverAiActionBar}>
+          <button type="button" className={styles.aiComposerMicBtn} aria-label="Voice input">
+            <Microphone02Icon size={14} />
+          </button>
+          {aiPrompt.trim().length > 0 && (
+            <button
+              className={styles.aiComposerSendBtn}
+              onClick={handleSend}
+              aria-label="Send to AI"
+            >
+              <ArrowNarrowUpIcon size={12} />
+            </button>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -3553,7 +3755,7 @@ function TopBar({ onBack, onTest, onPublish, saveState, name, onNameChange, stat
       <div className={styles.topBarLeft}>
         <Button
           variant="tertiary"
-          size="md"
+          size="sm"
           iconOnly
           onClick={onBack}
           aria-label="Back to automations"
@@ -3591,7 +3793,7 @@ function TopBar({ onBack, onTest, onPublish, saveState, name, onNameChange, stat
             if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
           }}
         />
-        <StatusTag status={STATUS_TAG_MAP[status]} size="sm">
+        <StatusTag status={STATUS_TAG_MAP[status]} size="sm" className={styles.topBarStatusTag}>
           {STATUS_LABEL[status]}
         </StatusTag>
       </div>
@@ -3601,11 +3803,11 @@ function TopBar({ onBack, onTest, onPublish, saveState, name, onNameChange, stat
             {saveState === 'saving' ? 'Saving…' : 'All changes saved'}
           </span>
         )}
-        <Button variant="ghost" size="md" iconOnly onClick={onSettingsOpen} aria-label="Workflow settings" className={styles.settingsGearBtn}>
+        <Button variant="ghost" size="sm" iconOnly onClick={onSettingsOpen} aria-label="Workflow settings" className={styles.settingsGearBtn}>
           <SettingsGearIcon />
         </Button>
-        <Button variant="tertiary" size="md" onClick={onTest}>Run test</Button>
-        <Button variant="primary"   size="md" onClick={onPublish}>Publish</Button>
+        <Button variant="tertiary" size="sm" onClick={onTest}>Run test</Button>
+        <Button variant="primary"   size="sm" onClick={onPublish}>Publish</Button>
       </div>
     </header>
   );
@@ -3875,6 +4077,28 @@ function NodePaletteCard({ onDragStart, onDragEnd, onNodeSelect }: NodePaletteCa
   const rootRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
+  // Delayed-unmount machinery so the popover can play an exit animation
+  // before being removed from the tree:
+  //   · `panelMounted`  — controls whether the panel exists in the DOM at all.
+  //   · `panelVisible`  — drives the `data-open` attribute used by CSS to
+  //                       transition opacity + translateY.
+  // On open: mount immediately, then flip visible on the next frame so the
+  // browser commits the off-state styles before transitioning.
+  // On close: flip visible off (CSS animates out), then unmount after the
+  // transition duration.
+  const [panelMounted, setPanelMounted] = useState(false);
+  const [panelVisible, setPanelVisible] = useState(false);
+  useEffect(() => {
+    if (searchOpen) {
+      setPanelMounted(true);
+      const raf = requestAnimationFrame(() => setPanelVisible(true));
+      return () => cancelAnimationFrame(raf);
+    }
+    setPanelVisible(false);
+    const id = window.setTimeout(() => setPanelMounted(false), 200);
+    return () => window.clearTimeout(id);
+  }, [searchOpen]);
+
   const closeSearch = useCallback(() => {
     setSearchOpen(false);
     setSearchQuery('');
@@ -4043,14 +4267,14 @@ function NodePaletteCard({ onDragStart, onDragEnd, onNodeSelect }: NodePaletteCa
 
   return (
     <div ref={rootRef} className={styles.paletteRoot}>
-      {searchOpen && (
+      {panelMounted && (
         <div
-          className={styles.searchPopup}
+          className={styles.searchResultsPanel}
+          data-open={panelVisible || undefined}
           role="dialog"
           aria-label="Search nodes"
           onKeyDown={onPopupKeyDown}
         >
-          <div className={styles.searchResultsPanel}>
             <div className={styles.searchInputRow}>
               <SearchSmIcon size={16} />
               <input
@@ -4130,11 +4354,9 @@ function NodePaletteCard({ onDragStart, onDragEnd, onNodeSelect }: NodePaletteCa
                 ))
               )}
             </div>
-          </div>
-          {renderToolbar(true)}
         </div>
       )}
-      {!searchOpen && renderToolbar(false)}
+      {renderToolbar(searchOpen)}
     </div>
   );
 }
@@ -4164,6 +4386,10 @@ interface ThreadEntry {
   content: string;
   timestamp: number;
   nodeChange?: NodeChangePayload;
+  /** AI entries only — true while the activity trail is still running and
+   *  the message text has not yet arrived. The render hides the text body
+   *  until this flips to false; the trail itself renders in `live` state. */
+  pending?: boolean;
 }
 
 /** Mock AI reaction banks — one line at a time, rotated per-bank to avoid repeats. */
@@ -4302,6 +4528,130 @@ function NodeChangeCard({ payload, timestamp }: NodeChangeCardProps) {
   );
 }
 
+// ─── AssistantActivityTrail ──────────────────────────────────────────────────────
+// Rich activity timeline rendered above every AI response. Mirrors what an
+// agent would actually surface — a sequence of thinking, search, file-read,
+// code-gen, and content-drafting steps, each with sub-activity log lines.
+//
+// While the AI is still streaming a response (`isLive` true), the trail walks
+// through steps one at a time (`active` → `done`) on a fixed cadence so the
+// surface feels alive. When the response ends, the trail snaps to a collapsed
+// "Thought for Ns · 5 steps" summary line; the user can click to expand and
+// inspect what was done.
+
+type AssistantTrailStepType =
+  | 'thinking' | 'tool' | 'search' | 'file' | 'web' | 'code' | 'content';
+
+interface AssistantTrailStep {
+  type: AssistantTrailStepType;
+  label: string;
+  detail?: string;
+  subActivities?: string[];
+}
+
+const ASSISTANT_TRAIL_STEPS: AssistantTrailStep[] = [
+  {
+    type: 'thinking',
+    label: 'Analyzing request',
+    subActivities: [
+      'Parsing user intent…',
+      'Detected: workflow modification request',
+      'Mapping to available tools…',
+    ],
+  },
+  {
+    type: 'search',
+    label: 'Searching workflows',
+    detail: '12 results',
+    subActivities: [
+      'query: workflows.where(owner_id = current_user)',
+      'matched 12 active workflows',
+      'ranking by recent edits…',
+    ],
+  },
+  {
+    type: 'file',
+    label: 'Reading BuilderPage.tsx',
+    detail: '234 lines',
+    subActivities: [
+      'opened src/pages/BuilderPage.tsx',
+      'located <FlowCanvas /> render path',
+      'extracted current node graph',
+    ],
+  },
+  {
+    type: 'code',
+    label: 'Generating step configuration',
+    subActivities: [
+      'building trigger: schedule.daily(09:00)',
+      'adding 3 conditions (owner, status, priority)',
+      'wiring action: notify(#team-ops)',
+      'validating connections…',
+    ],
+  },
+  {
+    type: 'content',
+    label: 'Drafting response',
+  },
+];
+
+// Each step holds for ~1.2s before the next becomes active — long enough
+// that you can actually read the label and watch the sub-activity log
+// lines reveal before it advances.
+const ASSISTANT_TRAIL_TICK_MS = 1200;
+const ASSISTANT_TRAIL_TOTAL_MS =
+  ASSISTANT_TRAIL_TICK_MS * ASSISTANT_TRAIL_STEPS.length;
+
+function AssistantActivityTrail({ isLive }: { isLive: boolean }) {
+  const totalSteps = ASSISTANT_TRAIL_STEPS.length;
+  // `activeIdx` is the index of the step currently `active`. Steps before
+  // it are `done`; steps after it are `pending`. When activeIdx >= total,
+  // every step is done and the trail flips to its `done` summary.
+  const [activeIdx, setActiveIdx] = useState(isLive ? 0 : totalSteps);
+
+  useEffect(() => {
+    if (!isLive) {
+      setActiveIdx(totalSteps);
+      return;
+    }
+    setActiveIdx(0);
+    let i = 0;
+    const id = window.setInterval(() => {
+      i += 1;
+      setActiveIdx(i);
+      if (i >= totalSteps) window.clearInterval(id);
+    }, ASSISTANT_TRAIL_TICK_MS);
+    return () => window.clearInterval(id);
+  }, [isLive, totalSteps]);
+
+  const allDone = activeIdx >= totalSteps;
+  const trailState: 'live' | 'done' = isLive && !allDone ? 'live' : 'done';
+
+  return (
+    <AIActivityTrail state={trailState} duration="6s">
+      {ASSISTANT_TRAIL_STEPS.map((step, i) => {
+        const status: 'pending' | 'active' | 'done' =
+          allDone || i < activeIdx
+            ? 'done'
+            : i === activeIdx
+            ? 'active'
+            : 'pending';
+        return (
+          <AIActivityStep
+            key={i}
+            type={step.type}
+            status={status}
+            detail={step.detail}
+            subActivities={step.subActivities}
+          >
+            {step.label}
+          </AIActivityStep>
+        );
+      })}
+    </AIActivityTrail>
+  );
+}
+
 // ─── LeftPanel ───────────────────────────────────────────────────────────────────
 
 interface LeftPanelProps {
@@ -4398,8 +4748,31 @@ function LeftPanel({
     <aside
       className={styles.leftPanel}
       data-collapsed={collapsed}
-      style={collapsed ? undefined : { width: panelWidth }}
     >
+      {/* ── Header — Teambridge AI wordmark + close ── */}
+      <header className={styles.leftPanelHeader}>
+        <img
+          className={clsx(styles.leftPanelHeaderLogo, styles.leftPanelHeaderLogoLight)}
+          src={tbAiLightLogo}
+          alt="Teambridge AI"
+          aria-hidden="false"
+        />
+        <img
+          className={clsx(styles.leftPanelHeaderLogo, styles.leftPanelHeaderLogoDark)}
+          src={tbAiDarkLogo}
+          alt=""
+          aria-hidden="true"
+        />
+        <Button
+          variant="ghost"
+          size="sm"
+          iconOnly
+          onClick={() => setCollapsed(true)}
+          aria-label="Close AI panel"
+        >
+          <XIcon />
+        </Button>
+      </header>
       {/* ── Handle — drag to resize, click to collapse ── */}
       <div
         ref={leftHandleRef}
@@ -4435,118 +4808,101 @@ function LeftPanel({
         ) : (
         <div className={styles.aiComposer}>
 
-          {/* ── Shell: unified card wrapping chat thread + input ── */}
-          <div className={styles.aiComposerShell}>
+          {/* ── Shell: Alloy AIComposer wraps the thread + input card ── */}
+          <AIComposer className={styles.aiComposerShell}>
 
-            {/* Activity feed + AI conversation thread — pinned input sits below */}
-            <div className={styles.aiChatWindow}>
-              {entries.map((entry) => (
+            {/* Activity feed + AI conversation thread — Alloy AIThread
+                handles scrolling/auto-follow + edge fades. */}
+            <AIThread className={styles.aiChatWindow} padding="md" density="comfortable">
+              {(() => {
+                // Identify the most recent AI entry so only it can run the
+                // live trail animation; older AI responses always render
+                // their trail in the static `done` state.
+                const latestAiId = [...entries].reverse().find(e => e.kind === 'ai')?.id;
+                return entries.map((entry) => {
+                  const isInitial = initialEntryIdsRef.current.has(entry.id);
+                  const isLatestAi = entry.id === latestAiId;
+                  // Trail is live whenever the entry is still pending —
+                  // intrinsic to the entry, so the trail keeps animating
+                  // even if more activity is appended below it.
+                  const trailIsLive =
+                    entry.kind === 'ai' && !isInitial && isLatestAi && entry.pending === true;
+                  return (
                 <Fragment key={entry.id}>
                   {entry.kind === 'activity' && (
-                    <div className={styles.threadUserBlock}>
-                      <div className={styles.threadBubbleUser}>{entry.content}</div>
-                      <time className={styles.threadBubbleTime} dateTime={new Date(entry.timestamp).toISOString()}>
-                        {formatTime(entry.timestamp)}
-                      </time>
-                    </div>
+                    <AIUserMessage time={entry.timestamp}>
+                      {entry.content}
+                    </AIUserMessage>
                   )}
                   {entry.kind === 'context' && (
                     <div className={styles.threadContextRow}>{entry.content}</div>
                   )}
                   {entry.kind === 'user' && (
-                    <div className={styles.threadUserBlock}>
-                      <div className={styles.threadUserLabel}>You</div>
-                      <div className={styles.threadBubbleUser}>{entry.content}</div>
-                      <time className={styles.threadBubbleTime} dateTime={new Date(entry.timestamp).toISOString()}>
-                        {formatTime(entry.timestamp)}
-                      </time>
-                    </div>
+                    <AIUserMessage label="You" time={entry.timestamp}>
+                      {entry.content}
+                    </AIUserMessage>
                   )}
                   {entry.kind === 'ai' && (
-                    <div className={styles.threadAiBlock}>
-                      <div className={styles.threadBubbleAi}>
-                        {initialEntryIdsRef.current.has(entry.id)
-                          ? entry.content
-                          : <TypingText content={entry.content} onProgress={() => chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' })} />}
-                      </div>
-                      <time className={styles.threadBubbleTime} dateTime={new Date(entry.timestamp).toISOString()}>
-                        {formatTime(entry.timestamp)}
-                      </time>
-                    </div>
+                    <AIAssistantMessage time={entry.timestamp}>
+                      <AssistantActivityTrail isLive={trailIsLive} />
+                      {/* Hold the message body until the trail has finished
+                          its run. While `pending`, only the live trail
+                          renders so the user can actually watch it work. */}
+                      {entry.pending
+                        ? null
+                        : isInitial
+                        ? entry.content
+                        : <TypingText content={entry.content} onProgress={() => chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' })} />}
+                    </AIAssistantMessage>
                   )}
                   {entry.kind === 'node_change' && entry.nodeChange && (
                     <NodeChangeCard payload={entry.nodeChange} timestamp={entry.timestamp} />
                   )}
                 </Fragment>
-              ))}
+                  );
+                });
+              })()}
 
-              {/* Single AILoader lives at the end of the conversation —
-                  switches between `state="loading"` while the AI is
-                  responding and `state="ready"` while standing by for the
-                  next prompt. Same component instance so it visually moves
-                  down with new messages rather than appearing/disappearing. */}
-              <div className={styles.threadAiBlock}>
-                <div className={styles.threadBubbleAi}>
-                  <AILoader
-                    variant="gradient-fill"
-                    size={24}
-                    state={aiTyping ? 'loading' : 'ready'}
-                  />
-                </div>
-              </div>
+              {/* Single AILoader pinned at the end of the conversation — flips
+                  variant between `loading` while the AI is responding and
+                  `ready` while standing by for the next prompt. */}
+              <AIAssistantMessage>
+                <AILoader
+                  variant="gradient-fill"
+                  size="xs"
+                  state={aiTyping ? 'loading' : 'ready'}
+                />
+              </AIAssistantMessage>
 
               <div ref={chatBottomRef} aria-hidden="true" />
-            </div>
+            </AIThread>
 
-            <div className={styles.aiComposerWrapper}>
-              <div className={styles.aiComposerCard}>
-              <textarea
-                ref={promptTextareaRef}
-                className={styles.aiComposerTextarea}
-                rows={1}
-                value={aiPrompt}
-                onChange={(e) => onAiPromptChange(e.target.value)}
-                placeholder="Ask AI anything..."
-                aria-label="Ask AI"
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onAiSend(); }
-                }}
-              />
-              <div className={styles.aiComposerActionBar}>
-                {/* Left group: attach */}
-                <div className={styles.aiComposerLeft}>
-                  <button
-                    type="button"
-                    className={styles.aiComposerPlusBtn}
-                    aria-label="Attach"
-                  >
-                    <PlusIcon size={10} />
-                  </button>
-                </div>
-                {/* Right group: mic + send */}
-                <div className={styles.aiComposerRight}>
-                  <button
-                    type="button"
-                    className={styles.aiComposerMicBtn}
-                    aria-label="Voice input"
-                  >
-                    <Microphone02Icon size={14} />
-                  </button>
-                  {(aiPrompt.trim().length > 0 || aiTyping) && (
-                    <button
-                      className={styles.aiComposerSendBtn}
-                      onClick={onAiSend}
-                      disabled={!aiPrompt.trim() || aiTyping}
-                      aria-label="Send to AI"
-                    >
-                      {aiTyping ? <LoadingDots /> : <ArrowNarrowUpIcon size={12} />}
-                    </button>
-                  )}
-                </div>
-              </div>
-              </div>{/* end aiComposerCard */}
-            </div>{/* end aiComposerWrapper */}
-          </div>{/* end aiComposerShell */}
+            <AIComposerInput
+              ref={promptTextareaRef}
+              className={styles.aiComposerInputWrapper}
+              value={aiPrompt}
+              onChange={onAiPromptChange}
+              onSubmit={onAiSend}
+              placeholder="Ask AI anything…"
+              aria-label="Ask AI"
+            >
+              <ComposerActions size="sm">
+                <ComposerAttachment state="idle" aria-label="Attach" />
+                <ComposerVoiceButton state="idle" aria-label="Voice input" />
+                <ComposerSendButton
+                  state={
+                    aiTyping
+                      ? 'streaming'
+                      : aiPrompt.trim().length === 0
+                      ? 'hidden'
+                      : 'ready'
+                  }
+                  onSend={onAiSend}
+                  aria-label="Send to AI"
+                />
+              </ComposerActions>
+            </AIComposerInput>
+          </AIComposer>{/* end aiComposerShell */}
         </div>
         )}
       </div>
@@ -4585,6 +4941,8 @@ interface FlowNodeProps {
   hasOutgoingConnections?: boolean;
   /** Label of the workflow's trigger step — forwarded to NodePopover for the AI Specialist Test tab. */
   triggerLabel?: string;
+  /** Forwarded to NodePopover's bottom AI drawer. */
+  onNodeAiSubmit?: (message: string, nodeType: StepType) => void;
   /** Fired when the right-panel Save button is clicked — used to commit a
    *  single activity entry summarizing the node's saved configuration. */
   onSaveNodePopover?: (nodeId: string) => void;
@@ -4611,6 +4969,7 @@ function FlowNode({
   onUpdateConditions,
   onUpdateConditionGroups,
   triggerLabel,
+  onNodeAiSubmit,
   onSaveNodePopover,
 }: FlowNodeProps) {
   const cfg = STEP_CONFIG[step.type];
@@ -5017,6 +5376,7 @@ function FlowNode({
             onClose={() => setPopoverOpen(false)}
             onUpdateConditions={onUpdateConditions}
             onUpdateConditionGroups={onUpdateConditionGroups}
+            onNodeAiSubmit={onNodeAiSubmit}
             triggerLabel={triggerLabel}
             onSave={onSaveNodePopover ? () => onSaveNodePopover(step.id) : undefined}
           />
@@ -5346,9 +5706,11 @@ function getConnectionError(
     return 'Policy cannot connect to another Policy';
   }
 
-  // Actions/AI are terminal — no outputs
+  // Action / AI can only chain to another action or AI specialist.
   if (fromNode.type === 'action' || fromNode.type === 'ai') {
-    return "Actions can't have outputs";
+    if (toNode.type !== 'action' && toNode.type !== 'ai') {
+      return "Action/AI nodes can only connect to another Action or AI node";
+    }
   }
 
   // Triggers accept no incoming edges
@@ -6141,43 +6503,24 @@ function FlowCanvas({
                     onUpdateConditionGroups={onUpdateConditionGroups ? (groups) => onUpdateConditionGroups(node.id, groups) : undefined}
                     hasOutgoingConnections={edges.some(e => e.from === node.id)}
                     triggerLabel={nodes.find(n => n.type === 'trigger')?.selectedValue}
+                    onNodeAiSubmit={onNodeAiSubmit}
                     onSaveNodePopover={onSaveNodePopover}
                   />
 
                   {/* Bottom anchor — output handle. Always shows + and always
                       allows drawing a new connection (multiple outgoing edges
-                      are permitted). Terminal action/ai nodes have no output. */}
-                  {node.type !== 'action' && node.type !== 'ai' && (
-                    <div
-                      className={clsx(styles.anchor, styles.anchorBottom)}
-                      data-anchor="bottom"
-                      data-anchor-node-id={node.id}
-                    />
-                  )}
+                      are permitted). */}
+                  <div
+                    className={clsx(styles.anchor, styles.anchorBottom)}
+                    data-anchor="bottom"
+                    data-anchor-node-id={node.id}
+                  />
                 </div>
               );
             })}
 
-            {/* ── Floating AI input below selected node ── */}
-            {selectedId && !pendingEdge && (() => {
-              const pos          = nodePositions[selectedId];
-              const selectedNode = nodes.find(n => n.id === selectedId);
-              if (!pos || !selectedNode) return null;
-
-              const aiLeft = pos.x + NODE_W / 2;
-              const aiTop  = pos.y + selectedNodeH + 8;
-
-              return (
-                <NodeAiFloatingInput
-                  key={selectedId}
-                  step={selectedNode}
-                  left={aiLeft}
-                  top={aiTop}
-                  zoom={zoom}
-                  onSubmit={(message, nodeType) => onNodeAiSubmit?.(message, nodeType)}
-                />
-              );
-            })()}
+            {/* Floating per-node AI input relocated into NodePopover's
+                bottom drawer — see `popoverAiDrawer` in NodePopover below. */}
 
             {/* Edge insert popover — opened when clicking a midpoint + button */}
             {edgeInsert && (
@@ -6359,12 +6702,220 @@ const INIT_EDGES_EDIT: GraphEdge[] = [
   { id: 'edge-1', from: 'trigger-1', to: 'condition-1' },
 ];
 
+// ─── Workflow templates ──────────────────────────────────────────────────────
+// Each entry matches a mock workflow on the Automations list. The builder
+// loads the matching template (nodes + edges + name) when opened via the
+// workflow's id route. Workflows not found here fall back to INIT_NODES_EDIT.
+
+interface WorkflowTemplate {
+  name: string;
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+}
+
+/** Helper — build a trigger node that's already configured. */
+function mkTrigger(id: string, label: string): GraphNode {
+  return {
+    id, type: 'trigger',
+    label: 'Choose a trigger',
+    placeholder: 'Search events',
+    configured: true,
+    selectedValue: label,
+  };
+}
+
+/** Helper — build an action node with a preselected action label. */
+function mkAction(id: string, label: string): GraphNode {
+  return {
+    id, type: 'action',
+    label: 'Add an action',
+    placeholder: 'Search actions',
+    configured: true,
+    selectedValue: label,
+  };
+}
+
+/** Helper — build a single-condition node (AND, one entry). */
+function mkCondition(
+  id: string,
+  fieldId: string,
+  operator: string,
+  values: string[],
+): GraphNode {
+  const cond: ConditionEntry = { fieldId, operator, values };
+  const def = CONDITION_LIBRARY.find(d => d.id === fieldId);
+  return {
+    id, type: 'condition',
+    label: 'Add a condition',
+    placeholder: 'Search condition',
+    configured: true,
+    selectedValue: def?.label ?? fieldId,
+    conditions: [cond],
+    conditionLogic: 'AND',
+    conditionGroups: [{ id: 'g1', conditions: [cond] }],
+  };
+}
+
+/** Helper — build a delay node with a simple hours duration. */
+function mkDelay(id: string, amount: string, unit: string, summary: string): GraphNode {
+  return {
+    id, type: 'delay',
+    label: 'Add a delay',
+    placeholder: 'Set delay...',
+    configured: true,
+    selectedValue: summary,
+    configValues: { amount, unit },
+  };
+}
+
+/** Router-state payload passed by TemplatesPage when opening a library
+ *  template — consumed below to synthesize the initial graph. */
+interface RouterTemplateState {
+  templateId: string;
+  templateName: string;
+  templateSteps: string[];
+  triggerCategory: string;
+}
+
+/** Trigger copy per TemplatesPage `triggerCategory`. Falls back to the
+ *  template's own name when a category isn't mapped. */
+const TRIGGER_LABEL_BY_CATEGORY: Record<string, string> = {
+  scheduling:         'Shift scheduled',
+  shift_request:      'Shift request received',
+  shift_release:      'Shift released',
+  clock_in_clock_out: 'Clock-in / clock-out',
+  geofence:           'Geofence entered/exited',
+  data_workflows:     'Record created',
+  breaks:             'Break started',
+};
+
+/** Synthesize a linear node chain from a TemplatesPage template spec. Reuses
+ *  the mk* factories so conditions / delays / actions render with the same
+ *  chrome + Info metadata as any other node on the canvas. */
+function buildTemplateGraph(state: RouterTemplateState): { nodes: GraphNode[]; edges: GraphEdge[] } {
+  const nodes: GraphNode[] = [];
+  const edges: GraphEdge[] = [];
+  let prevId: string | null = null;
+  let actionIdx = 0;
+  state.templateSteps.forEach((step, i) => {
+    const id = `tmpl-${state.templateId}-${step}-${i}`;
+    let node: GraphNode;
+    if (step === 'trigger') {
+      const label = TRIGGER_LABEL_BY_CATEGORY[state.triggerCategory] ?? state.templateName;
+      node = mkTrigger(id, label);
+    } else if (step === 'action') {
+      actionIdx++;
+      node = mkAction(id, actionIdx === 1 ? 'Send feed message' : 'Send email');
+    } else if (step === 'condition') {
+      node = mkCondition(id, 'shift_policy_main_credential', 'is', ['Enabled']);
+    } else if (step === 'delay') {
+      node = mkDelay(id, '5', 'minutes', '5 minutes');
+    } else {
+      node = mkAction(id, state.templateName);
+    }
+    nodes.push(node);
+    if (prevId) edges.push({ id: `tmpl-e-${i}`, from: prevId, to: id });
+    prevId = id;
+  });
+  return { nodes, edges };
+}
+
+const WORKFLOW_TEMPLATES: Record<string, WorkflowTemplate> = {
+  // 1 · New hire onboarding — Employee created → eligible check → Send email → Start next shift
+  wf_01HGXZ7K3QN4A2MB: {
+    name: 'New hire onboarding',
+    nodes: [
+      mkTrigger('nh-trigger-1', 'Employee created'),
+      mkCondition('nh-cond-1', 'shift_policy_main_credential', 'is', ['New hire']),
+      mkAction('nh-action-1', 'Send email'),
+      mkAction('nh-action-2', 'Start next shift'),
+    ],
+    edges: [
+      { id: 'nh-e1', from: 'nh-trigger-1', to: 'nh-cond-1' },
+      { id: 'nh-e2', from: 'nh-cond-1',    to: 'nh-action-1' },
+      { id: 'nh-e3', from: 'nh-action-1',  to: 'nh-action-2' },
+    ],
+  },
+
+  // 2 · Timesheet approval reminder — Weekly Fri 3pm → Pending timesheets? → Send email
+  wf_01HGY2F9PW4VRJ8N: {
+    name: 'Timesheet approval reminder',
+    nodes: [
+      mkTrigger('ts-trigger-1', 'Schedule — weekly (Fri 3pm)'),
+      mkCondition('ts-cond-1', 'shift_policy_upload_timesheet', 'is', ['pending']),
+      mkAction('ts-action-1', 'Send email'),
+    ],
+    edges: [
+      { id: 'ts-e1', from: 'ts-trigger-1', to: 'ts-cond-1' },
+      { id: 'ts-e2', from: 'ts-cond-1',    to: 'ts-action-1' },
+    ],
+  },
+
+  // 3 · Shift swap notification — Shift updated → Is open shift? → Send feed message
+  wf_01HGYH6CXD3TZ5QK: {
+    name: 'Shift swap notification',
+    nodes: [
+      mkTrigger('ss-trigger-1', 'Shift updated'),
+      mkCondition('ss-cond-1', 'shift_policy_regular_bill', 'is', ['open']),
+      mkAction('ss-action-1', 'Send feed message'),
+    ],
+    edges: [
+      { id: 'ss-e1', from: 'ss-trigger-1', to: 'ss-cond-1' },
+      { id: 'ss-e2', from: 'ss-cond-1',    to: 'ss-action-1' },
+    ],
+  },
+
+  // 4 · Overtime alert (draft) — Hours logged → Approaching threshold → Send webhook notification
+  wf_01HGZM4P8BKFYTR7: {
+    name: 'Overtime alert',
+    nodes: [
+      mkTrigger('ot-trigger-1', 'Hours logged'),
+      mkCondition('ot-cond-1', 'shift_policy_single_overtime_bill_hours', 'is', ['40']),
+      mkAction('ot-action-1', 'Webhook notification'),
+    ],
+    edges: [
+      { id: 'ot-e1', from: 'ot-trigger-1', to: 'ot-cond-1' },
+      { id: 'ot-e2', from: 'ot-cond-1',    to: 'ot-action-1' },
+    ],
+  },
+
+  // 5 · Contractor offboarding — Contract end date → Delay 1 hour → Modify (cleanup) → Send email
+  wf_01HH01VQY7JN4E5M: {
+    name: 'Contractor offboarding',
+    nodes: [
+      mkTrigger('co-trigger-1', 'Contract end date'),
+      mkDelay('co-delay-1', '1', 'hours', '1 hour'),
+      mkAction('co-action-1', 'Modify'),
+      mkAction('co-action-2', 'Send email'),
+    ],
+    edges: [
+      { id: 'co-e1', from: 'co-trigger-1', to: 'co-delay-1'  },
+      { id: 'co-e2', from: 'co-delay-1',   to: 'co-action-1' },
+      { id: 'co-e3', from: 'co-action-1',  to: 'co-action-2' },
+    ],
+  },
+};
+
 export function BuilderPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const isNew = !id;
+  // Resolve the workflow template by id. A known id with no template still
+  // falls back to the generic edit initial state (trigger + condition stubs).
+  const template = id ? WORKFLOW_TEMPLATES[id] : undefined;
 
-  const [name, setName] = useState(isNew ? 'Untitled workflow' : 'Candidate Onboarding');
+  // If we arrived here from TemplatesPage, router-state carries the template
+  // spec to materialize on the canvas. Consumed during initial state setup.
+  const routerTemplate = (location.state as RouterTemplateState | null) ?? null;
+  const routerTemplateGraph = routerTemplate && routerTemplate.templateSteps?.length
+    ? buildTemplateGraph(routerTemplate)
+    : null;
+
+  const [name, setName] = useState(
+    routerTemplate?.templateName
+      ?? (isNew ? 'Untitled workflow' : (template?.name ?? 'Candidate Onboarding')),
+  );
   const [description, setDescription] = useState('');
   const [tags, setTags] = useState<string[]>([]);
   const [status] = useState<AutomationStatus>('draft');
@@ -6384,15 +6935,23 @@ export function BuilderPage() {
       updatedBy: n.updatedBy ?? who,
     }));
   };
-  const [nodes, setNodes] = useState<GraphNode[]>(() =>
-    seedInfoMetadata(isNew ? INIT_NODES_NEW : INIT_NODES_EDIT),
-  );
-  const [edges, setEdges] = useState<GraphEdge[]>(isNew ? [] : INIT_EDGES_EDIT);
+  // Pick the initial node/edge shape in priority order:
+  //   1. Library-template spec from router state (TemplatesPage → builder)
+  //   2. Prebuilt per-workflow template matched by id
+  //   3. New (blank) trigger stub
+  //   4. Generic two-node edit shape for unmatched existing workflows
+  const initialNodes: GraphNode[] = routerTemplateGraph?.nodes
+    ?? (isNew ? INIT_NODES_NEW : (template?.nodes ?? INIT_NODES_EDIT));
+  const initialEdges: GraphEdge[] = routerTemplateGraph?.edges
+    ?? (isNew ? [] : (template?.edges ?? INIT_EDGES_EDIT));
+
+  const [nodes, setNodes] = useState<GraphNode[]>(() => seedInfoMetadata(initialNodes));
+  const [edges, setEdges] = useState<GraphEdge[]>(initialEdges);
 
   // ── Free-positioning: store each node's canvas coordinates ──
   const [nodePositions, setNodePositions] = useState<Record<string, { x: number; y: number }>>(() => {
-    const initNodes = isNew ? INIT_NODES_NEW : INIT_NODES_EDIT;
-    const initEdges = isNew ? [] : INIT_EDGES_EDIT;
+    const initNodes = initialNodes;
+    const initEdges = initialEdges;
     const layout    = computeLayout(initNodes, initEdges);
     const result: Record<string, { x: number; y: number }> = {};
     layout.forEach((pos, id) => { result[id] = pos; });
@@ -6435,7 +6994,22 @@ export function BuilderPage() {
       window.clearTimeout(aiTypingTimerRef.current);
     }
     setAiTyping(true);
-    const delay = 900 + Math.random() * 900;
+
+    // Immediately append a `pending` AI entry so the activity trail can
+    // start rendering its live progression *before* the message text
+    // arrives. The entry's content is filled in once the simulated
+    // thinking phase completes (matches the trail's total runtime + a
+    // small buffer so the last step settles before the text streams in).
+    const pendingId = crypto.randomUUID();
+    setThreadEntries(prev => [...prev, {
+      id: pendingId,
+      kind: 'ai',
+      content: '',
+      pending: true,
+      timestamp: Date.now(),
+    }]);
+
+    const delay = ASSISTANT_TRAIL_TOTAL_MS + 400;
     aiTypingTimerRef.current = window.setTimeout(() => {
       // Pick the next line in the bank, skipping the same index as last time
       // so two reactions for the same event type never repeat verbatim.
@@ -6444,12 +7018,11 @@ export function BuilderPage() {
         ? (prevIdx + 1) % bank.length
         : 0;
       aiReactionIdxRef.current[bankKey] = idx;
-      setThreadEntries(prev => [...prev, {
-        id: crypto.randomUUID(),
-        kind: 'ai',
-        content: bank[idx],
-        timestamp: Date.now(),
-      }]);
+      setThreadEntries(prev => prev.map(e =>
+        e.id === pendingId
+          ? { ...e, content: bank[idx], pending: false, timestamp: Date.now() }
+          : e
+      ));
       setAiTyping(false);
     }, delay);
   }, []);
@@ -6914,17 +7487,6 @@ export function BuilderPage() {
 
   return (
     <div className={styles.page}>
-      <TopBar
-        onBack={() => navigate('/automations')}
-        onTest={() => {}}
-        onPublish={() => {}}
-        saveState={saveState}
-        name={name}
-        onNameChange={setName}
-        status={status}
-        onSettingsOpen={() => setSettingsOpen(true)}
-      />
-
       <WorkflowSettingsDialog
         open={settingsOpen}
         name={name}
@@ -6946,7 +7508,20 @@ export function BuilderPage() {
           onAiSend={handleGlobalAiSend}
         />
 
-        <FlowCanvas
+        <div className={styles.bodyDivider} aria-hidden />
+
+        <div className={styles.rightColumn}>
+          <TopBar
+            onBack={() => navigate('/automations')}
+            onTest={() => {}}
+            onPublish={() => {}}
+            saveState={saveState}
+            name={name}
+            onNameChange={setName}
+            status={status}
+            onSettingsOpen={() => setSettingsOpen(true)}
+          />
+          <FlowCanvas
           nodes={nodes}
           edges={edges}
           nodePositions={nodePositions}
@@ -6978,7 +7553,8 @@ export function BuilderPage() {
           fitToken={fitToken}
           onNodeAiSubmit={handleNodeAiSubmit}
           onSaveNodePopover={handleSaveNodePopover}
-        />
+          />
+        </div>
       </div>
     </div>
   );

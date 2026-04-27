@@ -15,7 +15,11 @@ import { useMemo, useState, useEffect } from 'react';
 import { Dialog, DialogHeader, DialogContent, DialogFooter } from '@alloy/components/Dialog';
 import { Button } from '@alloy/components/Button';
 import { SearchField } from '@alloy/components/Input';
+import { Checkbox } from '@alloy/components/Checkbox';
+import { Tag } from '@alloy/components/Tag';
+import { Badge } from '@alloy/components/Badge';
 import { ChevronRightIcon } from '@alloy/components/icons/ChevronRightIcon';
+import { FolderIcon } from '@alloy/components/icons/FolderIcon';
 import styles from './PolicyMatchingModal.module.css';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -345,16 +349,19 @@ export function PolicyMatchingModal({ open, initialSelection, onCancel, onSave }
                       >
                         <ChevronRightIcon size={12} />
                       </span>
-                      <input
-                        type="checkbox"
-                        className={styles.checkbox}
-                        checked={folderChecked}
-                        onChange={() => toggleFolder(folder)}
-                        onClick={e => e.stopPropagation()}
-                        aria-label={`Select all policies in ${folder.label}`}
-                      />
+                      <span onClick={e => e.stopPropagation()} className={styles.checkboxSlot}>
+                        <Checkbox
+                          size="sm"
+                          checked={folderChecked}
+                          onChange={() => toggleFolder(folder)}
+                          aria-label={`Select all policies in ${folder.label}`}
+                        />
+                      </span>
+                      <span className={styles.rowFolderIcon} aria-hidden>
+                        <FolderIcon size={14} />
+                      </span>
                       <span className={styles.rowLabel}>{folder.label}</span>
-                      <span className={styles.countBadge}>{folder.policies.length}</span>
+                      <Badge variant="neutral">{folder.policies.length}</Badge>
                     </div>
 
                     {folderOpen && folder.policies.map(policy => {
@@ -374,18 +381,18 @@ export function PolicyMatchingModal({ open, initialSelection, onCancel, onSave }
                             >
                               <ChevronRightIcon size={12} />
                             </span>
-                            <input
-                              type="checkbox"
-                              className={styles.checkbox}
-                              checked={policyChecked}
-                              onChange={() => togglePolicy(policy)}
-                              onClick={e => e.stopPropagation()}
-                              aria-label={`Select ${policy.label}`}
-                            />
+                            <span onClick={e => e.stopPropagation()} className={styles.checkboxSlot}>
+                              <Checkbox
+                                size="sm"
+                                checked={policyChecked}
+                                onChange={() => togglePolicy(policy)}
+                                aria-label={`Select ${policy.label}`}
+                              />
+                            </span>
                             <span className={styles.rowLabel}>{policy.label}</span>
                             <span className={styles.rowTags}>
                               {policy.tags.map(t => (
-                                <span key={t} className={styles.rowTag}>{t}</span>
+                                <Tag key={t} size="sm" variant="subtle" color="neutral">{t}</Tag>
                               ))}
                             </span>
                           </div>
@@ -397,17 +404,18 @@ export function PolicyMatchingModal({ open, initialSelection, onCancel, onSave }
                               role="treeitem"
                             >
                               <span className={styles.disclosure} aria-hidden />
-                              <input
-                                type="checkbox"
-                                className={styles.checkbox}
-                                checked={subPolicies.has(sub.id)}
-                                onChange={() => toggleSubPolicy(sub.id)}
-                                aria-label={`Select ${sub.label}`}
-                              />
+                              <span onClick={e => e.stopPropagation()} className={styles.checkboxSlot}>
+                                <Checkbox
+                                  size="sm"
+                                  checked={subPolicies.has(sub.id)}
+                                  onChange={() => toggleSubPolicy(sub.id)}
+                                  aria-label={`Select ${sub.label}`}
+                                />
+                              </span>
                               <span className={styles.rowLabel}>{sub.label}</span>
                               <span className={styles.rowTags}>
                                 {sub.tags.map(t => (
-                                  <span key={t} className={styles.rowTag}>{t}</span>
+                                  <Tag key={t} size="sm" variant="subtle" color="neutral">{t}</Tag>
                                 ))}
                               </span>
                             </div>

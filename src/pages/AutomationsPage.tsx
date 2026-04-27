@@ -660,10 +660,9 @@ export function AutomationsPage() {
                 {/* ── Body: workflow name (up to 3 lines, ellipsis) ── */}
                 <span className={styles.cardName}>{automation.name}</span>
 
-                {/* ── Bottom row: action icon cluster · run count · success count · toggle ── */}
+                {/* ── Bottom row: run count · success count · toggle ── */}
                 <div className={styles.cardFooter}>
                   <div className={styles.cardStats}>
-                    <ActionIconCluster icons={automation.actionIcons} />
                     <span className={styles.cardStat} title="Total runs">
                       <ListBulletIcon size={12} />
                       {automation.runsTotal}

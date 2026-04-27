@@ -62,9 +62,8 @@
 .tree {
   flex: 1;
   overflow-y: auto;
-  border: 1px solid var(--color-border-opaque);
-  border-radius: var(--radius-md);
-  padding: var(--space-2);
+  border: none;
+  padding: 0;
   min-height: 280px;
 }
 
@@ -77,15 +76,18 @@
 }
 
 .folder {
-  margin-bottom: var(--space-2);
+  /* Rows now carry their own 1px bottom divider — no extra folder gap. */
+  margin-bottom: 0;
 }
 
 .row {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-sm);
+  padding: 0 var(--space-3);
+  min-height: 36px;
+  border-radius: 0;
+  border-bottom: 1px solid var(--color-border-opaque);
   cursor: pointer;
   transition: background var(--duration-fast);
 }
@@ -126,11 +128,31 @@
   transform: rotate(90deg);
 }
 
+/* Legacy native-checkbox rule — kept in case anything still uses it. */
 .checkbox {
   width: 16px;
   height: 16px;
   accent-color: var(--step-policy-fg);
   cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* Wrapper around the Alloy Checkbox — keeps the flex-row layout aligned and
+   gives a predictable click-stop target on click-bubbling rows. */
+.checkboxSlot {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* Leading folder glyph — sits between the checkbox and the row label. Size
+   follows the small-row convention; color picks up the content-tertiary
+   token so it reads as chrome, not content. */
+.rowFolderIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-content-tertiary);
   flex-shrink: 0;
 }
 
