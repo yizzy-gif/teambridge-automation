@@ -1,0 +1,76 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   StepLineChart — slate top-cap chart, modelled on the TimeSavedChart in
+   TeambridgeCode. CSS Module classes mirror the styled-components used
+   there so the visual treatment lands identically.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+.wrap {
+  position: relative;
+  width: 100%;
+}
+
+.svg {
+  display: block;
+  font-family: var(--font-sans, Geist, sans-serif);
+}
+
+.gridLine {
+  stroke: var(--color-border-opaque);
+  stroke-width: 1;
+}
+
+.axisLabel {
+  fill: var(--color-content-tertiary);
+  font-size: 11px;
+}
+
+/* Top cap segment — uses the slate stroke gradient defined in `<defs>`. */
+.stepPath {
+  fill: none;
+  stroke-width: 2;
+  stroke-linejoin: miter;
+  stroke-linecap: butt;
+}
+
+/* Hover affordance — slate-500 dot on the cap so the cursor's bucket
+   pops without colour-shifting away from the chart's slate palette. */
+.hoverDot {
+  fill: var(--Alloy-slate-500);
+  stroke: var(--color-bg-primary);
+  stroke-width: 2;
+}
+
+.hitArea {
+  fill: transparent;
+  cursor: pointer;
+}
+
+/* Tooltip — dark surface, light label, anchored above the hovered cap.
+   Translation centres horizontally and lifts the tooltip above the dot
+   with a 10px breathing room. */
+.tooltip {
+  position: absolute;
+  transform: translate(-50%, calc(-100% - 10px));
+  background: var(--color-bg-always-dark, #0f172a);
+  color: var(--color-bg-always-light, #ffffff);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: var(--shadow-below-md);
+  z-index: 999;
+}
+
+.tooltipLabel {
+  font-weight: 600;
+  margin-bottom: 2px;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.tooltipRow {
+  font-size: 11px;
+  color: var(--color-bg-always-light, #ffffff);
+}
