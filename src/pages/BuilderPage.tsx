@@ -49,6 +49,11 @@ import { AILoader } from '@alloy/components/ai/AILoader';
 import { AIComposer, AIComposerInput } from '@alloy/components/ai/AIComposer';
 import { AIThread, AIAssistantMessage, AIUserMessage } from '@alloy/components/ai/AIThread';
 import { AIActivityTrail, AIActivityStep } from '@alloy/components/ai/AIActivityTrail';
+import { AIMessageActions } from '@alloy/components/ai/AIMessageActions';
+import { Copy01Icon } from '@alloy/components/icons/Copy01Icon';
+import { ThumbsUpIcon } from '@alloy/components/icons/ThumbsUpIcon';
+import { ThumbsDownIcon } from '@alloy/components/icons/ThumbsDownIcon';
+// `RefreshCw04Icon` is already imported below — see the icon block.
 import {
   ComposerActions,
   ComposerSendButton,
@@ -71,6 +76,7 @@ import { callFlowAgent } from '@/features/ai/client';
 import { GLOBAL_TOOLS, STEP_TOOLS } from '@/features/ai/tools';
 import { buildGlobalSystemPrompt, buildStepSystemPrompt } from '@/features/ai/systemPrompts';
 import { AI_PERSONAS, getPersonaById, type AiPersona } from '@/features/ai/personas';
+import { PersonaAvatar } from '@/features/ai/PersonaAvatar';
 import { PolicyMatchingModal } from '@/components/PolicyMatchingModal';
 
 // ─── Workflow settings persistence ─────────────────────────────────────────────
@@ -309,6 +315,36 @@ function formatConditionEntry(c: ConditionEntry): string {
 /** Canvas expression formatter — uses `&&` within a group and `||` between
  *  groups. Parentheses wrap multi-condition groups only when there are 2+
  *  groups overall. */
+/** Segment-rendered version of `formatConditionExpr` for the canvas card.
+ *  Each entry is either a `'label'` (shown in primary text colour) or a
+ *  `'muted'` part (operators, values, parens, `&&` / `||` — shown in the
+ *  same slate-300 tone as the single-condition card's secondary line) so
+ *  the multi-condition line reads with the same "Label is value" cadence
+ *  as the single-condition variant instead of one undifferentiated wall
+ *  of primary-colour text. Returns [] for empty / single-condition
+ *  groups (single-condition rendering uses the primary/secondary split). */
+type ConditionExprSeg = { text: string; role: 'label' | 'muted' };
+function buildConditionExprSegs(groups: ConditionGroup[]): ConditionExprSeg[] {
+  if (groups.length === 0) return [];
+  if (countConditions(groups) <= 1) return [];
+  const segs: ConditionExprSeg[] = [];
+  groups.forEach((g, gi) => {
+    if (gi > 0) segs.push({ text: ' || ', role: 'muted' });
+    const wrapParens = g.conditions.length >= 2 && groups.length >= 2;
+    if (wrapParens) segs.push({ text: '(', role: 'muted' });
+    g.conditions.forEach((c, ci) => {
+      if (ci > 0) segs.push({ text: ' && ', role: 'muted' });
+      const def = CONDITION_LIBRARY.find(d => d.id === c.fieldId) ?? null;
+      segs.push({ text: def?.label ?? '?', role: 'label' });
+      const opLabel = OPERATOR_LABELS[c.operator] ?? c.operator;
+      if (opLabel) segs.push({ text: ` ${opLabel}`, role: 'muted' });
+      if (c.values.length > 0) segs.push({ text: ` ${c.values.join(', ')}`, role: 'muted' });
+    });
+    if (wrapParens) segs.push({ text: ')', role: 'muted' });
+  });
+  return segs;
+}
+
 function formatConditionExpr(groups: ConditionGroup[]): string {
   if (groups.length === 0) return '';
   const totalCount = countConditions(groups);
@@ -317,13 +353,13 @@ function formatConditionExpr(groups: ConditionGroup[]): string {
     const only = groups[0].conditions[0];
     return only ? formatConditionEntry(only) : '';
   }
-  // Collapse each condition to its field label for readability in the multi
-  // case; the top-secondary row in the flow card surfaces operator + value
-  // separately when the node has exactly one condition.
-  const label = (c: ConditionEntry) =>
-    (CONDITION_LIBRARY.find(d => d.id === c.fieldId)?.label) ?? '?';
+  // Multi-condition: render the full "Label op value" form for EACH entry
+  // and join with the same logical operators as the legacy label-only path
+  // (`&&` within a group, `||` between groups). The card now wraps the
+  // primary line, so the longer expression is readable end-to-end instead
+  // of being truncated to an ellipsis.
   const formatGroup = (g: ConditionGroup): string => {
-    const inner = g.conditions.map(label).join(' && ');
+    const inner = g.conditions.map(formatConditionEntry).join(' && ');
     // Parens only when there's at least 2 conditions in this group AND at
     // least 2 groups overall (so we never paren a single-condition group,
     // and never paren a single group regardless of its size).
@@ -1504,12 +1540,12 @@ function computeLayout(
 // ─── Popover data ──────────────────────────────────────────────────────────────
 
 const POPOVER_TITLES: Record<StepType, string> = {
-  trigger:   'Configure Trigger',
-  condition: 'Configure Condition',
-  action:    'Configure Action',
-  ai:        'Configure AI Specialist',
-  delay:     'Configure Delay',
-  policy:    'Configure Policy',
+  trigger:   'Trigger',
+  condition: 'Condition',
+  action:    'Action',
+  ai:        'AI Specialist',
+  delay:     'Delay',
+  policy:    'Policy',
 };
 
 const POPOVER_SUGGESTIONS: Record<StepType, string[]> = {
@@ -1809,6 +1845,14 @@ function PopoverSelect({
 
 const AI_SPEC_READ_FIELDS  = ['First Name', 'Last Name', 'DOB', 'Notes', 'Role', 'Preferred Location'] as const;
 const AI_SPEC_WRITE_FIELDS = ['SSN', 'Preferred Name', 'Last Name', 'DOB', 'Notes', 'Role', 'Preferred Location'] as const;
+/** Universe of record fields the user can search/add into Read or Write
+ *  on the AI Specialist Triggering-record card. Superset of the seed lists. */
+const AI_SPEC_AVAILABLE_FIELDS = [
+  'First Name', 'Last Name', 'Preferred Name', 'DOB', 'SSN', 'Notes',
+  'Role', 'Preferred Location', 'Phone', 'Email', 'Address', 'City',
+  'State', 'Zip', 'Department', 'Manager', 'Start Date', 'End Date',
+  'Status', 'Pay Rate',
+] as const;
 const AI_SPEC_CHANNELS     = ['SMS', 'Text', 'Voice'] as const;
 const AI_ADD_CARD_OPTIONS  = ['Data', 'Analyze files', 'Claim shifts', 'Policy matches', 'Engage'] as const;
 type AiAddCardOption = typeof AI_ADD_CARD_OPTIONS[number];
@@ -1871,13 +1915,12 @@ function AiSpecialistPersonaPicker({ onSelect }: AiSpecialistPersonaPickerProps)
               className={styles.actionSelectorRow}
               onClick={() => onSelect(persona)}
             >
-              {/* Avatar uses the brand fill + a diamond glyph — same visual
-                  language as the configured AiSpecialistMeta card so the
-                  transition from picker → configured feels continuous. */}
+              {/* Per-persona 3D geometric robot avatar — see PersonaAvatar.tsx
+                  for the design rationale. The same component is used in the
+                  configured AiSpecialistMeta card and the Test tab header so
+                  the picker → configured transition stays visually continuous. */}
               <span className={styles.personaPickerAvatar} aria-hidden>
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                  <path d="M8 2L13 8L8 14L3 8L8 2Z" fill="white" fillOpacity="0.92" />
-                </svg>
+                <PersonaAvatar personaId={persona.id} size={36} />
               </span>
               <span className={styles.actionSelectorRowText}>
                 <span className={styles.actionSelectorRowLabel}>
@@ -1918,10 +1961,7 @@ function AiSpecialistMeta({
         <Eyebrow>Specialist Persona</Eyebrow>
         <div className={styles.aiSpecPersonaCard}>
           <div className={styles.aiSpecPersonaAvatar}>
-            {/* Diamond shape */}
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
-              <path d="M8 2L13 8L8 14L3 8L8 2Z" fill="white" fillOpacity="0.92" />
-            </svg>
+            <PersonaAvatar personaId={persona.id} size={32} />
           </div>
           <div className={styles.aiSpecPersonaInfo}>
             <div className={styles.aiSpecPersonaName}>
@@ -1977,6 +2017,108 @@ const AI_CARD_ICON: Record<AiAddCardOption, React.ReactNode> = {
   ),
 };
 
+/* ─── FieldTagPicker ───────────────────────────────────────────────────────────
+   Editable list of field chips with an inline search input. Renders the
+   selected fields as removable chips, plus a typeahead at the end that
+   shows matching unselected fields in a dropdown. Used by the AI
+   Specialist Triggering-record card so users can add / remove fields
+   without leaving the popover. */
+interface FieldTagPickerProps {
+  fields: string[];
+  available: string[];
+  onChange: (next: string[]) => void;
+  placeholder?: string;
+}
+
+function FieldTagPicker({ fields, available, onChange, placeholder }: FieldTagPickerProps) {
+  const [search, setSearch] = useState('');
+  const [open, setOpen] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown on outside click. We listen on the capture phase because
+  // the parent popover stops propagation on mousedown — without capture our
+  // bubble-phase listener would never see clicks landing inside the popover
+  // but outside the picker, leaving the dropdown stuck open.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (containerRef.current && !containerRef.current.contains(t)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown, true);
+    return () => document.removeEventListener('mousedown', onDown, true);
+  }, [open]);
+
+  const q = search.trim().toLowerCase();
+  const matches = available.filter(f => !fields.includes(f) && (q === '' || f.toLowerCase().includes(q)));
+
+  const addField = (f: string) => {
+    onChange([...fields, f]);
+    setSearch('');
+    setOpen(true);
+    inputRef.current?.focus();
+  };
+  const removeField = (f: string) => onChange(fields.filter(x => x !== f));
+
+  return (
+    <div ref={containerRef} className={styles.fieldTagPicker}>
+      <div className={styles.aiSpecFieldSubTags}>
+        {fields.map(f => (
+          <span key={f} className={styles.fieldChip}>
+            {f}
+            <button
+              type="button"
+              className={styles.fieldChipRemove}
+              onClick={() => removeField(f)}
+              aria-label={`Remove ${f}`}
+            >
+              <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden>
+                <path d="M1.5 1.5l5 5M6.5 1.5l-5 5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+              </svg>
+            </button>
+          </span>
+        ))}
+        <input
+          ref={inputRef}
+          type="text"
+          className={styles.fieldChipInput}
+          value={search}
+          onChange={(e) => { setSearch(e.target.value); setOpen(true); }}
+          onFocus={() => setOpen(true)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && matches.length > 0) {
+              e.preventDefault();
+              addField(matches[0]);
+            } else if (e.key === 'Backspace' && search === '' && fields.length > 0) {
+              removeField(fields[fields.length - 1]);
+            } else if (e.key === 'Escape') {
+              setOpen(false);
+            }
+          }}
+          placeholder={fields.length === 0 ? (placeholder ?? 'Search fields…') : ''}
+          aria-label="Add field"
+        />
+      </div>
+      {open && matches.length > 0 && (
+        <div className={styles.fieldChipDropdown} role="listbox">
+          {matches.slice(0, 8).map(f => (
+            <button
+              key={f}
+              type="button"
+              role="option"
+              className={styles.fieldChipOption}
+              onMouseDown={(e) => { e.preventDefault(); addField(f); }}
+            >
+              {f}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AiSpecialistCards({
   step,
   onUpdateConfigField,
@@ -1995,7 +2137,13 @@ function AiSpecialistCards({
   // Resolve the record noun from the upstream trigger (falls back to "Record"
   // when no trigger is configured yet) so the card reflects whatever flows in.
   const recordNoun = getTriggerRecordType(triggerLabel).noun;
-  const fieldCount = AI_SPEC_READ_FIELDS.length + AI_SPEC_WRITE_FIELDS.length;
+
+  // Read/Write field selections — local state so users can add/remove fields
+  // via the FieldTagPicker below. Seeded from the constant lists; not yet
+  // persisted into configValues since this is mock UI.
+  const [readFields,  setReadFields]  = useState<string[]>(() => [...AI_SPEC_READ_FIELDS]);
+  const [writeFields, setWriteFields] = useState<string[]>(() => [...AI_SPEC_WRITE_FIELDS]);
+  const fieldCount = readFields.length + writeFields.length;
 
   const [activeCards, setActiveCards] = useState<AiAddCardOption[]>(['Engage']);
   const [showAddMenu, setShowAddMenu] = useState(false);
@@ -2073,16 +2221,22 @@ function AiSpecialistCards({
             <span className={styles.aiSpecDataFieldLabel}>User</span>
             <div className={styles.aiSpecDataFieldContent}>
               <div className={styles.aiSpecFieldPillRow}>
-                <Tag variant="subtle" size="sm" color="green">Read ({AI_SPEC_READ_FIELDS.length})</Tag>
-                {AI_SPEC_READ_FIELDS.map(f => (
-                  <Tag key={f} size="sm" variant="outline" color="neutral">{f}</Tag>
-                ))}
+                <Tag variant="subtle" size="sm" color="green">Read ({readFields.length})</Tag>
+                <FieldTagPicker
+                  fields={readFields}
+                  available={AI_SPEC_AVAILABLE_FIELDS as unknown as string[]}
+                  onChange={setReadFields}
+                  placeholder="Add field…"
+                />
               </div>
               <div className={styles.aiSpecFieldPillRow}>
-                <Tag variant="subtle" size="sm" color="purple">Write ({AI_SPEC_WRITE_FIELDS.length})</Tag>
-                {AI_SPEC_WRITE_FIELDS.map(f => (
-                  <Tag key={f} size="sm" variant="outline" color="neutral">{f}</Tag>
-                ))}
+                <Tag variant="subtle" size="sm" color="purple">Write ({writeFields.length})</Tag>
+                <FieldTagPicker
+                  fields={writeFields}
+                  available={AI_SPEC_AVAILABLE_FIELDS as unknown as string[]}
+                  onChange={setWriteFields}
+                  placeholder="Add field…"
+                />
               </div>
             </div>
           </div>
@@ -2340,10 +2494,12 @@ interface AiSpecialistTestProps {
   /** Voice label (e.g. 'alloy', 'nova') — drives the small voice pill in the
    *  header card so the Test tab matches the Configure tab styling. */
   specialistVoice?: string;
+  /** Persona id — drives the 3D geometric robot avatar in the header card. */
+  personaId?: string;
   triggerLabel: string | undefined;
 }
 
-function AiSpecialistTest({ specialistName, specialistRole, specialistVoice, triggerLabel }: AiSpecialistTestProps) {
+function AiSpecialistTest({ specialistName, specialistRole, specialistVoice, personaId, triggerLabel }: AiSpecialistTestProps) {
   const record = getTriggerRecordType(triggerLabel);
 
   const [selectedRecord, setSelectedRecord] = useState<string>('');
@@ -2444,9 +2600,7 @@ function AiSpecialistTest({ specialistName, specialistRole, specialistVoice, tri
   const specialistHeaderCard = (
     <div className={styles.aiSpecPersonaCard}>
       <div className={styles.aiSpecPersonaAvatar}>
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
-          <path d="M8 2L13 8L8 14L3 8L8 2Z" fill="white" fillOpacity="0.92" />
-        </svg>
+        <PersonaAvatar personaId={personaId} size={32} />
       </div>
       <div className={styles.aiSpecPersonaInfo}>
         <div className={styles.aiSpecPersonaName}>
@@ -2483,7 +2637,7 @@ function AiSpecialistTest({ specialistName, specialistRole, specialistVoice, tri
           </p>
 
           <SelectField
-            size="md"
+            size="sm"
             options={options}
             value={selectedRecord}
             onChange={v => setSelectedRecord(v)}
@@ -2528,9 +2682,7 @@ function AiSpecialistTest({ specialistName, specialistRole, specialistVoice, tri
                 {shouldShowSpecialistHeader(idx) && (
                   <div className={styles.aiTestSpecialistLabel}>
                     <div className={styles.aiTestSpecialistLabelAvatar} aria-hidden>
-                      <svg width="10" height="10" viewBox="0 0 16 16" fill="none">
-                        <path d="M8 2L13 8L8 14L3 8L8 2Z" fill="white" fillOpacity="0.95" />
-                      </svg>
+                      <PersonaAvatar personaId={personaId} size={16} />
                     </div>
                     <span>{specialistName}</span>
                   </div>
@@ -3119,6 +3271,7 @@ function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpda
             variant="ghost"
             size="xs"
             iconOnly
+            className={styles.popoverInfoBtn}
             onClick={() => setInfoOpen(v => !v)}
             aria-label="Node info"
             aria-expanded={infoOpen}
@@ -3281,21 +3434,31 @@ function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpda
               ?? ACTION_CATEGORY_ICON[libItem.category]
               ?? STEP_CONFIG.action.icon)
           : STEP_CONFIG.action.icon;
+        // Mirrors the AI Specialist persona card: Eyebrow + outlined card
+        // (avatar + name/category + Change button). Re-uses .aiSpecPersona*
+        // classes so the chrome stays in lockstep with the AI Specialist
+        // tab and any future spacing tweaks land in one place.
         return (
-          <div className={styles.actionSelectedHeader}>
-            <Button
-              variant="ghost"
-              size="xs"
-              iconOnly
-              onClick={() => onSelectSuggestion('')}
-              aria-label="Back to actions"
-            >
-              <ChevronLeftIcon />
-            </Button>
-            <span className={clsx(styles.actionSelectedIcon, styles.iconAction)} aria-hidden>
-              {icon}
-            </span>
-            <span className={styles.actionSelectedTitle}>{step.selectedValue}</span>
+          <div className={styles.popoverSection}>
+            <div className={styles.aiSpecRows}>
+              <div className={styles.aiSpecRow}>
+                <Eyebrow>Action</Eyebrow>
+                <div className={styles.aiSpecPersonaCard}>
+                  <div className={clsx(styles.aiSpecPersonaAvatar, styles.iconAction)} aria-hidden>
+                    {icon}
+                  </div>
+                  <div className={styles.aiSpecPersonaInfo}>
+                    <div className={styles.aiSpecPersonaName}>{step.selectedValue}</div>
+                    {libItem?.category && (
+                      <div className={styles.aiSpecPersonaRole}>{libItem.category}</div>
+                    )}
+                  </div>
+                  <Button variant="ghost" size="xs" onClick={() => onSelectSuggestion('')}>
+                    Change
+                  </Button>
+                </div>
+              </div>
+            </div>
           </div>
         );
       })()}
@@ -3475,6 +3638,7 @@ function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpda
           specialistName={specialistName}
           specialistRole={specialistRole}
           specialistVoice={selectedPersona.voice}
+          personaId={selectedPersona.id}
           triggerLabel={triggerLabel}
         />
       )}
@@ -3642,8 +3806,10 @@ function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpda
       {/* ── AI input drawer — relocated from the canvas float into the
             popover's bottom slot. Submits into the left-panel thread via
             the onNodeAiSubmit callback; mirrors the NodeAiFloatingInput
-            markup so the composer styling / keyboard handling is shared. */}
-      {onNodeAiSubmit && (
+            markup so the composer styling / keyboard handling is shared.
+            Hidden on the AI Specialist Test tab — that tab has its own
+            "Message {persona}…" composer wired to the chat thread. */}
+      {onNodeAiSubmit && !(isAiSpecialist && aiSpecTab === 'test') && (
         <NodePopoverAiDrawer step={step} onSubmit={onNodeAiSubmit} />
       )}
     </div>
@@ -3753,16 +3919,11 @@ function TopBar({ onBack, onTest, onPublish, saveState, name, onNameChange, stat
   return (
     <header className={styles.topBar}>
       <div className={styles.topBarLeft}>
-        <Button
-          variant="tertiary"
-          size="sm"
-          iconOnly
-          onClick={onBack}
-          aria-label="Back to automations"
-        >
-          <ChevronLeft />
-        </Button>
-        <Divider orientation="vertical" />
+        {/* Back chevron + divider have moved to the LeftPanel header
+            (far left of the AI thread column), mirroring how the
+            workflow-list "Edit workflow" CTA hands off into the builder.
+            `onBack` is still kept on TopBar for the collapsed-AI-panel
+            case where the right column carries its own back button. */}
         {/* contenteditable span: width = text content width, so border-bottom
             is always exactly as wide as the visible text — no measurement needed */}
         <span
@@ -4390,6 +4551,10 @@ interface ThreadEntry {
    *  the message text has not yet arrived. The render hides the text body
    *  until this flips to false; the trail itself renders in `live` state. */
   pending?: boolean;
+  /** AI entries only — set on the seeded welcome bubble so the renderer can
+   *  skip the activity-trail summary (the greeting isn't a response to a
+   *  request, so "Thought for Ns" reads as misleading there). */
+  seeded?: boolean;
 }
 
 /** Mock AI reaction banks — one line at a time, rotated per-bank to avoid repeats. */
@@ -4445,12 +4610,100 @@ const AI_RESPONSES: Record<string, string[]> = {
   ],
 };
 
-const WELCOME_AI_MESSAGE =
-  "Hi! I'm your workflow assistant. I'll help you build and track changes to this workflow. Start by adding a trigger to kick things off \u2014 or ask me anything.";
+const WELCOME_AI_MESSAGE = [
+  "Hi! I'm your **workflow assistant**. I'll help you build and track changes to this workflow.",
+  '',
+  '**Try this to get started:**',
+  '- Add a **trigger** to kick things off',
+  '- Layer a **condition** to gate the flow',
+  '- Wire an **action** for the outcome',
+  '',
+  'Or just ask me anything — I can scaffold the whole thing for you.',
+].join('\n');
+
+/* ─── Lightweight markdown rendering ──────────────────────────────────────────
+   The AI summaries use a small subset of markdown so the welcome bubble can
+   actually look structured (bold callouts, bullet lists, "next steps"
+   sections) instead of one wall of text. Rather than pull in `react-markdown`
+   we parse here — the supported subset is intentionally tiny:
+
+     **bold**          → <strong>
+     ### heading       → <h4>
+     - item            → <ul><li>...</li></ul>   (consecutive lines group)
+     blank line        → block separator
+     anything else     → <p>
+
+   The parser is plain string scanning so it composes safely with the
+   `TypingText` slice — when only `**Foo` is visible the parser leaves the
+   stray `**` as literal text until the closing pair arrives. */
+
+function MarkdownInline({ text }: { text: string }) {
+  const parts: React.ReactNode[] = [];
+  const re = /\*\*([^*]+)\*\*/g;
+  let lastIdx = 0;
+  let match: RegExpExecArray | null;
+  let key = 0;
+  while ((match = re.exec(text)) !== null) {
+    if (match.index > lastIdx) parts.push(text.slice(lastIdx, match.index));
+    parts.push(<strong key={key++}>{match[1]}</strong>);
+    lastIdx = match.index + match[0].length;
+  }
+  if (lastIdx < text.length) parts.push(text.slice(lastIdx));
+  return <>{parts}</>;
+}
+
+function MarkdownText({ content }: { content: string }) {
+  const lines = content.split('\n');
+  const blocks: React.ReactNode[] = [];
+  let listBuffer: string[] = [];
+  let blockKey = 0;
+
+  const flushList = () => {
+    if (listBuffer.length === 0) return;
+    blocks.push(
+      <ul key={`list-${blockKey++}`} className={styles.aiMessageList}>
+        {listBuffer.map((item, i) => (
+          <li key={i}><MarkdownInline text={item} /></li>
+        ))}
+      </ul>,
+    );
+    listBuffer = [];
+  };
+
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    const trimmed = line.trimStart();
+    // Bullet — accept `- ` or `• `; flexible enough to survive partial
+    // typing where a leading space hasn't arrived yet.
+    if (trimmed.startsWith('- ') || trimmed.startsWith('• ')) {
+      listBuffer.push(trimmed.slice(2));
+      continue;
+    }
+    flushList();
+    if (trimmed === '') continue; // blank line — block separator handled by p margins
+    if (trimmed.startsWith('### ')) {
+      blocks.push(
+        <h4 key={`h-${blockKey++}`} className={styles.aiMessageHeading}>
+          <MarkdownInline text={trimmed.slice(4)} />
+        </h4>,
+      );
+      continue;
+    }
+    blocks.push(
+      <p key={`p-${blockKey++}`} className={styles.aiMessagePara}>
+        <MarkdownInline text={trimmed} />
+      </p>,
+    );
+  }
+  flushList();
+  return <>{blocks}</>;
+}
 
 // Streams the AI response one chunk at a time to mimic live typing. Effect
 // re-runs only when `content` changes, so an already-finished bubble isn't
-// re-animated on incidental re-renders.
+// re-animated on incidental re-renders. The visible substring is fed back
+// through MarkdownText so structure (bold / bullets / "next steps" headings)
+// progressively reveals as the typewriter advances.
 function TypingText({ content, onProgress }: { content: string; onProgress?: () => void }) {
   const [len, setLen] = useState(0);
   const onProgressRef = useRef(onProgress);
@@ -4470,7 +4723,7 @@ function TypingText({ content, onProgress }: { content: string; onProgress?: () 
     timerId = window.setTimeout(tick, 18);
     return () => window.clearTimeout(timerId);
   }, [content]);
-  return <>{content.slice(0, len)}</>;
+  return <MarkdownText content={content.slice(0, len)} />;
 }
 
 // ─── NodeChangeCard ──────────────────────────────────────────────────────────────
@@ -4486,6 +4739,24 @@ interface NodeChangeCardProps {
 function NodeChangeCard({ payload, timestamp }: NodeChangeCardProps) {
   const side = payload.side ?? 'outbound';
   const headerLabel = payload.headerLabel ?? payload.changeType;
+
+  // Node ID(s) — flattened for multi-node changes (e.g. `connected` carries
+  // both endpoints; `deleted` may batch). Falls back to an em-dash when the
+  // payload happens to have no nodes attached.
+  const nodeIds = payload.nodes.length > 0
+    ? payload.nodes.map(n => n.id).join(', ')
+    : '—';
+
+  // Last updated — reuses the right-panel Info card's relative-time
+  // formatter so timestamps read consistently across the app.
+  const lastUpdated = formatInfoTimestamp(new Date(timestamp).toISOString());
+
+  // Change made — combines the action (header label, e.g. "AI configured" /
+  // "Node added") with the affected node name(s) so the line carries both
+  // the verb and the target.
+  const nodeNames = payload.nodes.map(n => n.name).filter(Boolean).join(', ');
+  const changeDesc = nodeNames ? `${headerLabel} — ${nodeNames}` : headerLabel;
+
   return (
     <div
       className={clsx(
@@ -4495,33 +4766,26 @@ function NodeChangeCard({ payload, timestamp }: NodeChangeCardProps) {
     >
       <span className={styles.nodeChangeHeaderLabel}>{headerLabel}</span>
       <div className={styles.nodeChangeCard}>
-        <div className={styles.nodeChangeRows}>
-          {payload.nodes.map(n => (
-            <div key={n.id} className={styles.nodeChangeRow}>
-              <span
-                className={clsx(
-                  styles.nodeChangeRowIcon,
-                  STEP_CONFIG[n.type]?.bgClass,
-                )}
-                aria-hidden
-              >
-                {STEP_CONFIG[n.type]?.icon}
-              </span>
-              <span className={styles.nodeChangeRowName}>{n.name}</span>
-            </div>
-          ))}
+        {/* Three label-value rows summarise the change: which node(s)
+            were touched, when, and what kind of change it was. Same
+            shape applies for added / deleted / connected / configured
+            payloads — only the values differ. */}
+        <div className={styles.nodeChangeMetaRow}>
+          <span className={styles.nodeChangeMetaLabel}>Node ID</span>
+          <code className={styles.nodeChangeMetaValueMono}>{nodeIds}</code>
         </div>
-        <div className={styles.nodeChangeDivider} aria-hidden />
-        <div className={styles.nodeChangeFooter}>
-          <span className={styles.nodeChangeStats}>
-            {(payload.stats ?? []).join(' \u00B7 ')}
-          </span>
+        <div className={styles.nodeChangeMetaRow}>
+          <span className={styles.nodeChangeMetaLabel}>Last updated</span>
           <time
-            className={styles.nodeChangeTime}
+            className={styles.nodeChangeMetaValue}
             dateTime={new Date(timestamp).toISOString()}
           >
-            {new Date(timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+            {lastUpdated}
           </time>
+        </div>
+        <div className={styles.nodeChangeMetaRow}>
+          <span className={styles.nodeChangeMetaLabel}>Change made</span>
+          <span className={styles.nodeChangeMetaValue}>{changeDesc}</span>
         </div>
       </div>
     </div>
@@ -4663,13 +4927,25 @@ interface LeftPanelProps {
   aiTyping: boolean;
   entries: ThreadEntry[];
   onAiSend: () => void;
+  /** Hoisted from BuilderPage so the surrounding layout can react to the
+   *  collapsed state — when collapsed, BuilderPage hides this panel + the
+   *  body divider entirely and surfaces a re-open button beneath the top
+   *  bar in the right column. */
+  onCollapse: () => void;
+  /** Navigate back to the workflow list. The back chevron now lives at
+   *  the far left of the LeftPanel header (before the Teambridge AI
+   *  wordmark) instead of in the right-column TopBar. */
+  onBack: () => void;
 }
 
 function LeftPanel({
   onLibNodeDragStart, onLibNodeDragEnd, onLibNodeSelect,
   aiPrompt, onAiPromptChange, aiTyping, entries, onAiSend,
+  onCollapse, onBack,
 }: LeftPanelProps) {
-  const [collapsed, setCollapsed] = useState(false);
+  // Collapsed is hoisted to BuilderPage — when collapsed, the parent
+  // unmounts this whole panel and surfaces a re-open button in the right
+  // column. So the only state owned here is the in-panel resize width.
   const [panelWidth, setPanelWidth] = useState(360);
   const panelWidthRef = useRef(360);
   const leftHandleRef = useRef<HTMLDivElement>(null);
@@ -4687,8 +4963,9 @@ function LeftPanel({
     t.style.height = t.scrollHeight + 'px';
   }, [aiPrompt]);
 
-  // Drag-to-resize with click-vs-drag fallback: if the pointer moves less than
-  // a small threshold, treat as a click (toggle collapse); otherwise resize.
+  // Drag-to-resize with click-vs-drag fallback: if the pointer moves less
+  // than a small threshold, treat as a click (collapse the panel via the
+  // parent); otherwise resize.
   useEffect(() => {
     const handle = leftHandleRef.current;
     if (!handle) return;
@@ -4709,14 +4986,14 @@ function LeftPanel({
       const onUp = () => {
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', onUp);
-        if (!dragged) setCollapsed(c => !c);
+        if (!dragged) onCollapse();
       };
       document.addEventListener('mousemove', onMove);
       document.addEventListener('mouseup', onUp);
     };
     handle.addEventListener('mousedown', onDown);
     return () => handle.removeEventListener('mousedown', onDown);
-  }, []);
+  }, [onCollapse]);
 
   // Entries present at mount render without the typing animation; anything
   // added later is treated as a fresh AI response and types in.
@@ -4747,10 +5024,24 @@ function LeftPanel({
   return (
     <aside
       className={styles.leftPanel}
-      data-collapsed={collapsed}
+      style={{ width: panelWidth }}
     >
-      {/* ── Header — Teambridge AI wordmark + close ── */}
+      {/* ── Header — Back chevron · Teambridge AI wordmark · Collapse ── */}
       <header className={styles.leftPanelHeader}>
+        {/* Back-to-list chevron lives at the far left of the LeftPanel
+            header now (was in the right-column TopBar). Mirrors the
+            workflow-list "Edit workflow" → builder lineage. */}
+        <Button
+          variant="tertiary"
+          size="sm"
+          iconOnly
+          onClick={onBack}
+          aria-label="Back to automations"
+          className={styles.leftPanelBackBtn}
+        >
+          <ChevronLeft />
+        </Button>
+        <Divider orientation="vertical" />
         <img
           className={clsx(styles.leftPanelHeaderLogo, styles.leftPanelHeaderLogoLight)}
           src={tbAiLightLogo}
@@ -4763,14 +5054,18 @@ function LeftPanel({
           alt=""
           aria-hidden="true"
         />
+        <span className={styles.leftPanelHeaderSpacer} aria-hidden />
         <Button
           variant="ghost"
           size="sm"
           iconOnly
-          onClick={() => setCollapsed(true)}
-          aria-label="Close AI panel"
+          onClick={onCollapse}
+          aria-label="Collapse AI panel"
         >
-          <XIcon />
+          {/* Minus reads as "collapse" — clicking it dismisses the whole
+              panel; a re-open button shows up in the right column so the
+              user can bring it back. */}
+          <MinusIcon />
         </Button>
       </header>
       {/* ── Handle — drag to resize, click to collapse ── */}
@@ -4779,8 +5074,8 @@ function LeftPanel({
         className={styles.leftPanelHandle}
         role="button"
         tabIndex={0}
-        aria-label={collapsed ? 'Expand panel' : 'Collapse or drag to resize panel'}
-        onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && setCollapsed(c => !c)}
+        aria-label="Collapse or drag to resize panel"
+        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') onCollapse(); }}
       />
       <div className={styles.leftPanelInner}>
 
@@ -4794,18 +5089,7 @@ function LeftPanel({
 
 
         {/* ── AI Composer ── */}
-        {collapsed ? (
-          <Button
-            variant="tertiary"
-            size="md"
-            iconOnly
-            className={styles.panelAiIconBtn}
-            onClick={() => setCollapsed(false)}
-            aria-label="Open AI composer"
-          >
-            <TeambridgeAIIcon size={16} />
-          </Button>
-        ) : (
+        {(
         <div className={styles.aiComposer}>
 
           {/* ── Shell: Alloy AIComposer wraps the thread + input card ── */}
@@ -4843,17 +5127,82 @@ function LeftPanel({
                     </AIUserMessage>
                   )}
                   {entry.kind === 'ai' && (
-                    <AIAssistantMessage time={entry.timestamp}>
-                      <AssistantActivityTrail isLive={trailIsLive} />
-                      {/* Hold the message body until the trail has finished
-                          its run. While `pending`, only the live trail
-                          renders so the user can actually watch it work. */}
-                      {entry.pending
-                        ? null
-                        : isInitial
-                        ? entry.content
-                        : <TypingText content={entry.content} onProgress={() => chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' })} />}
-                    </AIAssistantMessage>
+                    <>
+                      {/* Message body — no `time` prop here so the timestamp
+                          isn't rendered above the action group. Instead the
+                          timestamp is delegated to the AIMessageActions
+                          sibling below via its `time` prop. */}
+                      <AIAssistantMessage>
+                        {/* Skip the activity trail on the seeded greeting —
+                            the first message is a static welcome, not a
+                            response to a request, so the "Thought for Ns"
+                            summary is misleading there. `seeded` covers the
+                            welcome bubble (added via useEffect after mount,
+                            so `initialEntryIdsRef` would have missed it). */}
+                        {!isInitial && !entry.seeded && (
+                          <AssistantActivityTrail isLive={trailIsLive} />
+                        )}
+                        {/* Hold the message body until the trail has finished
+                            its run. While `pending`, only the live trail
+                            renders so the user can actually watch it work.
+                            Seeded greetings render statically (no typing). */}
+                        {entry.pending
+                          ? null
+                          : (isInitial || entry.seeded)
+                          ? <MarkdownText content={entry.content} />
+                          : <TypingText content={entry.content} onProgress={() => chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' })} />}
+                      </AIAssistantMessage>
+                      {/* Action group — rendered as a SIBLING of the message
+                          block (not nested inside) so the AIMessageActions
+                          CSS lands correctly: its negative margin-top pulls
+                          flush against the message above, padding-top
+                          recreates an 8px gap as part of the action's hit
+                          area, and `[data-author]:hover + .hover` chains
+                          the reveal off the message above. The `time` prop
+                          renders the timestamp INSIDE the action row,
+                          immediately after the buttons. */}
+                      {!entry.pending && (
+                        <AIMessageActions
+                          visibility="always"
+                          align="start"
+                          time={entry.timestamp}
+                        >
+                          <Button
+                            variant="ghost"
+                            size="xs"
+                            iconOnly
+                            aria-label="Copy"
+                            onClick={() => { void navigator.clipboard?.writeText(entry.content); }}
+                          >
+                            <Copy01Icon size={14} />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="xs"
+                            iconOnly
+                            aria-label="Good response"
+                          >
+                            <ThumbsUpIcon size={14} />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="xs"
+                            iconOnly
+                            aria-label="Bad response"
+                          >
+                            <ThumbsDownIcon size={14} />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="xs"
+                            iconOnly
+                            aria-label="Regenerate"
+                          >
+                            <RefreshCw04Icon size={14} />
+                          </Button>
+                        </AIMessageActions>
+                      )}
+                    </>
                   )}
                   {entry.kind === 'node_change' && entry.nodeChange && (
                     <NodeChangeCard payload={entry.nodeChange} timestamp={entry.timestamp} />
@@ -4865,8 +5214,10 @@ function LeftPanel({
 
               {/* Single AILoader pinned at the end of the conversation — flips
                   variant between `loading` while the AI is responding and
-                  `ready` while standing by for the next prompt. */}
-              <AIAssistantMessage>
+                  `ready` while standing by for the next prompt.
+                  `aiChatLoaderRow` overrides the default thread gap so the
+                  loader sits 8px below the action row above instead of 32px. */}
+              <AIAssistantMessage className={styles.aiChatLoaderRow}>
                 <AILoader
                   variant="gradient-fill"
                   size="xs"
@@ -4905,7 +5256,7 @@ function LeftPanel({
           </AIComposer>{/* end aiComposerShell */}
         </div>
         )}
-      </div>
+      </div>{/* end leftPanelInner */}
     </aside>
   );
 }
@@ -5146,14 +5497,18 @@ function FlowNode({
 
         // Top-row summary text — reads from the group model so && / || show
         // correctly on the canvas card. Parens wrap multi-condition groups
-        // only when there are 2+ groups overall.
+        // only when there are 2+ groups overall. Single-condition cards
+        // keep the legacy primary/secondary split (label on top, "is X"
+        // beneath); multi-condition cards render the full expression as
+        // typed segments so labels read in primary colour and op / value /
+        // logic-op parts read in the same muted slate-300 tone the
+        // secondary line uses.
         let primary: string | null = null;
         let secondary: string | null = null;
+        let primarySegs: ConditionExprSeg[] = [];
         if (!filled) {
           secondary = 'Add condition';
         } else if (total === 1) {
-          // Keep the original one-condition layout: label on primary line,
-          // operator + values on the secondary line.
           const only = groups[0].conditions[0];
           const def = CONDITION_LIBRARY.find(d => d.id === only.fieldId) ?? null;
           primary = def?.label ?? 'Condition';
@@ -5162,7 +5517,7 @@ function FlowNode({
             ? `${opLabel} ${only.values.join(', ')}`
             : opLabel;
         } else {
-          primary = formatConditionExpr(groups);
+          primarySegs = buildConditionExprSegs(groups);
         }
 
         return (
@@ -5178,6 +5533,18 @@ function FlowNode({
               <span className={styles.conditionNodeTopText}>
                 {primary && (
                   <span className={styles.conditionNodeTopPrimary}>{primary}</span>
+                )}
+                {primarySegs.length > 0 && (
+                  <span className={styles.conditionNodeTopPrimary}>
+                    {primarySegs.map((s, i) => (
+                      <span
+                        key={i}
+                        className={s.role === 'muted' ? styles.conditionExprMuted : undefined}
+                      >
+                        {s.text}
+                      </span>
+                    ))}
+                  </span>
                 )}
                 {secondary && (
                   <span className={styles.conditionNodeTopSecondary}>{secondary}</span>
@@ -5240,8 +5607,18 @@ function FlowNode({
             </div>
           </div>
         </>
-      ) : isAi ? (
-        <>
+      ) : isAi ? (() => {
+        // Resolve the configured persona (if any) so the canvas card can
+        // surface the picked specialist's avatar + name instead of the
+        // generic Teambridge AI diamond. Mirrors the right-panel
+        // AiSpecialistMeta resolution: literal `selectedValue: 'AI Specialist'`
+        // gates the configured branch, and `configValues.ai_persona_id`
+        // points at the AI_PERSONAS row.
+        const personaId = step.configValues?.ai_persona_id;
+        const personaConfigured =
+          step.selectedValue === 'AI Specialist' && !!personaId;
+        const persona = personaConfigured ? getPersonaById(personaId) : null;
+        return (
           <div
             className={clsx(
               styles.aiNodeCard,
@@ -5252,23 +5629,40 @@ function FlowNode({
               className={clsx(
                 styles.aiNodeIconBox,
                 step.configured && step.selectedValue && styles.aiNodeIconBoxFilled,
+                persona && styles.aiNodeIconBoxAvatar,
               )}
-              aria-label={cfg.label}
+              aria-label={persona ? `${persona.name} — ${persona.role}` : cfg.label}
             >
-              <TeambridgeAIIcon size={26} />
+              {persona
+                ? <PersonaAvatar personaId={persona.id} size={32} />
+                : <TeambridgeAIIcon size={26} />}
             </span>
             <div className={styles.actionNodeContent}>
               {step.configured && step.selectedValue ? (
                 <div className={styles.nodeConfigSummary} data-type="ai">
-                  <span className={styles.nodeConfigLabel}>{step.selectedValue}</span>
+                  {persona ? (
+                    <>
+                      {/* Two-line label: role on top ("AI Specialist"),
+                          persona name beneath ("Erin"). The role line
+                          reads as the muted op part of the summary; the
+                          name reads as the configured value (the
+                          [data-type="ai"] selectors in the canvas CSS
+                          colour `.nodeConfigOp` and `.nodeConfigVal`
+                          differently to support this hierarchy). */}
+                      <span className={styles.nodeConfigOp}>AI Specialist</span>
+                      <span className={styles.nodeConfigVal}>{persona.name}</span>
+                    </>
+                  ) : (
+                    <span className={styles.nodeConfigLabel}>{step.selectedValue}</span>
+                  )}
                 </div>
               ) : (
                 <span className={styles.aiNodePlaceholder}>Add a Specialist</span>
               )}
             </div>
           </div>
-        </>
-      ) : isPolicy ? (() => {
+        );
+      })() : isPolicy ? (() => {
         const sel = parsePolicySelection(step.configValues);
         const anySelected = sel.folders.length + sel.policies.length + sel.subPolicies.length > 0;
         const filled = anySelected;
@@ -6211,6 +6605,45 @@ function FlowCanvas({
     setTimeout(() => setIsTidying(false), 380);
   };
 
+  // ── Initial mount: centre the workflow horizontally inside the canvas
+  //    column. The static INIT_PAN_X default was tuned for one viewport
+  //    width and leaves the workflow pushed to the right on wider screens,
+  //    so we re-pan once after refs + positions are wired up.
+  //    Coordinates here are canvas-local — the left assistant panel sits
+  //    in a sibling grid column, so visible area starts at 0 within the
+  //    canvas div. The right popover, when open, IS overlaid inside the
+  //    canvas and narrows the visible strip from the right. */
+  const didInitialCentre = useRef(false);
+  useEffect(() => {
+    if (didInitialCentre.current) return;
+    const canvasEl = canvasRef.current;
+    const gcEl     = graphContentRef.current;
+    if (!canvasEl || !gcEl) return;
+    if (!nodes.length) return;
+    const xs: number[] = [];
+    nodes.forEach(n => {
+      const p = nodePositions[n.id];
+      if (p) { xs.push(p.x, p.x + NODE_W); }
+    });
+    if (xs.length === 0) return;
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const contentCentreX = (minX + maxX) / 2;
+    const canvasW = canvasEl.clientWidth;
+    const gcW     = gcEl.offsetWidth;
+    // Only count the right popover when it's actually visible — when
+    // closed it stays in the DOM with offsetWidth set but offsetParent
+    // null, which would otherwise bias the centre rightward.
+    const rightPanelEl = document.querySelector('[class*="rightPanel"]') as HTMLElement | null;
+    const rightPanelVisible = !!(rightPanelEl && rightPanelEl.offsetParent !== null);
+    const rightPanelW  = rightPanelVisible ? rightPanelEl!.offsetWidth : 0;
+    const visibleCentreX = (canvasW - rightPanelW) / 2;
+    // graphContent has left:50% + transform translateX(calc(-50% + pan.x)),
+    // so screen_x_in_canvas = canvasW/2 + pan.x - gcW/2 + contentX
+    setPan({ x: Math.round(visibleCentreX - canvasW / 2 + gcW / 2 - contentCentreX), y: 0 });
+    didInitialCentre.current = true;
+  }, [nodes, nodePositions]);
+
   // ── Auto-tidy when a branch sibling is added ─────────────────────────────────
   const prevTidyToken = useRef(autoTidyToken ?? 0);
   useEffect(() => {
@@ -6711,6 +7144,11 @@ interface WorkflowTemplate {
   name: string;
   nodes: GraphNode[];
   edges: GraphEdge[];
+  /** Assistant-voiced opening summary shown as the seeded AI bubble in the
+   *  thread. Reads as a friendly hand-off from the assistant: what's been
+   *  built, what changed last, and an offer to keep iterating. Falls back
+   *  to the generic welcome when omitted. */
+  summary?: string;
 }
 
 /** Helper — build a trigger node that's already configured. */
@@ -6768,6 +7206,80 @@ function mkDelay(id: string, amount: string, unit: string, summary: string): Gra
   };
 }
 
+/** Helper — build an AI Specialist node bound to a persona ID. The popover
+ *  flips into its configured branch when `selectedValue === 'AI Specialist'`
+ *  (literal sentinel), then resolves the chosen persona via
+ *  `configValues.ai_persona_id`. The canvas card surfaces the literal label
+ *  too — that matches every other already-configured AI node in the app. */
+function mkAi(id: string, personaId: string): GraphNode {
+  return {
+    id, type: 'ai',
+    label: 'AI Specialist',
+    placeholder: 'Choose an AI specialist',
+    configured: true,
+    selectedValue: 'AI Specialist',
+    configValues: { ai_persona_id: personaId },
+  };
+}
+
+/** Helper — build a Policy node with a snapshot of folder / policy / sub-
+ *  policy IDs. The canvas card reads these via `parsePolicySelection` to
+ *  render a "N folders, N policies, N sub-policies selected." summary. */
+function mkPolicy(
+  id: string,
+  selectedFolders: string[],
+  selectedPolicies: string[],
+  selectedSubPolicies: string[],
+  thresholdValue = '80',
+  thresholdMode: PolicyThresholdMode = 'score',
+): GraphNode {
+  return {
+    id, type: 'policy',
+    label: 'Policy',
+    placeholder: 'Choose a policy',
+    configured: true,
+    // Filled-state primary line on the card — surfaces the configured count.
+    selectedValue: 'Premium Shift Compliance',
+    configValues: {
+      selectedFolders:     JSON.stringify(selectedFolders),
+      selectedPolicies:    JSON.stringify(selectedPolicies),
+      selectedSubPolicies: JSON.stringify(selectedSubPolicies),
+      thresholdValue,
+      thresholdMode,
+    },
+  };
+}
+
+/** Helper — build a multi-group condition node. Each entry in
+ *  `groupSpecs` is a list of `(fieldId, operator, values)` tuples that
+ *  AND together inside the group; the groups themselves are OR-ed.
+ *  Mirrors `mkCondition` but emits the new group-based model directly. */
+function mkConditionGroups(
+  id: string,
+  groupSpecs: { fieldId: string; operator: string; values: string[] }[][],
+): GraphNode {
+  const groups: ConditionGroup[] = groupSpecs.map((conds, i) => ({
+    id: `${id}-g${i + 1}`,
+    conditions: conds.map(c => ({ fieldId: c.fieldId, operator: c.operator, values: c.values })),
+  }));
+  // Flatten all conditions for the legacy `conditions` field so older
+  // compat paths still see the data.
+  const flat: ConditionEntry[] = groups.flatMap(g => g.conditions);
+  // Primary line uses the first condition's library label.
+  const first = flat[0];
+  const def = first ? CONDITION_LIBRARY.find(d => d.id === first.fieldId) : null;
+  return {
+    id, type: 'condition',
+    label: 'Add a condition',
+    placeholder: 'Search condition',
+    configured: true,
+    selectedValue: def?.label ?? 'Condition',
+    conditions: flat,
+    conditionLogic: 'AND',
+    conditionGroups: groups,
+  };
+}
+
 /** Router-state payload passed by TemplatesPage when opening a library
  *  template — consumed below to synthesize the initial graph. */
 interface RouterTemplateState {
@@ -6788,6 +7300,54 @@ const TRIGGER_LABEL_BY_CATEGORY: Record<string, string> = {
   data_workflows:     'Record created',
   breaks:             'Break started',
 };
+
+/** Assistant-voiced opening message for templates scaffolded from
+ *  TemplatesPage. Mirrors the 3-section structure used by the
+ *  hand-authored `summary` strings on the catalog workflows above
+ *  (welcome paragraph → "What this flow does" bullets → "Recent activity"
+ *  bullets → "Suggested next steps" bullets) so the entry point reads
+ *  consistently regardless of where the user came from. */
+function buildRouterTemplateSummary(state: RouterTemplateState): string {
+  const triggerLabel = TRIGGER_LABEL_BY_CATEGORY[state.triggerCategory] ?? state.templateName;
+  // Per-step type → bullet copy for the "What this flow does" section.
+  // Trigger always leads. Other steps render in the order they appear in
+  // the template definition so the bullets match the on-canvas chain.
+  const STEP_BULLET: Record<string, string> = {
+    trigger:   `Fires on **${triggerLabel.toLowerCase()}**`,
+    condition: 'Checks a **condition** before continuing',
+    action:    'Runs an **action**',
+    delay:     'Waits for a **delay**',
+    ai:        'Hands off to an **AI specialist**',
+    policy:    'Applies a **policy** filter',
+  };
+  // Dedupe consecutive identical step types — "Runs an action / Runs an
+  // action" reads worse than "Runs 2 actions back-to-back". For the 1st-
+  // pass we keep the simpler 1-bullet-per-step form which is easier to
+  // scan. Trigger is force-positioned first.
+  const sortedSteps = [...state.templateSteps].sort((a, b) => {
+    if (a === 'trigger') return -1;
+    if (b === 'trigger') return 1;
+    return 0;
+  });
+  const flowBullets = sortedSteps
+    .map(s => STEP_BULLET[s] ? `- ${STEP_BULLET[s]}` : `- Adds a **${s}** step`)
+    .join('\n');
+  return [
+    `Just scaffolded the **${state.templateName}** template for you.`,
+    '',
+    '**What this flow does:**',
+    flowBullets,
+    '',
+    '**Recent activity:**',
+    '- Scaffolded **just now** from the templates library',
+    '- Each node is preset with **sensible defaults**',
+    '',
+    '**Suggested next steps:**',
+    '- Open any node on the canvas to **tune its configuration**',
+    "- Tell me what you'd like to change and I'll **adjust it for you**",
+    "- **Save** the workflow when you're happy with the wiring",
+  ].join('\n');
+}
 
 /** Synthesize a linear node chain from a TemplatesPage template spec. Reuses
  *  the mk* factories so conditions / delays / actions render with the same
@@ -6824,6 +7384,22 @@ const WORKFLOW_TEMPLATES: Record<string, WorkflowTemplate> = {
   // 1 · New hire onboarding — Employee created → eligible check → Send email → Start next shift
   wf_01HGXZ7K3QN4A2MB: {
     name: 'New hire onboarding',
+    summary: [
+      'Welcome back to **New hire onboarding**.',
+      '',
+      '**What this flow does:**',
+      '- Fires when a **new employee is created**',
+      "- Confirms credential → **New hire**",
+      '- Sends a **welcome email**',
+      "- Starts the employee's **next shift**",
+      '',
+      '**Recent activity:**',
+      '- **Mar 28** — pre-shift email template was refreshed',
+      '',
+      '**Suggested next steps:**',
+      '- Add a **Slack ping** to the team after the welcome email',
+      '- Wire a **manager handoff** before the shift starts',
+    ].join('\n'),
     nodes: [
       mkTrigger('nh-trigger-1', 'Employee created'),
       mkCondition('nh-cond-1', 'shift_policy_main_credential', 'is', ['New hire']),
@@ -6840,6 +7416,21 @@ const WORKFLOW_TEMPLATES: Record<string, WorkflowTemplate> = {
   // 2 · Timesheet approval reminder — Weekly Fri 3pm → Pending timesheets? → Send email
   wf_01HGY2F9PW4VRJ8N: {
     name: 'Timesheet approval reminder',
+    summary: [
+      "You're back on **Timesheet approval reminder**.",
+      '',
+      '**What this flow does:**',
+      '- Runs on a schedule — **every Friday at 3pm**',
+      '- Sweeps for **pending timesheets**',
+      '- Emails the **matching managers**',
+      '',
+      '**Recent activity:**',
+      '- **Apr 24** — last run **errored** (one manager address bounced)',
+      '',
+      '**Suggested next steps:**',
+      '- Re-check the **recipient list** on the Send email step',
+      '- Add a **fallback** for invalid addresses',
+    ].join('\n'),
     nodes: [
       mkTrigger('ts-trigger-1', 'Schedule — weekly (Fri 3pm)'),
       mkCondition('ts-cond-1', 'shift_policy_upload_timesheet', 'is', ['pending']),
@@ -6854,6 +7445,21 @@ const WORKFLOW_TEMPLATES: Record<string, WorkflowTemplate> = {
   // 3 · Shift swap notification — Shift updated → Is open shift? → Send feed message
   wf_01HGYH6CXD3TZ5QK: {
     name: 'Shift swap notification',
+    summary: [
+      'Hey — this is **Shift swap notification**.',
+      '',
+      '**What this flow does:**',
+      '- Fires when a **shift is updated**',
+      '- Filters down to **open shifts**',
+      "- Posts a **feed message** to the role's team",
+      '',
+      '**Recent activity:**',
+      "- **Apr 2** — last successful run (the flow has been **paused** for ~1 week since)",
+      '',
+      '**Suggested next steps:**',
+      '- **Flip the flow back on** if the original use case still applies',
+      '- Or **rework the targeting** before re-enabling',
+    ].join('\n'),
     nodes: [
       mkTrigger('ss-trigger-1', 'Shift updated'),
       mkCondition('ss-cond-1', 'shift_policy_regular_bill', 'is', ['open']),
@@ -6868,6 +7474,22 @@ const WORKFLOW_TEMPLATES: Record<string, WorkflowTemplate> = {
   // 4 · Overtime alert (draft) — Hours logged → Approaching threshold → Send webhook notification
   wf_01HGZM4P8BKFYTR7: {
     name: 'Overtime alert',
+    summary: [
+      'This is the **Overtime alert** draft.',
+      '',
+      '**What this flow does:**',
+      '- Fires on **hours logged**',
+      '- Checks the **40-hour single-overtime threshold**',
+      "- Fires a **webhook** to payroll's external system",
+      '',
+      '**Recent activity:**',
+      "- Still a **draft** — **no runs yet**",
+      "- Webhook target **isn't wired up** yet",
+      '',
+      '**Suggested next steps:**',
+      '- Finish **wiring the webhook URL** on the action step',
+      '- Add a **manager email** alongside the webhook for visibility',
+    ].join('\n'),
     nodes: [
       mkTrigger('ot-trigger-1', 'Hours logged'),
       mkCondition('ot-cond-1', 'shift_policy_single_overtime_bill_hours', 'is', ['40']),
@@ -6882,6 +7504,22 @@ const WORKFLOW_TEMPLATES: Record<string, WorkflowTemplate> = {
   // 5 · Contractor offboarding — Contract end date → Delay 1 hour → Modify (cleanup) → Send email
   wf_01HH01VQY7JN4E5M: {
     name: 'Contractor offboarding',
+    summary: [
+      "Here's **Contractor offboarding**.",
+      '',
+      '**What this flow does:**',
+      '- Fires on **contract end date**',
+      '- Waits **1 hour**',
+      '- Runs a **Modify** step to clean up the access record',
+      '- Emails **finance** with the offboarding summary',
+      '',
+      '**Recent activity:**',
+      "- **~5 hours ago** — last run **exited early** (the email step didn't reach)",
+      '',
+      '**Suggested next steps:**',
+      '- Check the **Modify column mapping** for the failure cause',
+      '- Add a **retry** policy on the Modify step',
+    ].join('\n'),
     nodes: [
       mkTrigger('co-trigger-1', 'Contract end date'),
       mkDelay('co-delay-1', '1', 'hours', '1 hour'),
@@ -6894,6 +7532,227 @@ const WORKFLOW_TEMPLATES: Record<string, WorkflowTemplate> = {
       { id: 'co-e3', from: 'co-action-1',  to: 'co-action-2' },
     ],
   },
+
+  // 6 · Premium shift dispatch & compliance — full-fat showcase workflow
+  // exercising the trigger → policy → multi-group condition → AI specialist
+  // → fan-out (two parallel branches with their own action chains, delay,
+  // and follow-up condition) layout. Demonstrates every node type the
+  // canvas knows how to render (trigger, policy, condition, ai, action,
+  // delay) and the layout engine's branch placement (one root, two
+  // descendant subtrees pinned to a shared AI parent).
+  //
+  // Each node carries realistic `configValues` so the right-panel selectors
+  // are pre-filled (entity/recipients/message/threshold/persona/condition
+  // groups, etc.) — the workflow looks like a fully-tuned production flow
+  // when opened, not a fresh scaffold. Info-card metadata (nodeId,
+  // createdAt, updatedAt, updatedBy) is set per-node so the right-panel
+  // ⓘ overlay shows real-looking values too.
+  //
+  //  trigger ─ policy ─ cond ─ ai ──┬── action(feed) ─ delay ─ cond ─ action(SMS escalation)
+  //                                 └── action(modify) ─ action(email)
+  wf_01HK_PREMIUM_DISPATCH: (() => {
+    // Shared Info-card timestamps so all nodes share a believable "this
+    // workflow was authored Feb-04, last touched Apr-26" provenance.
+    const CREATED  = '2026-02-04T13:42:00Z';
+    const UPDATED  = '2026-04-26T22:18:00Z';
+    const AUTHOR   = 'Tessa Moreno';
+    const withInfo = <T extends GraphNode>(n: T, nodeId: string, updatedAt = UPDATED): T => ({
+      ...n,
+      nodeId,
+      createdAt: CREATED,
+      updatedAt,
+      updatedBy: AUTHOR,
+    });
+
+    return {
+      name: 'Premium shift dispatch & compliance',
+      summary: [
+        "You're back on **Premium shift dispatch & compliance** — the showcase routing flow.",
+        '',
+        '**What this flow does:**',
+        '- Fires when a **Shift is created**',
+        '- Applies the **Premium Shift Compliance** policy (2 folders · 3 policies · 1 sub-policy override · **85% threshold**)',
+        '- Checks **two condition groups**: RN with bill rate **>$75** **or** California with manager signature',
+        '- The **Sched** specialist analyzes the candidate pool',
+        '- **Branch A** — posts a feed message to qualified workers; escalates to regional managers via **SMS after 30 min** if still open',
+        '- **Branch B** — marks the shift **premium-dispatch** and emails facility supervisors',
+        '',
+        '**Recent activity:**',
+        '- **Today at 22:18** — SMS escalation copy was tightened',
+        '- **59 of last 64 runs** completed cleanly',
+        '',
+        '**Suggested next steps:**',
+        '- **Dial in the policy threshold** if matches are too tight or loose',
+        '- **Swap the persona** to a different specialist',
+        '- Add a **fallback branch** for when no candidates match',
+      ].join('\n'),
+      nodes: [
+        // ── 1) Trigger ──────────────────────────────────────────────
+        // "Something is created" → entity = Shifts. The right-panel
+        // Configuration form reads `entity` from configValues and the
+        // canvas card snippet renders "Shifts is created".
+        withInfo(
+          {
+            ...mkTrigger('pd-trigger-1', 'Something is created'),
+            configValues: { entity: 'Shifts' },
+          },
+          'node_pd_trg_1',
+          '2026-04-26T22:10:00Z',
+        ),
+
+        // ── 2) Policy ───────────────────────────────────────────────
+        // Premium Shift Compliance bundle: 2 folders, 3 policies, 1
+        // sub-policy override — see PolicyMatchingModal for how these
+        // arrays are surfaced in the picker.
+        withInfo(
+          mkPolicy(
+            'pd-policy-1',
+            // Folders
+            ['folder-clinical-premium', 'folder-compliance-bill'],
+            // Policies
+            [
+              'policy-rn-billrate-tier-a',
+              'policy-ca-state-overtime',
+              'policy-manager-attestation',
+            ],
+            // Sub-policy override
+            ['subpolicy-night-shift-bonus'],
+            // Threshold: 85% match required
+            '85',
+            'percentage',
+          ),
+          'node_pd_pol_1',
+          '2026-04-26T22:11:00Z',
+        ),
+
+        // ── 3) Condition (multi-group) ──────────────────────────────
+        // Group 1 (AND): Main Credential is RN  AND  Regular Bill Rate > 75
+        // Group 2 (AND): State is CA          AND  Manager Signature is true
+        // Between groups: OR
+        withInfo(
+          mkConditionGroups('pd-cond-1', [
+            [
+              { fieldId: 'shift_policy_main_credential',   operator: 'is',              values: ['RN'] },
+              { fieldId: 'shift_policy_regular_bill_rate', operator: 'is greater than', values: ['75'] },
+            ],
+            [
+              { fieldId: 'shift_policy_state',             operator: 'is',  values: ['CA'] },
+              { fieldId: 'shift_policy_manager_signature', operator: 'is',  values: ['true'] },
+            ],
+          ]),
+          'node_pd_cnd_1',
+          '2026-04-26T22:12:00Z',
+        ),
+
+        // ── 4) AI Specialist (Sched persona) ────────────────────────
+        // mkAi pins selectedValue: 'AI Specialist' (literal) so the
+        // popover flips into the configured branch and resolves the
+        // persona row from configValues.ai_persona_id.
+        withInfo(
+          mkAi('pd-ai-1', 'persona-002'),
+          'node_pd_ai_1',
+          '2026-04-26T22:13:00Z',
+        ),
+
+        // ── 5a) Branch A · Send feed message ────────────────────────
+        // Realistic outreach copy targeting all qualified workers.
+        // Right-panel renders Send To / Recipients / Message fields.
+        withInfo(
+          {
+            ...mkAction('pd-actionA-1', 'Send feed message'),
+            configValues: {
+              send_to_type: 'All Qualified Users',
+              send_to_value: 'RN, premium-eligible',
+              message:
+                'A premium-rate shift just opened in your role. Tap to claim if you’re available — first-come, first-served.',
+            },
+          },
+          'node_pd_actA_1',
+          '2026-04-26T22:14:00Z',
+        ),
+
+        // ── 5b) Branch A · Delay 30 minutes ─────────────────────────
+        withInfo(
+          mkDelay('pd-delayA-1', '30', 'minutes', '30 Minutes'),
+          'node_pd_dly_a',
+          '2026-04-26T22:15:00Z',
+        ),
+
+        // ── 5c) Branch A · Re-check (Manager Signature is false) ───
+        // Single-condition follow-up: stand-in semantic for "shift is
+        // still open after 30 minutes — escalate."
+        withInfo(
+          mkCondition('pd-condA-2', 'shift_policy_manager_signature', 'is', ['false']),
+          'node_pd_cnd_a2',
+          '2026-04-26T22:16:00Z',
+        ),
+
+        // ── 5d) Branch A · Escalate via SMS ─────────────────────────
+        // 'Send one-way SMS' has a NODE_CONFIG entry, so the right
+        // panel renders Send To / Recipients / Message fields.
+        withInfo(
+          {
+            ...mkAction('pd-actionA-2', 'Send one-way SMS'),
+            configValues: {
+              send_to_type: 'Specific Group of Users',
+              send_to_value: 'Regional Managers — West',
+              message:
+                'Heads up: a premium shift has been open >30 min with no claims. Please review and dispatch.',
+            },
+          },
+          'node_pd_actA_2',
+          '2026-04-26T22:17:00Z',
+        ),
+
+        // ── 6a) Branch B · Modify (mark "premium dispatch") ────────
+        // 'update_data_modify' renders Column / Modifier selects.
+        withInfo(
+          {
+            ...mkAction('pd-actionB-1', 'Modify'),
+            configValues: {
+              column: 'Status',
+              modifier: 'Set',
+            },
+          },
+          'node_pd_actB_1',
+          '2026-04-26T22:14:00Z',
+        ),
+
+        // ── 6b) Branch B · Send email (facility supervisor brief) ──
+        withInfo(
+          {
+            ...mkAction('pd-actionB-2', 'Send email'),
+            configValues: {
+              subject: 'Premium dispatch initiated — review required',
+              reply_to_address: 'no-reply@teambridge.app',
+              send_to_type: 'Specific Group of Users',
+              send_to_value: 'Facility Supervisors — Region 4',
+              message:
+                'A premium-rate shift has been routed to qualified workers. Compliance policy: Premium Shift Compliance (85% match). Please confirm coverage by EOD.',
+              attach_log: 'true',
+            },
+          },
+          'node_pd_actB_2',
+          '2026-04-26T22:15:00Z',
+        ),
+      ],
+      edges: [
+        // Linear stem
+        { id: 'pd-e1',  from: 'pd-trigger-1', to: 'pd-policy-1'  },
+        { id: 'pd-e2',  from: 'pd-policy-1',  to: 'pd-cond-1'    },
+        { id: 'pd-e3',  from: 'pd-cond-1',    to: 'pd-ai-1'      },
+        // Fan-out from AI specialist into two parallel branches
+        { id: 'pd-e4a', from: 'pd-ai-1',      to: 'pd-actionA-1' },
+        { id: 'pd-e4b', from: 'pd-ai-1',      to: 'pd-actionB-1' },
+        // Branch A chain
+        { id: 'pd-e5',  from: 'pd-actionA-1', to: 'pd-delayA-1'  },
+        { id: 'pd-e6',  from: 'pd-delayA-1',  to: 'pd-condA-2'   },
+        { id: 'pd-e7',  from: 'pd-condA-2',   to: 'pd-actionA-2' },
+        // Branch B chain
+        { id: 'pd-e8',  from: 'pd-actionB-1', to: 'pd-actionB-2' },
+      ],
+    };
+  })(),
 };
 
 export function BuilderPage() {
@@ -6968,6 +7827,77 @@ export function BuilderPage() {
   const [globalAiPrompt,  setGlobalAiPrompt]  = useState('');
   const [threadEntries, setThreadEntries] = useState<ThreadEntry[]>([]);
   const [aiTyping, setAiTyping] = useState(false);
+  // AI panel collapse — when true, the LeftPanel + body divider unmount
+  // entirely and a small re-open button surfaces beneath the top bar in
+  // the right column.
+  const [aiPanelCollapsed, setAiPanelCollapsed] = useState(false);
+
+  // ── Undo history (Cmd/Ctrl+Z) ─────────────────────────────────────────────
+  // Snapshots `{ nodes, edges, name }` before each mutation; Cmd/Ctrl+Z pops
+  // the most recent snapshot and restores it.
+  //
+  // Why this shape, not a per-mutation wrapper:
+  // - Mutation surface is wide (8+ setNodes / setEdges call sites for add,
+  //   delete, configure, connect, edit, drop-onto-edge, etc). Wrapping each
+  //   one would mean threading the history capture through every helper.
+  // - A useEffect that watches `[nodes, edges, name]` runs after every state
+  //   change, so capturing the *previous* render's snapshot from a ref gives
+  //   us a single source of truth for "what was on the canvas before this
+  //   commit?" — covers every existing setter and any new ones added later.
+  type Snapshot = { nodes: GraphNode[]; edges: GraphEdge[]; name: string };
+  const undoStackRef = useRef<Snapshot[]>([]);
+  // Most-recently-rendered snapshot. Updated synchronously inside the watcher
+  // useEffect so the next mutation can read it as the "from" half of the pair.
+  const prevSnapshotRef = useRef<Snapshot>({ nodes, edges, name });
+  // Set to `true` immediately before applying an undo, then cleared inside
+  // the watcher effect. Skips re-pushing the undo result onto the stack
+  // (which would defeat redo intent and trap the user in a no-op loop).
+  const isApplyingUndoRef = useRef(false);
+  const UNDO_STACK_MAX = 50;
+
+  useEffect(() => {
+    if (isApplyingUndoRef.current) {
+      isApplyingUndoRef.current = false;
+      prevSnapshotRef.current = { nodes, edges, name };
+      return;
+    }
+    const prev = prevSnapshotRef.current;
+    if (prev.nodes === nodes && prev.edges === edges && prev.name === name) return;
+    undoStackRef.current.push(prev);
+    if (undoStackRef.current.length > UNDO_STACK_MAX) undoStackRef.current.shift();
+    prevSnapshotRef.current = { nodes, edges, name };
+  }, [nodes, edges, name]);
+
+  const undo = useCallback(() => {
+    const last = undoStackRef.current.pop();
+    if (!last) return;
+    isApplyingUndoRef.current = true;
+    setNodes(last.nodes);
+    setEdges(last.edges);
+    setName(last.name);
+  }, []);
+
+  // Global Cmd/Ctrl+Z handler. Suppresses the shortcut when the user is
+  // typing into a form control (otherwise we'd undo the canvas while they
+  // expect text-field undo to handle their typing).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const isMac = navigator.platform.toUpperCase().includes('MAC');
+      const meta = isMac ? e.metaKey : e.ctrlKey;
+      if (!meta) return;
+      if (e.key.toLowerCase() !== 'z') return;
+      if (e.shiftKey) return; // leave Shift+Cmd+Z available for future redo
+      const t = e.target as HTMLElement | null;
+      if (t) {
+        const tag = t.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || t.isContentEditable) return;
+      }
+      e.preventDefault();
+      undo();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [undo]);
 
   // Rolling index per response bank so consecutive AI reactions don't repeat.
   const aiReactionIdxRef = useRef<Record<string, number>>({});
@@ -7036,9 +7966,24 @@ export function BuilderPage() {
   }, [appendThreadEntry]);
 
   // Welcome message — appended once when the thread is empty on mount.
+  // `seeded: true` so the renderer skips the activity-trail summary on
+  // this bubble (it's a static greeting, not a response).
+  //
+  // Three routing branches for the bubble copy:
+  //   1) Known workflow id with a hand-authored `summary` → use it verbatim.
+  //   2) Arrived from TemplatesPage with router state → synthesize a
+  //      template-aware summary describing what was scaffolded.
+  //   3) Anything else (new blank workflow, unknown id) → generic welcome.
+  const welcomeContent = useMemo(() => {
+    if (template?.summary) return template.summary;
+    if (routerTemplate) return buildRouterTemplateSummary(routerTemplate);
+    return WELCOME_AI_MESSAGE;
+    // Resolved once at mount — workflow id / router state don't change after.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   useEffect(() => {
     setThreadEntries(prev => prev.length === 0
-      ? [{ id: crypto.randomUUID(), kind: 'ai', content: WELCOME_AI_MESSAGE, timestamp: Date.now() }]
+      ? [{ id: crypto.randomUUID(), kind: 'ai', content: welcomeContent, timestamp: Date.now(), seeded: true }]
       : prev);
     // Clean up any pending typing timer on unmount
     return () => {
@@ -7496,19 +8441,28 @@ export function BuilderPage() {
         onSave={handleSettingsSave}
       />
 
-      <div className={styles.body}>
-        <LeftPanel
-          onLibNodeDragStart={(item) => setDraggingLibNode(item)}
-          onLibNodeDragEnd={() => setDraggingLibNode(null)}
-          onLibNodeSelect={(item) => { handleCanvasDropAtPos(item, 0, CANVAS_TOP); setSelectedId(null); }}
-          aiPrompt={globalAiPrompt}
-          onAiPromptChange={setGlobalAiPrompt}
-          aiTyping={aiTyping}
-          entries={threadEntries}
-          onAiSend={handleGlobalAiSend}
-        />
+      <div className={styles.body} data-ai-collapsed={aiPanelCollapsed}>
+        {/* LeftPanel + body divider unmount entirely when the AI panel is
+            collapsed. The re-open affordance lives in the right column
+            (see `expandAiBtn` below the top bar). */}
+        {!aiPanelCollapsed && (
+          <>
+            <LeftPanel
+              onLibNodeDragStart={(item) => setDraggingLibNode(item)}
+              onLibNodeDragEnd={() => setDraggingLibNode(null)}
+              onLibNodeSelect={(item) => { handleCanvasDropAtPos(item, 0, CANVAS_TOP); setSelectedId(null); }}
+              aiPrompt={globalAiPrompt}
+              onAiPromptChange={setGlobalAiPrompt}
+              aiTyping={aiTyping}
+              entries={threadEntries}
+              onAiSend={handleGlobalAiSend}
+              onCollapse={() => setAiPanelCollapsed(true)}
+              onBack={() => navigate('/automations')}
+            />
 
-        <div className={styles.bodyDivider} aria-hidden />
+            <div className={styles.bodyDivider} aria-hidden />
+          </>
+        )}
 
         <div className={styles.rightColumn}>
           <TopBar
@@ -7521,6 +8475,33 @@ export function BuilderPage() {
             status={status}
             onSettingsOpen={() => setSettingsOpen(true)}
           />
+          {/* Re-open AI panel + back-to-list — surface below the top bar
+              only while the AI panel is collapsed. Back chevron lives at
+              the far left so the back affordance is reachable even when
+              the LeftPanel (which now owns the canonical back button) is
+              dismissed. */}
+          {aiPanelCollapsed && (
+            <div className={styles.collapsedAiCluster}>
+              <Button
+                variant="tertiary"
+                size="sm"
+                iconOnly
+                onClick={() => navigate('/automations')}
+                aria-label="Back to automations"
+              >
+                <ChevronLeft />
+              </Button>
+              <Button
+                variant="tertiary"
+                size="sm"
+                iconOnly
+                onClick={() => setAiPanelCollapsed(false)}
+                aria-label="Expand AI panel"
+              >
+                <TeambridgeAIIcon size={16} />
+              </Button>
+            </div>
+          )}
           <FlowCanvas
           nodes={nodes}
           edges={edges}

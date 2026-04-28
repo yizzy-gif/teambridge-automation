@@ -12,6 +12,10 @@ import { Eyebrow } from '@alloy/components/Eyebrow';
 import { Button } from '@alloy/components/Button';
 import { SegmentedControl } from '@alloy/components/SegmentedControl';
 import { BarChart } from '@alloy/components/Charts/BarChart';
+import { StepLineChart } from './StepLineChart';
+// Keep `BarChart` imported above for non-card layouts that still use it;
+// the card layout below switches to the slate step-line treatment.
+void BarChart;
 import { ValueChangeLabel } from '@alloy/components/ValueChangeLabel';
 import { Edit03Icon } from '@alloy/components/icons/Edit03Icon';
 import { BarChart02Icon } from '@alloy/components/icons/BarChart02Icon';
@@ -293,13 +297,11 @@ export function WorkflowPreview({
         {data ? (() => {
           const { values, labels } = toChartSeries(data.current, timeframe);
           return (
-            <BarChart
-              series={[{ label: 'Runs', data: values }]}
+            <StepLineChart
+              values={values}
               labels={labels}
               height={chartHeight}
-              showLegend={false}
-              role="img"
-              aria-label={chartLabel}
+              ariaLabel={chartLabel}
             />
           );
         })() : (
@@ -315,26 +317,25 @@ export function WorkflowPreview({
         Last edited {formatDate(workflow.updatedAt)}
       </span>
       <Button
-        variant="primary"
-        size="sm"
-        leadingArtwork={<Edit03Icon size={14} />}
-        onClick={onEdit}
-      >
-        Edit workflow
-      </Button>
-      <Button
-        variant="secondary"
+        variant="tertiary"
         size="sm"
         leadingArtwork={<BarChart02Icon size={14} />}
         onClick={onViewRuns}
       >
         View runs
       </Button>
-      {!isDraft && (
-        <Button variant="secondary" size="sm" onClick={handleToggleStatus}>
-          {isPaused ? 'Resume' : 'Pause'}
-        </Button>
-      )}
+      {/* Pause / Resume removed — toggling lives on the card-level Switch in
+          the workflow list, which keeps the action chrome in one place
+          rather than duplicating it inside the expanded preview. */}
+      <Button
+        variant="primary"
+        size="sm"
+        className={styles.editWorkflowButton}
+        leadingArtwork={<Edit03Icon size={14} />}
+        onClick={onEdit}
+      >
+        Edit workflow
+      </Button>
     </div>
   );
 

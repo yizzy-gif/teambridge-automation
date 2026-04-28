@@ -1,9 +1,28 @@
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { ScrollArea } from '@alloy/components/ScrollArea';
-import { Divider } from '@alloy/components/Divider';
 import { PrimaryNav } from '@/components/PrimaryNav';
 import styles from './AppShell.module.css';
+
+// ─── Top bar icons (visual chrome only — no state) ────────────────────────────
+
+function DotsHorizontalIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+      <circle cx="2.5" cy="7" r="1.25" fill="currentColor" />
+      <circle cx="7" cy="7" r="1.25" fill="currentColor" />
+      <circle cx="11.5" cy="7" r="1.25" fill="currentColor" />
+    </svg>
+  );
+}
+
+function MenuIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+      <path d="M1.75 3.5h10.5M1.75 7h10.5M1.75 10.5h10.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+    </svg>
+  );
+}
 
 // ─── Secondary nav items ──────────────────────────────────────────────────────
 
@@ -83,8 +102,6 @@ export function AppShell() {
             <h2 className={styles.navHeading}>Workflow</h2>
           </div>
 
-          <Divider />
-
           {/* Middle — menu items */}
           <nav className={styles.navMiddle} aria-label="Main">
             {primaryNav.map((item) => (
@@ -122,7 +139,27 @@ export function AppShell() {
         {/* ── Main area ── */}
         <div className={styles.main}>
           <header className={styles.topBar}>
-            <h1 className={styles.pageTitle}>{pageTitle}</h1>
+            <div className={styles.topBarHeading}>
+              <h1 className={styles.pageTitle}>{pageTitle}</h1>
+            </div>
+            <div className={styles.topBarActions}>
+              <button
+                type="button"
+                className={styles.topBarIconBtn}
+                aria-label="More options"
+                title="More options"
+              >
+                <DotsHorizontalIcon />
+              </button>
+              <button
+                type="button"
+                className={styles.topBarIconBtn}
+                aria-label="Activity"
+                title="Activity"
+              >
+                <MenuIcon />
+              </button>
+            </div>
           </header>
 
           <main className={styles.content}>

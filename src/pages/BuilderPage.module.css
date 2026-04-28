@@ -23,6 +23,14 @@
   grid-template-columns: 360px 1px 1fr;
 }
 
+/* When the AI panel is collapsed, the LeftPanel + bodyDivider unmount
+   entirely. Collapse the grid to a single full-width column so the right
+   column reclaims the space instead of slotting into the now-empty 360px
+   first column. */
+.body[data-ai-collapsed="true"] {
+  grid-template-columns: 1fr;
+}
+
 /* Right column — stacks topBar above the canvas */
 .rightColumn {
   display: flex;
@@ -31,6 +39,36 @@
   min-height: 0;
   position: relative;
   overflow: hidden;
+}
+
+/* Re-open AI panel — small floating diamond pinned just below the top
+   bar, only mounted while the AI panel is collapsed. Sits inside the
+   right column over the canvas surface (positioned absolutely against
+   .rightColumn so the canvas's flex/scroll layout isn't disturbed). */
+.expandAiBtn {
+  position: absolute;
+  /* Top bar is 48px tall — sit 12px below it so there's a clean visual
+     gap between the chrome and the affordance. */
+  top: calc(48px + var(--space-3));
+  /* Match the back-chevron's left edge: the topBar has 8px horizontal
+     padding and the back button sits flush at the start of topBarLeft,
+     so its visual left edge is at 8px from the rightColumn left. */
+  left: 8px;
+  z-index: 5;
+}
+
+/* Collapsed-state floating cluster — back chevron + AI re-open button
+   side-by-side. Same anchoring as `.expandAiBtn` (just below the top
+   bar, flush against the canvas left edge) but as a flex row so both
+   buttons share one positioned element. */
+.collapsedAiCluster {
+  position: absolute;
+  top: calc(48px + var(--space-3));
+  left: 8px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 /* Vertical divider between the two columns */
@@ -172,11 +210,22 @@
   height: 48px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  /* `gap` instead of `space-between` since the row now holds
+     [back · divider · logo · spacer · collapse]. The spacer flex:1 so the
+     collapse button hugs the right edge while the leading group reads
+     as a single back-chevron + wordmark cluster on the left. */
+  gap: var(--space-2);
   padding: 0 8px;
   border-bottom: 1px solid var(--color-border-opaque);
   pointer-events: auto;
 }
+
+/* Spacer between the leading cluster and the trailing collapse button. */
+.leftPanelHeaderSpacer { flex: 1; }
+
+/* Back-to-list chevron — flex-shrink:0 so the leading divider doesn't
+   squeeze it when the panel is dragged narrow. */
+.leftPanelBackBtn { flex-shrink: 0; }
 
 .leftPanelHeaderLogo {
   height: 28px;
@@ -657,6 +706,15 @@
   padding: var(--space-3);
 }
 
+/* Pinned-loader spacing — the AILoader wrapper sits as a sibling at the
+   end of the thread, but the default 32px thread gap reads as too much
+   air below the action row above it (especially while the loader is in
+   the "ready" idle state). Override `margin-top` so the loader floats
+   8px below whatever precedes it instead of the full thread gap. */
+.aiChatLoaderRow {
+  margin-top: calc(-1 * 32px + var(--space-2)); /* 32px gap → effective 8px */
+}
+
 .aiChatBubble {
   max-width: 85%;
   padding: var(--space-2) var(--space-3);
@@ -710,6 +768,59 @@
   line-height: var(--line-height-relaxed);
   letter-spacing: var(--tracking-normal);
   color: var(--color-content-tertiary);
+}
+
+/* ── Structured AI message blocks ──────────────────────────────────────────
+   Used by <MarkdownText> to render the AI response with sectioned headings,
+   bullet lists, and bold callouts. The first child loses its top margin so
+   the bubble doesn't gain extra space above the opening line; subsequent
+   blocks separate cleanly via paragraph margins. */
+.aiMessagePara {
+  margin: 0 0 var(--space-2);
+  line-height: var(--line-height-relaxed);
+}
+.aiMessagePara:last-child {
+  margin-bottom: 0;
+}
+
+.aiMessageHeading {
+  margin: var(--space-3) 0 var(--space-1);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--tracking-tight);
+  color: var(--color-content-primary);
+}
+.aiMessageHeading:first-child {
+  margin-top: 0;
+}
+
+.aiMessageList {
+  margin: 0 0 var(--space-2);
+  padding-left: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  line-height: var(--line-height-relaxed);
+}
+.aiMessageList:last-child {
+  margin-bottom: 0;
+}
+.aiMessageList li {
+  /* Custom marker so the bullets sit closer to the body copy than the
+     browser default and pick up the muted content-secondary color. */
+  list-style: none;
+  position: relative;
+  padding-left: var(--space-3);
+}
+.aiMessageList li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.55em;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--color-content-tertiary);
 }
 
 /* Activity entry — subtle left-aligned row with a dot icon + short text.
@@ -997,6 +1108,50 @@
 }
 
 .nodeChangeTime {
+  white-space: nowrap;
+}
+
+/* New three-row meta layout — Node ID / Last updated / Change made.
+   Replaces the legacy stacked-rows + footer pattern so every change
+   payload (added, deleted, connected, configured) reads as a label-
+   value summary. */
+.nodeChangeMetaRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  line-height: var(--line-height-tight);
+}
+
+.nodeChangeMetaLabel {
+  flex-shrink: 0;
+  color: var(--color-content-tertiary);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: var(--tracking-normal);
+}
+
+.nodeChangeMetaValue {
+  color: var(--color-content-primary);
+  text-align: right;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Mono treatment for IDs so the string reads as machine identifier
+   rather than prose — matches the right-panel Info card's mono value
+   styling. */
+.nodeChangeMetaValueMono {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-content-primary);
+  text-align: right;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -2463,17 +2618,23 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-  z-index: var(--z-sticky);
+  /* Sits above the bottom-center node palette (z-index 20) AND the
+     canvas/zoom chrome. Capped below the dropdown panel (.psPanel at
+     10000) so opened SelectField menus still float over the popover. */
+  z-index: 300;
   pointer-events: none;
 }
 
 .rightPanelResizeHandle {
   position: absolute;
-  left: -7px;
+  /* Hug the panel's left edge with zero visual gap — `left: -4px`
+     puts the 4px-wide pill at -4px..0px so its right edge lands
+     exactly on the panel border. */
+  left: -4px;
   top: 50%;
   transform: translateY(-50%);
-  width: 14px;
-  height: 40px;
+  width: 4px;
+  height: 100%;
   cursor: ew-resize;
   pointer-events: auto;
   z-index: 1;
@@ -2482,21 +2643,38 @@
   justify-content: center;
 }
 
-/* Visual pill indicator — 6×40px, white fill, border */
+/* Visual pill indicator — hidden at rest, fades in only when the hit
+   area itself is hovered. Surfaces the affordance just-in-time at the
+   edge instead of always painting a pill against the canvas. */
 .rightPanelResizeHandle::after {
   content: '';
   display: block;
-  width: 6px;
-  height: 40px;
+  width: 4px;
+  height: 36px;
   border-radius: var(--radius-full);
-  background: var(--color-bg-primary);
-  border: 1px solid var(--color-border-opaque);
-  transition: border-color var(--duration-fast);
+  background: var(--color-content-tertiary);
+  opacity: 0;
+  transition:
+    opacity var(--duration-fast) var(--ease-default),
+    background var(--duration-fast);
   pointer-events: none;
 }
 
+/* Reveal the handle pill any time the user is over the right panel —
+   not just over the 4px hit zone. Makes the drag affordance
+   discoverable: as soon as the cursor enters the panel, the pill
+   surfaces near the left edge so users see "this can be resized"
+   without first having to find the narrow border. */
+.rightPanel:hover .rightPanelResizeHandle::after,
 .rightPanelResizeHandle:hover::after {
-  border-color: var(--color-border-focus);
+  opacity: 1;
+}
+
+/* Direct hover on the hit zone — bump pill colour to primary as the
+   cursor settles on the actual interactive zone, so the user gets
+   confirmation that they've found the drag target. */
+.rightPanelResizeHandle:hover::after {
+  background: var(--color-content-primary);
 }
 
 /* ─── Node popover ───────────────────────────────────────────────────────────── */
@@ -2515,6 +2693,16 @@
   pointer-events: auto;
 }
 
+/* When a SelectField / DropdownMenu inside the popover is open, drop the
+   nodePopover and popoverBody clipping so the dropdown panel (position:
+   absolute, anchored to its trigger) can extend past the popover edge.
+   Once the menu closes, clipping snaps back so the rounded corners and
+   internal scroll behave normally. */
+.nodePopover:has([role="menu"][data-open]),
+.nodePopover:has(.fieldChipDropdown) {
+  overflow: visible;
+}
+
 /* Scrollable middle — header and footer stay pinned */
 .popoverBody {
   flex: 1;
@@ -2525,6 +2713,15 @@
   /* Thin custom scrollbar so it feels native */
   scrollbar-width: thin;
   scrollbar-color: var(--color-border-opaque) transparent;
+}
+
+/* Match the nodePopover override: when a dropdown is open inside the
+   body, allow it to escape the scroll container. The body returns to
+   `overflow-y: auto` once the menu closes, so long-content scroll still
+   works normally. */
+.popoverBody:has([role="menu"][data-open]),
+.popoverBody:has(.fieldChipDropdown) {
+  overflow: visible;
 }
 .popoverBody::-webkit-scrollbar { width: 4px; }
 .popoverBody::-webkit-scrollbar-track { background: transparent; }
@@ -2540,6 +2737,12 @@
   padding: var(--space-2) var(--space-3) var(--space-2) 8px;
   border-bottom: 1px solid var(--color-border-opaque);
   flex-shrink: 0;
+  /* Lock the header height so the popover chrome doesn't jump when the
+     Save button is conditionally hidden (e.g. on the AI Specialist Test
+     tab). 48px = Alloy sm-button height (32px) + the existing 8px top/
+     bottom padding, matching the header's natural size when Save is
+     visible. */
+  min-height: 48px;
 }
 
 .popoverHeaderLeft {
@@ -2549,11 +2752,24 @@
   min-width: 0;
 }
 
-/* Grouping for right-aligned header buttons (info + close). */
+/* Grouping for right-aligned header buttons (Save + info + close). */
 .popoverHeaderActions {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* Info button override — Alloy ghost buttons inherit primary content
+   color for their icon at rest; the info ⓘ reads as chrome (not action),
+   so we drop it to content-tertiary. Hover bumps back to primary so the
+   affordance is still discoverable. `currentColor` cascades into the SVG
+   path automatically. */
+.popoverInfoBtn {
+  color: var(--color-content-tertiary);
+}
+.popoverInfoBtn:hover:not(:disabled),
+.popoverInfoBtn[data-active="true"] {
+  color: var(--color-content-primary);
 }
 
 /* Info icon button in the popover header — muted at rest, steps to
@@ -2929,7 +3145,12 @@
 
 .popoverDivider {
   height: 1px;
+  /* Inset the divider 12px on each side so it reads as a section separator
+     rather than a hard full-bleed rule. Use a transparent border + an inset
+     background to draw only the inner stretch. */
   background: var(--color-border-opaque);
+  background-clip: content-box;
+  padding: 0 var(--space-3);
   flex-shrink: 0;
 }
 
@@ -3159,11 +3380,18 @@
 .psTrigger[data-open] .psChevron { color: var(--color-content-primary); }
 .psTrigger[data-open] .psChevron > svg { transform: rotate(180deg); }
 
-/* Panel — portalled to body; Alloy DropdownMenu shape */
+/* Panel — portalled to body; Alloy DropdownMenu shape. The portal lands
+   the panel at the body root with no inherited z-index, which means
+   anything else fixed-positioned with a numeric z-index (the palette
+   toolbar at 20, the right panel at 200, the bottom canvas controls)
+   would naturally stack above an open dropdown. Pin a very high
+   z-index here so dropdowns always render on top of every floating
+   surface. */
 .psPanel {
   position: fixed !important;
   max-height: 240px;
   overflow-y: auto;
+  z-index: 10000;
 }
 
 /* Item rows */
@@ -4084,14 +4312,29 @@
 }
 
 .aiSpecPersonaAvatar {
-  width: 32px;
-  height: 32px;
-  border-radius: var(--radius-sm);
-  background: var(--color-brand);
+  width: 36px;
+  height: 36px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-md);
+}
+
+/* When this avatar slot is rendering a configured node-type icon (the
+   "selected action" header inside the action node popover, etc.), match
+   the action-selector row treatment instead of the bare grey bg. Keeps
+   the icon background consistent between the selector list and the
+   configured-state header so the hand-off reads as the same surface. */
+.aiSpecPersonaAvatar.iconTrigger,
+.aiSpecPersonaAvatar.iconCondition,
+.aiSpecPersonaAvatar.iconAction,
+.aiSpecPersonaAvatar.iconAi,
+.aiSpecPersonaAvatar.iconDelay,
+.aiSpecPersonaAvatar.iconPolicy {
+  background: var(--color-blue-bg-tertiary);
+  color: var(--color-blue-content-primary, var(--color-content-primary));
 }
 
 .aiSpecPersonaInfo {
@@ -4099,7 +4342,7 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 0;
 }
 
 .aiSpecVoicePill {
@@ -4220,6 +4463,16 @@
   background: var(--color-bg-primary);
 }
 
+/* Same clip-release pattern as the popover container above — when a
+   dropdown menu opens inside this card (e.g. the Target SelectField),
+   drop the card's `overflow: hidden` so the panel can extend below the
+   card frame. Snaps back to `hidden` once the menu closes so rounded
+   corners + nested borders read normally. */
+.aiSpecDataCard:has([role="menu"][data-open]),
+.aiSpecDataCard:has(.fieldChipDropdown) {
+  overflow: visible;
+}
+
 .aiSpecDataCardHeader {
   display: flex;
   align-items: center;
@@ -4304,9 +4557,113 @@
 
 .aiSpecFieldPillRow {
   display: flex;
+  flex-wrap: nowrap;
+  gap: 4px;
+  align-items: flex-start;
+}
+
+/* Sub-tags wrap independently and stay indented under the leading
+   Read/Write pill, instead of breaking back to the row's left edge. */
+.aiSpecFieldSubTags {
+  display: flex;
   flex-wrap: wrap;
   gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+/* ─── FieldTagPicker — editable chips + inline typeahead ───────────────── */
+
+.fieldTagPicker {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.fieldChip {
+  display: inline-flex;
   align-items: center;
+  gap: 4px;
+  padding: 2px 4px 2px 8px;
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-primary);
+  color: var(--color-content-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.fieldChipRemove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-content-tertiary);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-default), color var(--duration-fast) var(--ease-default);
+}
+.fieldChipRemove:hover {
+  background: var(--color-bg-secondary);
+  color: var(--color-content-primary);
+}
+
+.fieldChipInput {
+  flex: 1;
+  min-width: 80px;
+  border: none;
+  outline: none;
+  background: transparent;
+  padding: 2px 4px;
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  color: var(--color-content-primary);
+}
+.fieldChipInput::placeholder {
+  color: var(--color-content-tertiary);
+}
+
+.fieldChipDropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-below-md);
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.fieldChipOption {
+  display: flex;
+  align-items: center;
+  padding: 6px 8px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  color: var(--color-content-primary);
+  text-align: left;
+  cursor: pointer;
+}
+.fieldChipOption:hover,
+.fieldChipOption:focus-visible {
+  background: var(--color-bg-secondary);
+  outline: none;
 }
 
 
@@ -4320,6 +4677,22 @@
 .aiSpecTargetWrap {
   flex: 1;
   min-width: 0;
+}
+
+/* SelectField value text truncation — Alloy's `.selectValue` is a flex
+   row with default `white-space: normal`, so a long option label like
+   "Policy Matches (Users for Shift)" wraps into the field shell and
+   doubles its height. Force a single line + ellipsis so the field always
+   reads as one row regardless of the selected option's length. The class
+   hash on `.selectValue` lives in Alloy's CSS module, so we match by
+   `[class*="selectValue"]` to dodge the hash. */
+.aiSpecTargetWrap [class*="selectValue"] {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .aiSpecMaxTargetsInput {
@@ -4508,9 +4881,34 @@
 /* ─── AI Specialist — Configure / Test tabs ──────────────────────────────── */
 
 .aiSpecTabsWrap {
-  padding: var(--space-2) var(--space-3) 0;
-  border-bottom: 1px solid var(--color-border-opaque);
+  position: relative;
+  /* Tabs sit flush against the popover header. Side padding stays at 12px
+     so the active-tab indicator lines up with the body content gutter. */
+  padding: 0 var(--space-3);
   flex-shrink: 0;
+}
+
+/* Compress the Tabs row itself — the default `md` height is too generous
+   for an in-popover tab strip. Pulls the tab buttons in vertically so the
+   strip reads as a section divider, not a hero. */
+.aiSpecTabsWrap [role='tab'] {
+  padding-top: var(--space-2);
+  padding-bottom: var(--space-2);
+}
+
+/* Bottom divider — inset by 12px on each side instead of spanning edge to
+   edge, so it reads as a content-area separator rather than a full-width
+   chrome rule. Implemented as ::after so the wrap can keep its padding
+   without the border tracking the inner gutter. */
+.aiSpecTabsWrap::after {
+  content: '';
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 0;
+  height: 1px;
+  background: var(--color-border-opaque);
+  pointer-events: none;
 }
 
 /* ─── AI Specialist Test tab ─────────────────────────────────────────────── */
@@ -4676,24 +5074,54 @@
 .aiTestSpecialistLabelAvatar {
   width: 16px;
   height: 16px;
-  border-radius: var(--radius-full);
-  background: var(--gradient-ai);
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
 }
 
 .aiTestBubbleSpecialist {
+  position: relative;
   padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: 12px;
   background: var(--color-bg-secondary);
   color: var(--color-content-primary);
   font-family: var(--font-sans);
   font-size: var(--text-sm);
   font-weight: var(--font-weight-regular);
   line-height: var(--line-height-relaxed);
-  border-top-left-radius: var(--radius-xs);
   word-wrap: break-word;
+}
+
+/* Speech-bubble tail anchored at the bubble's bottom-left, matching the
+   in-app message design (Device=Mobile, Sender=Human, Channel=In-app).
+   The tail SVG carries both the fill and its outer-edge stroke so it
+   merges seamlessly with the bubble corner. Hardcoded #F6F7F9 / #E8EAEE
+   match Alloy's --color-bg-secondary / --color-border-opaque so the
+   tail blends with the bubble surface. */
+.aiTestBubbleSpecialist::before {
+  content: '';
+  position: absolute;
+  left: -5px;
+  bottom: -3px;
+  width: 16px;
+  height: 18px;
+  pointer-events: none;
+  background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='18' viewBox='0 32 16 18' fill='none'><path d='M0.897 48.4C3.977 45.79 5.815 42.36 5.815 37.74V33.97C5.815 33.42 6.263 32.97 6.815 32.97H14.484C15.036 32.97 15.484 33.42 15.484 33.97V46.55C15.484 46.96 15.234 47.33 14.85 47.47C10.786 48.99 5.692 50.09 1.45 50.21C0.495 50.24 0.168 49.02 0.897 48.4Z' fill='%23F6F7F9'/><path d='M15.484 47.23C11.326 48.87 5.916 50.08 1.45 50.21C0.495 50.24 0.168 49.02 0.897 48.4C3.977 45.79 5.815 42.36 5.815 37.74V32.97' stroke='%23E8EAEE' fill='none'/></svg>") no-repeat;
+}
+
+/* Dark-mode tail — fill + stroke swapped to slate-900 / slate-700 so the
+   tail keeps merging with the bubble surface in both system-dark and
+   explicit `.dark` themes. Mirrors Alloy's --color-bg-secondary /
+   --color-border-opaque overrides for dark. */
+@media (prefers-color-scheme: dark) {
+  :root:not(:global(.light)) .aiTestBubbleSpecialist::before {
+    background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='18' viewBox='0 32 16 18' fill='none'><path d='M0.897 48.4C3.977 45.79 5.815 42.36 5.815 37.74V33.97C5.815 33.42 6.263 32.97 6.815 32.97H14.484C15.036 32.97 15.484 33.42 15.484 33.97V46.55C15.484 46.96 15.234 47.33 14.85 47.47C10.786 48.99 5.692 50.09 1.45 50.21C0.495 50.24 0.168 49.02 0.897 48.4Z' fill='%230E1115'/><path d='M15.484 47.23C11.326 48.87 5.916 50.08 1.45 50.21C0.495 50.24 0.168 49.02 0.897 48.4C3.977 45.79 5.815 42.36 5.815 37.74V32.97' stroke='%232B333F' fill='none'/></svg>") no-repeat;
+  }
+}
+:global(.dark) .aiTestBubbleSpecialist::before {
+  background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='18' viewBox='0 32 16 18' fill='none'><path d='M0.897 48.4C3.977 45.79 5.815 42.36 5.815 37.74V33.97C5.815 33.42 6.263 32.97 6.815 32.97H14.484C15.036 32.97 15.484 33.42 15.484 33.97V46.55C15.484 46.96 15.234 47.33 14.85 47.47C10.786 48.99 5.692 50.09 1.45 50.21C0.495 50.24 0.168 49.02 0.897 48.4Z' fill='%230E1115'/><path d='M15.484 47.23C11.326 48.87 5.916 50.08 1.45 50.21C0.495 50.24 0.168 49.02 0.897 48.4C3.977 45.79 5.815 42.36 5.815 37.74V32.97' stroke='%232B333F' fill='none'/></svg>") no-repeat;
 }
 
 .aiTestUserBlock {
@@ -4713,16 +5141,32 @@
 }
 
 .aiTestBubbleUser {
+  position: relative;
   padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-lg);
-  background: var(--color-bg-inverse-primary);
-  color: var(--color-content-inverse-primary);
+  border: 1px solid #475569;
+  border-radius: 12px;
+  background: #394454;
+  color: #FFFFFF;
   font-family: var(--font-sans);
   font-size: var(--text-sm);
   font-weight: var(--font-weight-regular);
   line-height: var(--line-height-relaxed);
-  border-top-right-radius: var(--radius-xs);
   word-wrap: break-word;
+}
+
+/* Speech-bubble tail anchored at the bubble's bottom-right, mirroring the
+   in-app sent-message design (Device=Web, State=Sent, Sender=Human). The
+   tail SVG carries the slate fill + outer-edge stroke so it merges
+   seamlessly with the dark bubble corner. */
+.aiTestBubbleUser::before {
+  content: '';
+  position: absolute;
+  right: -5px;
+  bottom: -3px;
+  width: 16px;
+  height: 18px;
+  pointer-events: none;
+  background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='18' viewBox='244 48 16 18' fill='none'><path d='M259.43 64.4C256.349 61.79 254.511 58.36 254.511 53.74V49.97C254.511 49.42 254.063 48.97 253.511 48.97H245.842C245.29 48.97 244.842 49.42 244.842 49.97V62.55C244.842 62.96 245.092 63.33 245.476 63.47C249.54 64.99 254.634 66.09 258.877 66.21C259.831 66.24 260.158 65.02 259.43 64.4Z' fill='%23394454'/><path d='M244.842 63.23C249 64.87 254.41 66.08 258.877 66.21C259.831 66.24 260.158 65.02 259.43 64.4C256.349 61.79 254.511 58.36 254.511 53.74V48.97' stroke='%23475569' fill='none'/></svg>") no-repeat;
 }
 
 /* ── Typing indicator ── */
@@ -4846,7 +5290,7 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 0 var(--space-2) var(--space-3);
+  padding: 0 var(--space-3) var(--space-3);
   scrollbar-width: thin;
   scrollbar-color: var(--color-border-opaque) transparent;
 }
@@ -4915,9 +5359,9 @@
 .actionSelectorRowIcon.iconAi,
 .actionSelectorRowIcon.iconDelay,
 .actionSelectorRowIcon.iconPolicy {
-  background: transparent;
-  color: var(--color-content-primary);
-  border-radius: 0;
+  background: var(--color-blue-bg-tertiary);
+  color: var(--color-blue-content-primary, var(--color-content-primary));
+  border-radius: var(--radius-md);
 }
 
 .actionSelectorRowText {
@@ -4951,8 +5395,6 @@
   width: 36px;
   height: 36px;
   flex-shrink: 0;
-  border-radius: var(--radius-md);
-  background: var(--color-brand);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -5306,6 +5748,33 @@
   display: block;
 }
 
+/* AI-node summary override — same two-line treatment as the action card:
+   eyebrow ("AI Specialist") on the first line, persona name underneath.
+   Both lines stack centered beneath the avatar so the configured node
+   reads as `[avatar] / AI Specialist / Erin`. */
+.aiNodeCard .nodeConfigSummary[data-type="ai"] {
+  font-family: var(--font-sans);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.aiNodeCard .nodeConfigSummary[data-type="ai"] .nodeConfigOp,
+.aiNodeCard .nodeConfigSummary[data-type="ai"] .nodeConfigVal,
+.aiNodeCard .nodeConfigSummary[data-type="ai"] .nodeConfigLabel {
+  font-family: var(--font-sans);
+  display: block;
+}
+/* Eyebrow tone — same base font size as other node labels (text-sm) so
+   it reads consistently across node types. The colour token (purple
+   content-tertiary, set on the shared `.nodeConfigOp` rule above) keeps
+   the role visually subordinate to the persona name underneath. */
+.aiNodeCard .nodeConfigSummary[data-type="ai"] .nodeConfigOp {
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: var(--tracking-wide);
+}
+
 /* Placeholder ("Select action…") — muted blue label, matches empty icon tone */
 .actionNodePlaceholder {
   font-family: var(--font-sans);
@@ -5417,6 +5886,20 @@
 /* Configured (filled) default — same surface, stronger icon tint */
 .aiNodeIconBoxFilled {
   color: var(--Alloy-purple-600);
+}
+
+/* Persona avatar variant — when a specialist persona is picked, the
+   iconBox swaps the gradient AI diamond for the persona's PersonaAvatar
+   SVG (rendered at 32px so it sits centred inside the 60px iconBox with
+   ~14px of breathing room around it). Drop the gradient veil + border
+   ring so the avatar's own palette reads cleanly. */
+.aiNodeIconBoxAvatar {
+  background: var(--color-bg-primary);
+  border-color: var(--color-border-opaque);
+  overflow: hidden;
+}
+.aiNodeIconBoxAvatar::before {
+  content: none;
 }
 
 /* Focused (selected): drop the veil to reveal the gradient + glow.
@@ -5845,9 +6328,14 @@
 }
 .conditionNodeTopRow {
   display: flex;
-  align-items: center;
-  gap: 14px;
+  /* Top-align the leading badge with the first line of label text so the
+     row reads correctly when the label wraps to multiple lines (instead of
+     drifting toward the vertical center as the row grows). */
+  align-items: flex-start;
+  gap: 8px;
   padding: 8px;
+  /* `min-height: 48px` keeps the empty-state card at the original size; the
+     row grows past that as conditions wrap. */
   min-height: 48px;
 }
 .conditionNodeIconBox {
@@ -5912,7 +6400,8 @@
   flex: 1;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  /* `overflow: hidden` removed: the primary / secondary lines now wrap
+     instead of truncating, and the card grows in height to fit them. */
 }
 .conditionNodeCard[data-filled="true"][data-active="false"] .conditionNodeTopPrimary {
   color: var(--color-content-primary);
@@ -5953,22 +6442,57 @@
 }
 .conditionNodeTopPrimary {
   font-weight: var(--font-weight-medium);
-  /* Single-line truncation — overflow gets an ellipsis */
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* Wrap to as many lines as the configured conditions need. `word-break`
+     handles long unbroken values (e.g. user-supplied IDs) without
+     overflowing the card. */
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .conditionNodeTopSecondary {
   color: var(--Alloy-slate-300);
-  /* Match delay pill font style — 14px / semibold / tracking-wide */
   font-family: var(--font-sans);
   font-size: var(--text-sm);
-  font-weight: var(--font-weight-semibold);
-  line-height: var(--line-height-relaxed);
-  letter-spacing: var(--tracking-wide);
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  overflow: hidden;
+  /* Line-height matches the primary line (`var(--line-height-tight)`
+     inherited from .conditionNodeTopText) so the two stacked lines sit
+     with the same per-line rhythm — no extra vertical padding between
+     them, no offset against the leading icon-box on the left. */
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-tight);
+  letter-spacing: normal;
+  /* Wrap secondary line too — when only one condition is configured the
+     "is X, Y, Z" line can be longer than the card width if many values are
+     selected. */
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* Muted segments inside the multi-condition primary line — operators,
+   values, parentheses, and the `&&` / `||` separators all render in this
+   tone so the line reads as "Label is value && Label is value" with the
+   same colour cadence as the single-condition card's primary/secondary
+   split. The selectors mirror the secondary-line state overrides
+   (filled/active × light/dark) so the muted tone tracks the surrounding
+   text in every state. */
+.conditionExprMuted {
+  font-weight: var(--font-weight-regular);
+  color: var(--Alloy-slate-300);
+}
+/* Active state — labels switch to white; muted parts pale to white@70 so
+   they stay subordinate without disappearing on the saturated fill. */
+.conditionNodeCard[data-active="true"] .conditionExprMuted {
+  color: color-mix(in srgb, var(--Alloy-white) 70%, transparent);
+}
+/* Dark mode — secondary line uses slate-300 in both filled / not-active
+   AND empty / not-active. Match those tones on the muted segments. */
+@media (prefers-color-scheme: dark) {
+  :root:not(:global(.light)) .conditionNodeCard:not([data-active="true"]) .conditionExprMuted {
+    color: var(--Alloy-slate-300);
+  }
+}
+:global(.dark) .conditionNodeCard:not([data-active="true"]) .conditionExprMuted {
+  color: var(--Alloy-slate-300);
 }
 
 /* Bottom card — only when conditions are configured */

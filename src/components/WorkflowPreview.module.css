@@ -168,6 +168,13 @@
   white-space: nowrap;
 }
 
+/* Push the primary "Edit workflow" CTA to the far right of the action row,
+   leaving the secondary buttons (View runs, Pause) clustered after the
+   "Last edited" timestamp on the left. */
+.editWorkflowButton {
+  margin-left: auto;
+}
+
 /* ─── Table variant: single full-width cell with an internal 40/60 grid ──
    so the cell-width of colSpan'd <td>s doesn't fight the browser's auto
    table-layout algorithm. */
@@ -274,8 +281,22 @@
   flex: 0 0 auto;
 }
 
-@media (max-width: 800px) {
+/* Single-column layout below 1000px — the meta column gets too cramped
+   to read at narrower widths, so the meta block stacks above the main
+   column (chart + actions) instead of competing for horizontal space.
+   Order is also rewritten so the action row lands at the very top of
+   the stack (primary CTA stays the most reachable thing on the page),
+   followed by the meta block, then the chart group. `display: contents`
+   on .cardLayoutMain promotes its children into the cardLayoutBody grid
+   so we can `order` them alongside .cardLayoutMeta. */
+@media (max-width: 1000px) {
   .cardLayoutBody {
     grid-template-columns: 1fr;
   }
+  .cardLayoutMain {
+    display: contents;
+  }
+  .cardLayoutActions    { order: 1; }
+  .cardLayoutMeta       { order: 2; }
+  .cardLayoutChartGroup { order: 3; }
 }

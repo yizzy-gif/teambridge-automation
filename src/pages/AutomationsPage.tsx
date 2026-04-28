@@ -212,6 +212,29 @@ const MOCK_AUTOMATIONS: Automation[] = [
     createdAt: '2025-09-09T09:30:00Z',
     updatedAt: '2026-04-16T11:00:00Z',
   },
+  // Showcase / demo workflow — exercises every node type (trigger, policy,
+  // multi-group condition, AI specialist, fan-out branches with delay +
+  // follow-up condition) end-to-end. Wired to the matching builder
+  // template `wf_01HK_PREMIUM_DISPATCH` in BuilderPage.tsx.
+  {
+    id: 'wf_01HK_PREMIUM_DISPATCH',
+    name: 'Premium shift dispatch & compliance',
+    description:
+      'Routes premium-rate clinical shifts: applies compliance policy, evaluates eligibility (credential, state, signature), then uses an AI specialist to fan out to a worker-outreach branch (with 30 min escalation delay) and an operations branch in parallel.',
+    status: 'active',
+    lastRunStatus: 'completed',
+    trigger: 'Shift requested',
+    lastRun: '11 minutes ago',
+    runsTotal: 64,
+    runsSuccessful: 59,
+    category: 'Scheduling',
+    stats: { reached: 47, pending: 7, skipped: 5 },
+    actionIcons: ['ai', 'message', 'mail', 'task'],
+    tags: ['Scheduling', 'Premium', 'AI Specialist', 'Policy', 'Branching'],
+    owner: { name: 'Tessa Moreno', avatarUrl: 'https://i.pravatar.cc/80?u=tessa-moreno' },
+    createdAt: '2026-02-04T13:42:00Z',
+    updatedAt: '2026-04-26T22:18:00Z',
+  },
 ];
 
 // ─── Constants ────────────────────────────────────────────────────────────────
