@@ -19,7 +19,29 @@
       "Bash(xargs ls:*)",
       "Bash(git remote:*)",
       "Bash(git branch:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(git pull *)",
+      "Bash(git stash *)",
+      "Bash(gh run *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git commit *)",
+      "Bash(npx vite *)",
+      "Bash(ps -p 915 -p 45390 -p 53737 -o pid,command)",
+      "Bash(kill 53737)",
+      "Bash(xargs -I {} ps -p {} -o pid,command)",
+      "Bash(kill 19327)",
+      "Bash(xargs -I{} sh -c 'ps -p {} -o command= | grep -q vite && kill {}')",
+      "Bash(curl -s http://localhost:5173/teambridge-automation/src/pages/BuilderPage.tsx)",
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:5173/teambridge-automation/src/layouts/AppShell.tsx)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:5173/teambridge-automation/src/components/PrimaryNav.tsx)",
+      "Bash(grep -n \"AiSpecialistPersonaPicker$\\\\|<AiSpecialistPersonaPicker\\\\|step.type === 'ai' && isEmpty\\\\|step.type === 'ai' && step.selectedValue === 'AI Specialist'\" /Users/unassignedlaptop9/Documents/MyClaudeFolder/Automation_2.0/src/pages/BuilderPage.tsx)",
+      "Bash(awk -F: '$2 >= 3735 && $2 <= 3900')",
+      "Read(//Users/unassignedlaptop9/.cache/teambridge-ui/alloy-design-system/src/components/Badge/**)",
+      "Read(//Users/unassignedlaptop9/.cache/teambridge-ui/alloy-design-system/src/components/Tooltip/**)",
+      "Bash(sips -s format png /tmp/div.svg --out /tmp/div.png)",
+      "Bash(curl -s http://localhost:5173/teambridge-automation/ -I)"
     ]
   }
 }

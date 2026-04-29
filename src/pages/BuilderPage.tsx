@@ -1,15 +1,16 @@
-import { useState, useRef, useEffect, useMemo, useCallback, Fragment, isValidElement, cloneElement } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback, Fragment, isValidElement, cloneElement } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { Button } from '@alloy/components/Button';
+import { Badge } from '@alloy/components/Badge';
 import { Tag } from '@alloy/components/Tag';
 import { StatusTag } from '@alloy/components/StatusTag';
 import type { StatusTagStatus } from '@alloy/components/StatusTag';
 import type { TagColor } from '@alloy/components/Tag';
 import { DropdownMenu } from '@alloy/components/DropdownMenu';
 import type { DropdownMenuGroup } from '@alloy/components/DropdownMenu';
-import { SearchField, TextField, TextArea, NumberField, SelectField } from '@alloy/components/Input';
+import { SearchField, TextField, TextArea, NumberField, SelectField, MultiSelectField } from '@alloy/components/Input';
 import inputStyles from '@alloy/components/Input/Input.module.css';
 import dropdownStyles from '@alloy/components/DropdownMenu/DropdownMenu.module.css';
 import { Tooltip } from '@alloy/components/Tooltip';
@@ -19,9 +20,12 @@ import { FilterPill, FilterPillGroup } from '@alloy/components/FilterPill';
 import { Target04Icon } from '@alloy/components/icons/Target04Icon';
 import { GitBranch01Icon } from '@alloy/components/icons/GitBranch01Icon';
 import { ArrowCircleBrokenRightIcon } from '@alloy/components/icons/ArrowCircleBrokenRightIcon';
+import { Link01Icon } from '@alloy/components/icons/Link01Icon';
+import { LinkBroken01Icon } from '@alloy/components/icons/LinkBroken01Icon';
 import { ChevronDownIcon } from '@alloy/components/icons/ChevronDownIcon';
 import { Grid01Icon } from '@alloy/components/icons/Grid01Icon';
 import { XIcon } from '@alloy/components/icons/XIcon';
+import { PlusIcon as AlloyPlusIcon } from '@alloy/components/icons/PlusIcon';
 import tbAiLightLogo from '../assets/tb-ai-light.svg';
 import tbAiDarkLogo from '../assets/tb-ai-dark.svg';
 import { CheckCircleIcon } from '@alloy/components/icons/CheckCircleIcon';
@@ -33,6 +37,7 @@ import { ClipboardCheckIcon } from '@alloy/components/icons/ClipboardCheckIcon';
 import { InfoCircleIcon } from '@alloy/components/icons/InfoCircleIcon';
 import { MinusIcon } from '@alloy/components/icons/MinusIcon';
 import { Edit03Icon } from '@alloy/components/icons/Edit03Icon';
+import { Edit05Icon } from '@alloy/components/icons/Edit05Icon';
 import { Mail01Icon } from '@alloy/components/icons/Mail01Icon';
 import { Bell01Icon } from '@alloy/components/icons/Bell01Icon';
 import { Announcement02Icon } from '@alloy/components/icons/Announcement02Icon';
@@ -45,9 +50,10 @@ import { ChevronLeftIcon } from '@alloy/components/icons/ChevronLeftIcon';
 import { ChevronRightIcon } from '@alloy/components/icons/ChevronRightIcon';
 import { ScrollArea } from '@alloy/components/ScrollArea';
 import { Divider } from '@alloy/components/Divider';
+import { Dialog, DialogHeader, DialogContent } from '@alloy/components/Dialog';
 import { AILoader } from '@alloy/components/ai/AILoader';
 import { AIComposer, AIComposerInput } from '@alloy/components/ai/AIComposer';
-import { AIThread, AIAssistantMessage, AIUserMessage } from '@alloy/components/ai/AIThread';
+import { AIThread, AIAssistantMessage, AIUserMessage, AILabel, AITimestamp } from '@alloy/components/ai/AIThread';
 import { AIActivityTrail, AIActivityStep } from '@alloy/components/ai/AIActivityTrail';
 import { AIMessageActions } from '@alloy/components/ai/AIMessageActions';
 import { Copy01Icon } from '@alloy/components/icons/Copy01Icon';
@@ -61,6 +67,7 @@ import {
   ComposerAttachment,
 } from '@alloy/components/ComposerActions';
 import { ToggleButton } from '@alloy/components/ToggleButton';
+import { ListItem } from '@alloy/components/ListItem';
 import { Trash03Icon } from '@alloy/components/icons/Trash03Icon';
 import { RefreshCw04Icon } from '@alloy/components/icons/RefreshCw04Icon';
 import { Eyebrow } from '@alloy/components/Eyebrow';
@@ -95,6 +102,39 @@ function loadWorkflowSettings(): WorkflowSettingsStore {
 
 function saveWorkflowSettings(store: WorkflowSettingsStore): void {
   try { localStorage.setItem(LS_KEY, JSON.stringify(store)); } catch { /* quota/private */ }
+}
+
+// ─── Workflow graph persistence ────────────────────────────────────────────────
+// Persists the canvas-level state (nodes, edges, free-positions) per workflow
+// id so a user can save a workflow, navigate away, and come back to find it
+// exactly as they left it. Stored under a separate key from the metadata
+// store above to keep payloads small and concerns separated — metadata is
+// also surfaced in list / cards while the graph blob is only consumed by
+// the builder.
+
+const LS_GRAPH_KEY = 'workflow_graphs';
+
+interface WorkflowGraphEntry {
+  nodes:         unknown[];   // GraphNode[] — typed loosely so the persistence
+  edges:         unknown[];   //   layer doesn't depend on internal types
+  nodePositions: Record<string, { x: number; y: number }>;
+  savedAt:       string;      // ISO timestamp — surfaced as "last saved"
+}
+type WorkflowGraphStore = Record<string, WorkflowGraphEntry>;
+
+function loadWorkflowGraphs(): WorkflowGraphStore {
+  try {
+    const raw = localStorage.getItem(LS_GRAPH_KEY);
+    return raw ? (JSON.parse(raw) as WorkflowGraphStore) : {};
+  } catch { return {}; }
+}
+
+function saveWorkflowGraphEntry(id: string, entry: WorkflowGraphEntry): void {
+  try {
+    const store = loadWorkflowGraphs();
+    store[id] = entry;
+    localStorage.setItem(LS_GRAPH_KEY, JSON.stringify(store));
+  } catch { /* quota / private — silent */ }
 }
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
@@ -186,7 +226,10 @@ function formatDelaySummary(cfg: Record<string, string> | undefined): string | n
   const label = amount === 1 ? labels.singular : labels.plural;
   return `${amount} ${label}`;
 }
-type AutomationStatus = 'draft' | 'active' | 'inactive' | 'archived';
+/** Workflow lifecycle status. Mirrors the union used in AutomationsPage's
+ *  mock data (active | paused | draft) plus the legacy `inactive` and
+ *  `archived` states the builder reads from older drafts. */
+type AutomationStatus = 'draft' | 'active' | 'paused' | 'inactive' | 'archived';
 
 /** A single condition entry inside a condition node (new multi-condition model). */
 interface ConditionEntry {
@@ -242,6 +285,26 @@ interface GraphEdge {
   id: string;
   from: string;
   to: string;
+}
+
+// ─── Edge helpers ────────────────────────────────────────────────────────────
+// Plain edge-list mutations. Conditions can fan out to any number of
+// downstream nodes — there's no Yes/No labelling, no auto-promotion, and
+// no two-edge cap. Each helper is a pure transformation so callers commit
+// it through `setEdges` and the undo stack captures one atomic step.
+
+/**
+ * Append a single edge. Returns null on exact duplicate (same `from` → `to`
+ * pair already exists) so callers can treat it as a silent rejection.
+ */
+function appendEdgeIfMissing(
+  prev: GraphEdge[],
+  from: string,
+  to: string,
+  newId: string,
+): GraphEdge[] | null {
+  if (prev.some(e => e.from === from && e.to === to)) return null;
+  return [...prev, { id: newId, from, to }];
 }
 
 // Alias kept so FlowNode component compiles without changes
@@ -678,6 +741,7 @@ const CONDITION_LIBRARY: ConditionDef[] = [
   { id: 'shift_policy_rating',                       label: 'Rating',                       operators: [..._OPS.number]      },
   { id: 'shift_policy_holiday_pay_hours',            label: 'Holiday Pay Hours',            operators: [..._OPS.number]      },
   { id: 'shift_policy_payroll_status',               label: 'Payroll Status',               operators: [..._OPS.select]      },
+  { id: 'shift_policy_pay_period',                   label: 'Pay Period',                   operators: [..._OPS.select],     valueOptions: ['Open', 'Closed'] },
   { id: 'shift_policy_billing_status',               label: 'Billing Status',               operators: [..._OPS.select]      },
   { id: 'shift_policy_facility_status',              label: 'Facility Status',              operators: [..._OPS.select]      },
   { id: 'shift_policy_cancellation_reason',          label: 'Cancellation Reason',          operators: [..._OPS.text]        },
@@ -713,7 +777,7 @@ const CONDITION_LIBRARY: ConditionDef[] = [
   { id: 'shift_policy_clock_out_time',               label: 'Clock Out Time',               operators: [..._OPS.time]        },
   { id: 'shift_policy_assignee',                     label: 'Assignee',                     operators: [..._OPS.select]      },
   { id: 'shift_policy_location',                     label: 'Location',                     operators: [..._OPS.select]      },
-  { id: 'shift_policy_roles',                        label: 'Roles',                        operators: [..._OPS.multiselect] },
+  { id: 'shift_policy_roles',                        label: 'Role',                         operators: ['equals', ..._OPS.multiselect], valueOptions: ['RN', 'LPN', 'CNA', 'NP', 'MD', 'PA', 'CMA', 'PT', 'OT'] },
   // ── Shift / Initiating User ───────────────────────────────────────────────────
   { id: 'shift_initiating_user_first_name',          label: 'Initiating User / First Name', operators: [..._OPS.text]        },
   { id: 'shift_initiating_user_last_name',           label: 'Initiating User / Last Name',  operators: [..._OPS.text]        },
@@ -733,7 +797,7 @@ const CONDITION_LIBRARY: ConditionDef[] = [
   { id: 'shift_shift_groups_status',                 label: 'Shift Group / Status',         operators: [..._OPS.select]      },
   { id: 'shift_shift_groups_assignees',              label: 'Shift Group / Assignees',      operators: [..._OPS.multiselect] },
   { id: 'shift_shift_groups_locations',              label: 'Shift Group / Locations',      operators: [..._OPS.multiselect] },
-  { id: 'shift_shift_groups_roles',                  label: 'Shift Group / Roles',          operators: [..._OPS.multiselect] },
+  { id: 'shift_shift_groups_roles',                  label: 'Shift Group / Roles',          operators: ['equals', ..._OPS.multiselect], valueOptions: ['RN', 'LPN', 'CNA', 'NP', 'MD', 'PA', 'CMA', 'PT', 'OT'] },
   { id: 'shift_shift_groups_name',                   label: 'Shift Group / Name',           operators: [..._OPS.text]        },
   { id: 'shift_shift_groups_start_at',               label: 'Shift Group / Start At',       operators: [..._OPS.datetime]    },
   // ── Shift / User Link ─────────────────────────────────────────────────────────
@@ -756,7 +820,7 @@ const CONDITION_LIBRARY: ConditionDef[] = [
   { id: 'shift_user_link_start_date',                label: 'User Link / Start Date',       operators: [..._OPS.date]        },
   { id: 'shift_user_link_first_login',               label: 'User Link / First Login',      operators: [..._OPS.datetime]    },
   { id: 'shift_user_link_archived',                  label: 'User Link / Archived',         operators: [..._OPS.boolean]     },
-  { id: 'shift_user_link_roles',                     label: 'User Link / Roles',            operators: [..._OPS.multiselect] },
+  { id: 'shift_user_link_roles',                     label: 'User Link / Roles',            operators: ['equals', ..._OPS.multiselect], valueOptions: ['RN', 'LPN', 'CNA', 'NP', 'MD', 'PA', 'CMA', 'PT', 'OT'] },
   { id: 'shift_user_link_place',                     label: 'User Link / Place',            operators: [..._OPS.select]      },
   { id: 'shift_user_link_timeoff_policy',            label: 'User Link / Time Off Policy',  operators: [..._OPS.select]      },
   { id: 'shift_user_link_overtime_policy',           label: 'User Link / Overtime Policy',  operators: [..._OPS.select]      },
@@ -792,6 +856,18 @@ const CONDITION_LIBRARY: ConditionDef[] = [
   { id: 'shift_assignee_ssn',                        label: 'Assignee / SSN',               operators: [..._OPS.text]        },
   { id: 'shift_assignee_birthday',                   label: 'Assignee / Birthday',          operators: [..._OPS.date]        },
   { id: 'shift_assignee_archived',                   label: 'Assignee / Archived',          operators: [..._OPS.boolean]     },
+  // ── Applicants ────────────────────────────────────────────────────────────────
+  // Stage values mirror the kanban column order on the Applicants board:
+  // a fresh applicant flows New → Document Review → Interview → Background
+  // Check → Offer → Hired, with Rejected as the terminal opt-out lane.
+  { id: 'applicants_stage',                          label: 'Applicant stage',              operators: [..._OPS.select],     valueOptions: ['1- New Applicant', '2- Document Review', '3- Interview', '4- Background Check', '5- Offer', '6- Hired', 'X- Rejected'] },
+  { id: 'applicants_interview_result',               label: 'Interview result',             operators: [..._OPS.select],     valueOptions: ['Pass', 'Fail'] },
+  // Experience — multi-select bucket so a flow can fan out to "any of
+  // these tenure ranges". Uses the dedicated `contains_one_of` operator
+  // (verb reads "contains one of") which threads through the same
+  // multi-value renderer as `in` but with the warmer phrasing the spec
+  // calls for.
+  { id: 'applicants_experience',                     label: 'Experience',                   operators: ['contains_one_of'],  valueOptions: ['Less Than 6 Months', '6-12 Months', '1-2 Years', '2-5 Years', 'Greater Than 1 Year', 'Greater Than 5 Years'] },
 ];
 
 const OPERATOR_LABELS: Record<string, string> = {
@@ -799,6 +875,7 @@ const OPERATOR_LABELS: Record<string, string> = {
   not_equals:            'is not',
   in:                    'is one of',
   not_in:                'is not one of',
+  contains_one_of:       'contains one of',
   is_empty:              'is empty',
   is_not_empty:          'is not empty',
   greater_than:          'greater than',
@@ -932,7 +1009,7 @@ const ALL_LIBRARY_ITEMS: LibraryItem[] = [
   { id: 'shift_policy_clock_out_time',               type: 'condition', label: 'Clock Out Time',               category: 'policy'           },
   { id: 'shift_policy_assignee',                     type: 'condition', label: 'Assignee',                     category: 'policy'           },
   { id: 'shift_policy_location',                     type: 'condition', label: 'Location',                     category: 'policy'           },
-  { id: 'shift_policy_roles',                        type: 'condition', label: 'Roles',                        category: 'policy'           },
+  { id: 'shift_policy_roles',                        type: 'condition', label: 'Role',                         category: 'policy'           },
   // Conditions (Shift / Initiating User)
   { id: 'shift_initiating_user_first_name',          type: 'condition', label: 'Initiating User / First Name', category: 'initiating_user'  },
   { id: 'shift_initiating_user_last_name',           type: 'condition', label: 'Initiating User / Last Name',  category: 'initiating_user'  },
@@ -1012,6 +1089,13 @@ const ALL_LIBRARY_ITEMS: LibraryItem[] = [
   { id: 'shift_assignee_birthday',                   type: 'condition', label: 'Assignee / Birthday',          category: 'assignee'         },
   { id: 'shift_assignee_archived',                   type: 'condition', label: 'Assignee / Archived',          category: 'assignee'         },
 
+  // Conditions (Applicants) — paired with the `applicants_stage_changed`
+  // trigger so a flow can branch on which stage the applicant moved into,
+  // or on the result of a completed interview.
+  { id: 'applicants_stage',                          type: 'condition', label: 'Applicant stage',              category: 'applicants'       },
+  { id: 'applicants_interview_result',               type: 'condition', label: 'Interview result',             category: 'applicants'       },
+  { id: 'applicants_experience',                     type: 'condition', label: 'Experience',                   category: 'applicants'       },
+
   // ── Actions ───────────────────────────────────────────────────────────────────
   // AI
   { id: 'ai_specialist',                             type: 'ai',      label: 'AI Specialist',                  category: 'ai'               },
@@ -1065,7 +1149,7 @@ const HIDDEN_ITEMS = ALL_LIBRARY_ITEMS.filter((i) => !PINNED_IDS.includes(i.id))
 interface NodeConfigField {
   key: string;
   label: string;
-  type: 'select' | 'text' | 'time' | 'textarea' | 'boolean' | 'multi_add';
+  type: 'select' | 'multi_select' | 'text' | 'time' | 'textarea' | 'boolean' | 'multi_add';
   required?: boolean;
   options?: string[];
   /** When set, this field's options come from optionsByDependency[configValues[dependsOn]] */
@@ -1104,7 +1188,7 @@ const _BUTTON_FIELD_OPTIONS: Record<string, string[]> = {
   'Favorite Food Survey': ['Anything', 'Cuisine', 'Food Item', 'Rating', 'Comments'],
   Departments:            ['Anything', 'Department Name', 'Manager', 'Status'],
   'Education History':    ['Anything', 'Institution', 'Degree', 'Field of Study', 'Graduation Date', 'Status'],
-  Users:                  ['Anything', 'First Name', 'Last Name', 'Email', 'Phone', 'Role', 'Status'],
+  Users:                  ['Anything', 'First Name', 'Last Name', 'Email', 'Phone', 'Role', 'Status', 'Applicant stage', 'Interview Result'],
   'Auto-Submit Preferences': ['Anything', 'Frequency', 'Status', 'Last Submitted'],
   Region:                 ['Anything', 'Region Name', 'Manager', 'Status'],
   Speciality:             ['Anything', 'Speciality Name', 'Description', 'Status'],
@@ -1123,13 +1207,25 @@ const _BUTTON_FIELD_OPTIONS: Record<string, string[]> = {
 const _WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
 const NODE_CONFIG: Record<string, NodeConfigField[]> = {
-  data_something_created:  [{ key: 'entity',      label: 'Entity',      type: 'select', required: true, options: _ENTITY_OPTIONS }],
-  data_something_updated:  [{ key: 'entity',      label: 'Entity',      type: 'select', required: true, options: _ENTITY_OPTIONS }],
-  data_something_deleted:  [{ key: 'entity',      label: 'Entity',      type: 'select', required: true, options: _ENTITY_OPTIONS }],
+  data_something_created:  [
+    { key: 'entity',       label: 'Entity', type: 'select', required: true, options: _ENTITY_OPTIONS },
+    { key: 'record_field', label: 'Column', type: 'select', required: false,
+      dependsOn: 'entity', optionsByDependency: _BUTTON_FIELD_OPTIONS },
+  ],
+  data_something_updated:  [
+    { key: 'entity',       label: 'Entity', type: 'select', required: true, options: _ENTITY_OPTIONS },
+    { key: 'record_field', label: 'Column', type: 'select', required: false,
+      dependsOn: 'entity', optionsByDependency: _BUTTON_FIELD_OPTIONS },
+  ],
+  data_something_deleted:  [
+    { key: 'entity',       label: 'Entity', type: 'select', required: true, options: _ENTITY_OPTIONS },
+    { key: 'record_field', label: 'Column', type: 'select', required: false,
+      dependsOn: 'entity', optionsByDependency: _BUTTON_FIELD_OPTIONS },
+  ],
   comment_added:           [{ key: 'collection',  label: 'Collection',  type: 'select', required: true, options: _ENTITY_OPTIONS }],
   button_clicked: [
     { key: 'collection', label: 'Collection', type: 'select', required: true, options: _ENTITY_OPTIONS },
-    { key: 'field',      label: 'Field',      type: 'select', required: true,
+    { key: 'field',      label: 'Column',     type: 'select', required: true,
       dependsOn: 'collection', optionsByDependency: _BUTTON_FIELD_OPTIONS },
   ],
   recurring_at_time_interval: [
@@ -1155,7 +1251,11 @@ const NODE_CONFIG: Record<string, NodeConfigField[]> = {
   // ── Actions ──────────────────────────────────────────────────────────────────
 
   update_data_assign_task: [
-    { key: 'task', label: 'Task', type: 'select', required: true,
+    // Multi-select so a single Assign task action can fan out to several
+    // tasks at once. Stored as a comma-separated string in configValues
+    // (matches the on-disk shape of multi_add fields). Render-time
+    // conversion lives in the multi_select branch of the action form.
+    { key: 'task', label: 'Tasks', type: 'multi_select', required: true,
       options: ['Google Link', 'Google Task', 'Driver License'] },
   ],
   update_data_assign_task_group: [
@@ -1164,9 +1264,34 @@ const NODE_CONFIG: Record<string, NodeConfigField[]> = {
   ],
   update_data_modify: [
     { key: 'column',   label: 'Column',   type: 'select', required: true,
-      options: ['Status', 'Assignee', 'Location', 'Pay Rate', 'Start Time', 'End Time', 'Notes', 'Job Role', 'Regular Bill Rate'] },
+      options: ['Status', 'Assignee', 'Location', 'Pay Rate', 'Start Time', 'End Time', 'Notes', 'Job Role', 'Regular Bill Rate', 'Applicant Stage'] },
     { key: 'modifier', label: 'Modifier', type: 'select', required: true,
-      options: ['Set', 'Clear', 'Append', 'Add', 'Subtract'] },
+      options: ['Set to', 'Clear', 'Append', 'Add', 'Subtract'] },
+    { key: 'value',    label: 'Value',    type: 'select', required: false,
+      dependsOn: 'column',
+      optionsByDependency: {
+        'Applicant Stage': ['1- New Applicant', '2- Document Review', '3- Interview', '4- Background Check', '5- Offer', '6- Hired', 'X- Rejected'],
+      } },
+  ],
+
+  // Create new entry — drops a record into a destination collection. The
+  // form mirrors the Required-Training entry layout shown in the spec
+  // mock: a leading entry-type picker, then per-entry fields. Today the
+  // sub-fields are flat (every entry-type renders the same set); a
+  // future pass can split them per entry_type once `NodeConfigField`
+  // grows a "show this field only when dependsOn === X" branch.
+  update_data_create_new_entry: [
+    { key: 'entry_type',          label: 'Entry Type',                                         type: 'select', required: true,
+      options: ['Required Training', 'Onboarding Document', 'Compliance Training', 'Performance Review', 'Custom Entry'] },
+    { key: 'title',               label: 'Title',                                              type: 'text',   required: true },
+    { key: 'document_to_review',  label: 'Document to Review',                                 type: 'multi_add', required: false },
+    { key: 'signature_confirm',   label: 'Sign to Confirm Document Review and Understanding', type: 'text',   required: false },
+    { key: 'staff_member',        label: 'Staff Member',                                       type: 'select', required: true,
+      options: ['Automation Determined', 'Initiating User', 'Specific User', 'Manager', 'Supervisor'] },
+    { key: 'training_type',       label: 'Training Type',                                      type: 'select', required: false,
+      options: ['Job Description - CNA', 'Job Description - RN', 'Onboarding Orientation', 'Annual Compliance', 'Safety Training', 'Other'] },
+    { key: 'signed_on',           label: 'Signed On',                                          type: 'select', required: false,
+      options: ['Relative', 'Absolute', 'Custom Date'] },
   ],
 
   notifications_export_document: [
@@ -1188,7 +1313,28 @@ const NODE_CONFIG: Record<string, NodeConfigField[]> = {
   notifications_send_one_way_sms: [
     { key: 'send_to_type',  label: 'Send To',    type: 'select',  required: true,
       options: ['Automation Workflow', 'Specific Group of Users', 'Phone Numbers'] },
-    { key: 'send_to_value', label: 'Recipients', type: 'text',    required: false },
+    // Free-text Recipients field — hidden when Send To is the Automation
+    // Workflow path, since that flow uses a preset-variable picker
+    // (`workflow_recipient`) instead of a typed value.
+    { key: 'send_to_value', label: 'Recipients', type: 'text',    required: false,
+      dependsOn: 'send_to_type', hideWhenDependsOnIs: 'Automation Workflow' },
+    // Preset-variable picker — surfaces only when Send To is the
+    // Automation Workflow path. Mirrors the recipient groups available
+    // in the Teambridge automation runtime (User default, plus
+    // Location-scoped audience variants).
+    { key: 'workflow_recipient', label: 'Recipients', type: 'select', required: false,
+      dependsOn: 'send_to_type',
+      optionsByDependency: {
+        'Automation Workflow': [
+          'User',
+          'Locations / Previous Workers',
+          'Locations / Facility Main Contact',
+          'Do Not Send / Previous Workers',
+          'Do Not Send / Facility Main Contact',
+          'Worked at your Facility / Previous Workers',
+          'Worked at your Facility / Facility Main Contact',
+        ],
+      } },
     { key: 'message',       label: 'Message',    type: 'textarea', required: false },
   ],
 
@@ -1240,18 +1386,36 @@ function fmt12h(t: string): string {
 }
 
 const NODE_SNIPPET: Record<string, (v: Record<string, string>) => SnippetSeg[] | null> = {
-  data_something_created:     (v) => v.entity ? [
-    { text: v.entity,       role: 'val'   },
-    { text: ' is created',  role: 'label' },
-  ] : null,
-  data_something_updated:     (v) => v.entity ? [
-    { text: v.entity,       role: 'val'   },
-    { text: ' is updated',  role: 'label' },
-  ] : null,
-  data_something_deleted:     (v) => v.entity ? [
-    { text: v.entity,       role: 'val'   },
-    { text: ' is deleted',  role: 'label' },
-  ] : null,
+  // Data-workflow triggers — surface the selected `record_field` next to
+  // the entity when present, mirroring the same Entity / Field pattern
+  // the right-panel form uses ("Shifts / Status is updated"). When no
+  // field is picked or the user chose the "Anything" sentinel, the
+  // snippet falls back to just the entity so the card doesn't carry an
+  // empty slash.
+  data_something_created:     (v) => {
+    if (!v.entity) return null;
+    const showField = v.record_field && v.record_field !== 'Anything';
+    return [
+      { text: showField ? `${v.entity} / ${v.record_field}` : v.entity, role: 'val'   },
+      { text: ' is created',                                              role: 'label' },
+    ];
+  },
+  data_something_updated:     (v) => {
+    if (!v.entity) return null;
+    const showField = v.record_field && v.record_field !== 'Anything';
+    return [
+      { text: showField ? `${v.entity} / ${v.record_field}` : v.entity, role: 'val'   },
+      { text: ' is updated',                                              role: 'label' },
+    ];
+  },
+  data_something_deleted:     (v) => {
+    if (!v.entity) return null;
+    const showField = v.record_field && v.record_field !== 'Anything';
+    return [
+      { text: showField ? `${v.entity} / ${v.record_field}` : v.entity, role: 'val'   },
+      { text: ' is deleted',                                              role: 'label' },
+    ];
+  },
   comment_added:              (v) => v.collection ? [
     { text: v.collection,      role: 'val'   },
     { text: ' comment added',  role: 'label' },
@@ -1307,10 +1471,24 @@ const NODE_SNIPPET: Record<string, (v: Record<string, string>) => SnippetSeg[] |
 
   // ── Actions ──────────────────────────────────────────────────────────────────
 
-  update_data_assign_task: (v) => v.task ? [
-    { text: 'Assign ',  role: 'label' },
-    { text: v.task,     role: 'val'   },
-  ] : null,
+  update_data_assign_task: (v) => {
+    // Multi-select task picker stores a comma-separated string. The card
+    // snippet collapses to "Assign N tasks" for 2+ entries to keep the
+    // line length stable; a single selection still reads as "Assign X".
+    if (!v.task) return null;
+    const tasks = v.task.split(',').map(t => t.trim()).filter(Boolean);
+    if (tasks.length === 0) return null;
+    if (tasks.length === 1) {
+      return [
+        { text: 'Assign ', role: 'label' },
+        { text: tasks[0],  role: 'val'   },
+      ];
+    }
+    return [
+      { text: 'Assign ',                       role: 'label' },
+      { text: `${tasks.length} tasks`,         role: 'val'   },
+    ];
+  },
   update_data_assign_task_group: (v) => v.task_group ? [
     { text: 'Assign group ', role: 'label' },
     { text: v.task_group,   role: 'val'   },
@@ -1325,6 +1503,10 @@ const NODE_SNIPPET: Record<string, (v: Record<string, string>) => SnippetSeg[] |
       segs.push({ text: ' → ',      role: 'op'  });
       segs.push({ text: v.modifier, role: 'val' });
     }
+    if (v.value) {
+      segs.push({ text: ' ',     role: 'op'  });
+      segs.push({ text: v.value, role: 'val' });
+    }
     return segs;
   },
 
@@ -1335,7 +1517,6 @@ const NODE_SNIPPET: Record<string, (v: Record<string, string>) => SnippetSeg[] |
   notifications_send_email: (v) => {
     const segs: SnippetSeg[] = [{ text: 'Email', role: 'label' }];
     if (v.send_to_type) { segs.push({ text: ' to ', role: 'op' }); segs.push({ text: v.send_to_type, role: 'val' }); }
-    if (v.subject)      { segs.push({ text: ': ',   role: 'op' }); segs.push({ text: v.subject,      role: 'val' }); }
     return segs.length > 1 ? segs : null;
   },
   notifications_send_one_way_sms: (v) => {
@@ -1421,15 +1602,22 @@ function canAddNodeAfter(
   if (parentId === null) return false;
   const parent = nodes.find(n => n.id === parentId);
   if (!parent) return false;
-  // Action / AI specialist nodes only chain to another action or AI.
-  if ((parent.type === 'action' || parent.type === 'ai') && type !== 'action' && type !== 'ai') return false;
+  // AI specialist nodes only chain to another action or AI. Actions can
+  // chain to any non-trigger node type (the trigger guard above already
+  // rejects type === 'trigger').
+  if (parent.type === 'ai' && type !== 'action' && type !== 'ai') return false;
   // Delay-to-delay is disallowed
   if (parent.type === 'delay' && type === 'delay') return false;
   // Policy-to-policy is disallowed
   if (parent.type === 'policy' && type === 'policy') return false;
   const outCount = edges.filter(e => e.from === parentId).length;
-  // All node types support exactly one outgoing edge
-  if (outCount >= 1) return false;
+  // Conditions and triggers fan out to any number of downstream nodes
+  // (a single trigger can feed multiple flows; conditions branch by
+  // design). The bottom-anchor / drag-drop / addEdge paths already
+  // permit unlimited children for any source — this exemption keeps
+  // the InsertPopover and addNodeAfter API flows in sync. Every other
+  // node type is still capped at one outgoing edge.
+  if (parent.type !== 'condition' && parent.type !== 'trigger' && outCount >= 1) return false;
   return true;
 }
 
@@ -1438,7 +1626,23 @@ function canAddNodeAfter(
 const NODE_W        = 200;
 const NODE_H        = 130;   // approximate rendered card height (actual ~132px)
 const H_SPACING     = 300;   // centre-to-centre column pitch
-const V_SPACING     = 210;   // centre-to-centre row pitch (~80px gap between cards)
+const V_SPACING     = 210;   // legacy fallback row pitch — only used by callers that
+                             // don't go through computeLayout (e.g. nudge/manual moves)
+const NODE_GAP      = 80;    // consistent visible gap on every parent→child path
+                             // (driven by layout — replaces V_SPACING for tidy-up)
+/** Per-type rendered heights — used by `computeLayout` so every connection
+ *  ends up with the same `NODE_GAP` between the parent's bottom edge and
+ *  the child's top edge. Values trace each card's tallest rendered form
+ *  (configured state with a 2-line snippet) so unconfigured / shorter
+ *  variants land slightly above their slot's bottom but never overlap. */
+const NODE_HEIGHTS: Record<StepType, number> = {
+  trigger:   52,   // pill
+  policy:    76,   // rect card with icon
+  condition: 92,   // rect card — multi-line conditions extend a few px more
+  action:    144,  // 60 circle + 2 lines of label beneath
+  ai:        144,  // same chrome as action
+  delay:     44,   // pill
+};
 const CANVAS_TOP    = 16;    // initial top padding
 const LEFT_PANEL_W  = 360;   // left panel width — pan offset so content starts in visible area
 // With graphContent at `left: 50%` of viewport the natural center is at ~50% of viewport.
@@ -1508,15 +1712,44 @@ function computeLayout(
   };
   roots.forEach(r => getW(r.id));
 
-  // Place nodes using DFS — merge nodes keep their first-assigned position
+  // Compute y per node using actual per-type heights so every parent→child
+  // connector spans the same visible `NODE_GAP`. Walk in topological depth
+  // order so each node sees its parents resolved. Merge nodes (multiple
+  // parents) align to the *deepest* parent's bottom — same convergence
+  // semantics as the prior depth-based formula, but expressed in pixels.
+  const nodeMap = new Map(nodes.map(n => [n.id, n] as const));
+  const heightOf = (id: string): number => {
+    const n = nodeMap.get(id);
+    return n ? NODE_HEIGHTS[n.type] : NODE_H;
+  };
+  const yOf = new Map<string, number>();
+  const orderedByDepth = nodes
+    .map(n => n.id)
+    .filter(id => depth.has(id))
+    .sort((a, b) => (depth.get(a) ?? 0) - (depth.get(b) ?? 0));
+  for (const id of orderedByDepth) {
+    const parents = inc.get(id) ?? [];
+    if (parents.length === 0) {
+      yOf.set(id, CANVAS_TOP);
+    } else {
+      const maxParentBottom = Math.max(
+        ...parents.map(p => (yOf.get(p) ?? CANVAS_TOP) + heightOf(p)),
+      );
+      yOf.set(id, maxParentBottom + NODE_GAP);
+    }
+  }
+
+  // Place nodes using DFS — merge nodes keep their first-assigned position.
+  // X is computed from the subtree-centred recursion below; y comes from
+  // the per-type accumulator above.
   const positions = new Map<string, { x: number; y: number }>();
   const placed    = new Set<string>();
 
   const place = (id: string, centreX: number) => {
     if (placed.has(id)) return;
     placed.add(id);
-    const d = depth.get(id) ?? 0;
-    positions.set(id, { x: centreX - NODE_W / 2, y: CANVAS_TOP + d * V_SPACING });
+    const y = yOf.get(id) ?? CANVAS_TOP;
+    positions.set(id, { x: centreX - NODE_W / 2, y });
     const children = out.get(id) ?? [];
     const totalW = children.reduce((s, c) => s + (subtreeW.get(c) ?? H_SPACING), 0);
     let childX = centreX - totalW / 2;
@@ -1572,24 +1805,39 @@ function ConditionTagInput({ values, onChange }: { values: string[]; onChange: (
   const [input, setInput] = useState('');
   return (
     <div className={styles.conditionTagInput}>
-      {values.map((v, i) => (
-        <span key={i} className={styles.conditionValueChip}>
-          {v}
-          <button
-            className={styles.conditionValueChipRemove}
-            onClick={() => onChange(values.filter((_, j) => j !== i))}
-            aria-label={`Remove ${v}`}
-            type="button"
-          >
-            <XIcon />
-          </button>
-        </span>
-      ))}
-      <input
-        className={styles.conditionTagInputField}
+      {/* Chip row — only renders when there's at least one value. Wraps so
+          long lists overflow gracefully. Sitting above the input keeps the
+          TextField below visually identical to the single-value text path
+          (see the `!isNoVal && !isIn && !isWithin && !def.valueOptions`
+          branch which uses a bare `<TextField size="md">` for one value). */}
+      {values.length > 0 && (
+        <div className={styles.conditionTagInputChips}>
+          {values.map((v, i) => (
+            <span key={i} className={styles.conditionValueChip}>
+              {v}
+              <button
+                className={styles.conditionValueChipRemove}
+                onClick={() => onChange(values.filter((_, j) => j !== i))}
+                aria-label={`Remove ${v}`}
+                type="button"
+              >
+                <XIcon />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      {/* Use the Alloy TextField so the input chrome (border, focus ring,
+          height, typography, placeholder colour) matches every other text
+          control in the right panel. The placeholder swap on values.length
+          keeps the original "Add another…" affordance once the user has
+          chips entered. */}
+      <TextField
+        size="md"
         value={input}
         onChange={e => setInput(e.target.value)}
         placeholder={values.length === 0 ? 'Type and press Enter…' : 'Add another…'}
+        aria-label="Condition value"
         onKeyDown={e => {
           if (e.key === 'Enter' && input.trim()) {
             e.preventDefault();
@@ -1601,6 +1849,125 @@ function ConditionTagInput({ values, onChange }: { values: string[]; onChange: (
           }
         }}
       />
+    </div>
+  );
+}
+
+// ─── MultiSelectSearchPicker ──────────────────────────────────────────────────
+// Right-panel control used by `multi_select` config fields (e.g. the Tasks
+// field on the Assign-task action). Shape:
+//   ┌─────────────────────────────────┐
+//   │ 🔍  Search tasks…              │   Alloy SearchField
+//   ├─────────────────────────────────┤
+//   │   Google Link                   │   matching unselected options surface
+//   │   Driver License                │   in a portal-free dropdown beneath
+//   └─────────────────────────────────┘
+//   ────────────────────────────────────
+//   Google Task                  🗑      ← Alloy ListItem with Trash trailing
+//   Google Link                  🗑
+//
+// Selecting a row from the dropdown adds it to the list below; the trash
+// trailing slot on each ListItem removes it. Persists as the same
+// comma-separated string the legacy pill-toggle picker used so the
+// on-disk shape is unchanged.
+function MultiSelectSearchPicker({
+  options,
+  values,
+  onChange,
+  placeholder = 'Search…',
+  leadingIcon,
+}: {
+  options: string[];
+  values: string[];
+  onChange: (next: string[]) => void;
+  placeholder?: string;
+  /** Optional override for the per-row leading icon. Defaults to the
+   *  Copy01 (stacked-squares) glyph since each row reads as one of N
+   *  picked items in a stack; callers selecting a different domain
+   *  (e.g. document templates) can pass their own icon to fit. */
+  leadingIcon?: React.ReactNode;
+}) {
+  const [search, setSearch] = useState('');
+  const [open, setOpen]     = useState(false);
+  const containerRef        = useRef<HTMLDivElement>(null);
+
+  // Capture-phase outside-click — same reasoning as PopoverSelect: the host
+  // popover stops propagation on its own mousedown, so a bubble-phase
+  // listener wouldn't see clicks landing elsewhere inside the popover.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (containerRef.current && !containerRef.current.contains(t)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown, true);
+    return () => document.removeEventListener('mousedown', onDown, true);
+  }, [open]);
+
+  const q = search.trim().toLowerCase();
+  const matches = options.filter(o =>
+    !values.includes(o) && (q === '' || o.toLowerCase().includes(q)),
+  );
+
+  const addValue = (v: string) => {
+    onChange([...values, v]);
+    setSearch('');
+    setOpen(true);
+  };
+  const removeValue = (v: string) => onChange(values.filter(x => x !== v));
+
+  return (
+    <div ref={containerRef} className={styles.multiSelectSearchRoot}>
+      <SearchField
+        size="md"
+        placeholder={placeholder}
+        value={search}
+        onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setSearch(e.target.value); setOpen(true); }}
+        onClear={() => { setSearch(''); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        aria-label={placeholder}
+      />
+      {open && matches.length > 0 && (
+        <div className={styles.multiSelectSearchDropdown} role="listbox">
+          {matches.map(opt => (
+            <button
+              key={opt}
+              type="button"
+              role="option"
+              aria-selected={false}
+              className={styles.multiSelectSearchOption}
+              onMouseDown={e => { e.preventDefault(); addValue(opt); }}
+            >
+              <span className={styles.multiSelectSearchOptionIcon} aria-hidden>
+                {leadingIcon ?? <Copy01Icon size={14} />}
+              </span>
+              {opt}
+            </button>
+          ))}
+        </div>
+      )}
+      {values.length > 0 && (
+        <div className={styles.multiSelectSearchList}>
+          {values.map(v => (
+            <ListItem
+              key={v}
+              size="sm"
+              label={v}
+              leadingSlot={leadingIcon ?? <Copy01Icon size={14} />}
+              trailingSlot={
+                <button
+                  type="button"
+                  className={styles.multiSelectSearchRemove}
+                  aria-label={`Remove ${v}`}
+                  onClick={e => { e.stopPropagation(); removeValue(v); }}
+                >
+                  <Trash03Icon size={14} />
+                </button>
+              }
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -1629,7 +1996,9 @@ function NodeNameSelect({ step, onSelect }: { step: FlowStep; onSelect: (label: 
     setPanelPos({ top: r.bottom + 4, left: r.left, width: r.width });
   }, [open]);
 
-  // Close on outside click
+  // Close on outside click — capture-phase to bypass the right panel's
+  // bubble-phase `stopPropagation()` on mousedown (see the matching note
+  // in PopoverSelect below).
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
@@ -1639,8 +2008,8 @@ function NodeNameSelect({ step, onSelect }: { step: FlowStep; onSelect: (label: 
       setOpen(false);
       setQuery('');
     };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    document.addEventListener('mousedown', handler, true);
+    return () => document.removeEventListener('mousedown', handler, true);
   }, [open]);
 
   // Close on Escape
@@ -1743,15 +2112,33 @@ function PopoverSelect({
   onChange,
   placeholder = 'Select…',
   className,
+  /** Legacy props kept for callsite back-compat. The trigger is now
+   *  always typeable — the dedicated panel-top search row is gone, the
+   *  trigger input itself filters the dropdown. */
+  searchable: _searchable,
+  searchPlaceholder: _searchPlaceholder,
+  disabled = false,
 }: {
   value: string;
   options: PopoverSelectOption[];
   onChange: (value: string) => void;
   placeholder?: string;
   className?: string;
+  /** @deprecated — typing is always available now. */
+  searchable?: boolean;
+  /** @deprecated — no separate search row anymore. */
+  searchPlaceholder?: string;
+  /** Suppress opens + show muted chrome. Used by dependent fields whose
+   *  parent dependency hasn't been chosen yet (e.g. "Record Field" stays
+   *  disabled until an Entity is picked). */
+  disabled?: boolean;
 }) {
+  // Suppress unused-var lint on the deprecated back-compat props.
+  void _searchable; void _searchPlaceholder;
   const [open, setOpen] = useState(false);
-  const triggerRef = useRef<HTMLButtonElement>(null);
+  const [query, setQuery] = useState('');
+  const triggerRef = useRef<HTMLDivElement>(null);
+  const inputRef   = useRef<HTMLInputElement>(null);
   const panelRef   = useRef<HTMLDivElement>(null);
   const rafRef     = useRef<number | null>(null);
   const [panelPos, setPanelPos] = useState<{ top: number; left: number; width: number } | null>(null);
@@ -1770,15 +2157,22 @@ function PopoverSelect({
     return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
   }, [open]);
 
-  // Close on outside click
+  // Close on outside click. We listen in the *capture* phase because the
+  // host right-panel (`.nodePopover`) calls `e.stopPropagation()` on its
+  // own mousedown handler, which would otherwise swallow the event before
+  // it reached this document-level listener — leaving the dropdown stuck
+  // open when the user clicks another field inside the same panel.
+  // Capture-phase listeners fire BEFORE any bubble-phase stopPropagation
+  // intercepts the event, so this stays robust to wrappers that try to
+  // contain their click handling.
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
       const t = e.target as Node;
       if (!triggerRef.current?.contains(t) && !panelRef.current?.contains(t)) setOpen(false);
     };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    document.addEventListener('mousedown', handler, true);
+    return () => document.removeEventListener('mousedown', handler, true);
   }, [open]);
 
   // Close on Escape
@@ -1791,26 +2185,79 @@ function PopoverSelect({
 
   const selectedLabel = options.find(o => o.value === value)?.label ?? '';
 
+  // Reset the typed query whenever the panel closes so the next open
+  // starts with an unfiltered list and the input shows the selected
+  // label again. Auto-focus the trigger input on open so the user can
+  // type immediately without a second click.
+  useEffect(() => {
+    if (!open) {
+      setQuery('');
+      return;
+    }
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }, [open]);
+
+  // Filter on substring of the typed query when the panel is open.
+  // While closed, no filtering is applied — the input simply shows the
+  // selected label.
+  const visibleOptions = useMemo(() => {
+    if (!open) return options;
+    const q = query.trim().toLowerCase();
+    if (!q) return options;
+    return options.filter(o => o.label.toLowerCase().includes(q));
+  }, [options, query, open]);
+
+  // What the input value reflects at any moment:
+  //   · open  → the live typed query (so the user sees what they typed)
+  //   · closed → the selected option's label (read-only display)
+  // The `placeholder` only renders when both are empty.
+  const inputDisplayValue = open ? query : selectedLabel;
+
   return (
     <div className={clsx(styles.psRoot, className)}>
-      <button
+      {/* Combobox-style trigger — a div wrapping a real text input so
+          the user can type-to-filter immediately on open. The wrapping
+          div carries the same outlined-shell chrome as the legacy
+          button trigger so the visual continuity is preserved across
+          every right-panel selector. */}
+      <div
         ref={triggerRef}
-        type="button"
         className={clsx(inputStyles.shell, inputStyles.md, inputStyles.outlined, styles.psTrigger)}
         data-open={open || undefined}
-        onClick={() => setOpen(v => !v)}
+        data-disabled={disabled || undefined}
+        role="combobox"
         aria-haspopup="listbox"
         aria-expanded={open}
+        aria-disabled={disabled || undefined}
+        onClick={() => {
+          if (disabled) return;
+          if (!open) setOpen(true);
+          inputRef.current?.focus();
+        }}
       >
-        <span className={styles.psValue}>
-          {selectedLabel || <span className={styles.psPlaceholder}>{placeholder}</span>}
-        </span>
+        <input
+          ref={inputRef}
+          type="text"
+          className={styles.psValueInput}
+          value={inputDisplayValue}
+          placeholder={placeholder}
+          disabled={disabled}
+          autoComplete="off"
+          spellCheck={false}
+          onChange={e => {
+            if (!open) setOpen(true);
+            setQuery(e.target.value);
+          }}
+          onFocus={() => { if (!disabled) setOpen(true); }}
+          aria-controls={undefined}
+          aria-autocomplete="list"
+        />
         <span className={clsx(inputStyles.trailingSlot, 'alloy-icon-slot', styles.psChevron)}>
           <ChevronDownIcon size={14} />
         </span>
-      </button>
+      </div>
 
-      {open && panelPos && createPortal(
+      {open && !disabled && panelPos && createPortal(
         <div
           ref={panelRef}
           className={clsx(dropdownStyles.panel, styles.psPanel)}
@@ -1818,10 +2265,13 @@ function PopoverSelect({
           data-placement="bottom-start"
           style={{ position: 'fixed', top: panelPos.top, left: panelPos.left, width: panelPos.width, zIndex: 2000 }}
           role="listbox"
+          // Prevent the global outside-click handler from firing when the
+          // user mouses down on a panel item; the click below commits
+          // the option and closes.
           onMouseDown={e => e.stopPropagation()}
         >
           <div className={dropdownStyles.panelInner}>
-            {options.map(opt => (
+            {visibleOptions.length > 0 ? visibleOptions.map(opt => (
               <button
                 key={opt.value}
                 type="button"
@@ -1832,7 +2282,9 @@ function PopoverSelect({
               >
                 {opt.label}
               </button>
-            ))}
+            )) : (
+              <p className={styles.psEmpty}>No matches</p>
+            )}
           </div>
         </div>,
         document.body,
@@ -1877,9 +2329,13 @@ const AI_ENGAGE_TARGETS    = [
 
 interface AiSpecialistPersonaPickerProps {
   onSelect: (persona: AiPersona) => void;
+  /** When true, drop the picker's internal section paddings — used when
+   *  the picker is rendered inside a Dialog whose `DialogContent` already
+   *  contributes the standard 16px padding around its children. */
+  bare?: boolean;
 }
 
-function AiSpecialistPersonaPicker({ onSelect }: AiSpecialistPersonaPickerProps) {
+function AiSpecialistPersonaPicker({ onSelect, bare = false }: AiSpecialistPersonaPickerProps) {
   const [search, setSearch] = useState('');
   const q = search.trim().toLowerCase();
   const filtered = q
@@ -1892,8 +2348,8 @@ function AiSpecialistPersonaPicker({ onSelect }: AiSpecialistPersonaPickerProps)
     : AI_PERSONAS;
 
   return (
-    <div className={styles.actionSelectorRoot}>
-      <div className={styles.actionSelectorSearch}>
+    <div className={clsx(styles.actionSelectorRoot, bare && styles.actionSelectorRootBare)}>
+      <div className={clsx(styles.actionSelectorSearch, bare && styles.actionSelectorSearchBare)}>
         <SearchField
           size="sm"
           placeholder="Search personas..."
@@ -1904,7 +2360,7 @@ function AiSpecialistPersonaPicker({ onSelect }: AiSpecialistPersonaPickerProps)
         />
       </div>
 
-      <div className={styles.actionSelectorList}>
+      <div className={clsx(styles.actionSelectorList, bare && styles.actionSelectorListBare)}>
         {filtered.length === 0 ? (
           <p className={styles.actionSelectorEmpty}>No personas match "{search}"</p>
         ) : (
@@ -1941,44 +2397,127 @@ function AiSpecialistPersonaPicker({ onSelect }: AiSpecialistPersonaPickerProps)
 function AiSpecialistMeta({
   step,
   onUpdateConfigField,
-  onChangePersona,
+  onPickPersona,
 }: {
   step: FlowStep;
   onUpdateConfigField: (key: string, value: string) => void;
-  /** Reset the selection so the popover falls back to the persona picker. */
-  onChangePersona?: () => void;
+  /** Commit a fresh persona pick (writes both `ai_persona_id` and flips
+   *  `selectedValue` to the configured sentinel). */
+  onPickPersona: (persona: AiPersona) => void;
 }) {
-  void onUpdateConfigField; // direct persona writes not wired yet — change button routes back to the picker
-  // Resolve the selected persona from configValues; falls back to the first
-  // entry so the card still renders something even when an upgrade left a
-  // node without an `ai_persona_id` set.
+  void onUpdateConfigField; // persona writes flow through onPickPersona below
+  // Resolve the configured persona, if any. The card now renders an empty
+  // state when no `ai_persona_id` has been chosen yet — which is the
+  // first state when an AI node is dropped onto the canvas.
   const personaId = step.configValues?.ai_persona_id;
-  const persona = getPersonaById(personaId) ?? AI_PERSONAS[0];
+  const persona = personaId ? getPersonaById(personaId) ?? null : null;
+  const isConfigured =
+    !!persona && step.selectedValue === 'AI Specialist';
+
+  // Dialog state for the picker — opened by both the "Choose" empty-
+  // state CTA and the configured-state "Change" button.
+  const [pickerOpen, setPickerOpen] = useState(false);
+
   return (
     <div className={styles.aiSpecRows}>
-      {/* Specialist Persona row */}
       <div className={styles.aiSpecRow}>
         <Eyebrow>Specialist Persona</Eyebrow>
         <div className={styles.aiSpecPersonaCard}>
-          <div className={styles.aiSpecPersonaAvatar}>
-            <PersonaAvatar personaId={persona.id} size={32} />
-          </div>
-          <div className={styles.aiSpecPersonaInfo}>
-            <div className={styles.aiSpecPersonaName}>
-              {persona.name}
-              <div className={styles.aiSpecVoicePill}>
-                <div className={styles.aiSpecVoicePillIcon}><VolumeMaxIcon size={12} /></div>
-                <span className={styles.aiSpecVoicePillLabel}>{persona.voice}</span>
+          {isConfigured && persona ? (
+            <>
+              <div className={styles.aiSpecPersonaAvatar}>
+                <PersonaAvatar personaId={persona.id} size={32} />
               </div>
-            </div>
-            <div className={styles.aiSpecPersonaRole}>{persona.role}</div>
-          </div>
-          <Button variant="ghost" size="xs" onClick={onChangePersona}>
-            Change
-          </Button>
+              <div className={styles.aiSpecPersonaInfo}>
+                <div className={styles.aiSpecPersonaName}>
+                  {persona.name}
+                  <div className={styles.aiSpecVoicePill}>
+                    <div className={styles.aiSpecVoicePillIcon}><VolumeMaxIcon size={12} /></div>
+                    <span className={styles.aiSpecVoicePillLabel}>{persona.voice}</span>
+                  </div>
+                </div>
+                <div className={styles.aiSpecPersonaRole}>{persona.role}</div>
+              </div>
+              <Button variant="ghost" size="xs" onClick={() => setPickerOpen(true)}>
+                Change
+              </Button>
+            </>
+          ) : (
+            <>
+              {/* Empty state — same card geometry as the configured branch
+                  so the popover layout doesn't jump between the two
+                  states. The diamond glyph stands in for the persona
+                  avatar until a specialist is picked. */}
+              <div className={clsx(styles.aiSpecPersonaAvatar, styles.aiSpecPersonaAvatarEmpty)} aria-hidden>
+                <TeambridgeAIIcon size={20} />
+              </div>
+              <div className={styles.aiSpecPersonaInfo}>
+                <div className={styles.aiSpecPersonaName}>No specialist selected</div>
+                <div className={styles.aiSpecPersonaRole}>Pick a persona to power this step</div>
+              </div>
+              <Button variant="secondary" size="xs" onClick={() => setPickerOpen(true)}>
+                Choose
+              </Button>
+            </>
+          )}
         </div>
       </div>
+
+      <AiSpecialistPersonaPickerDialog
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        onSelect={p => {
+          onPickPersona(p);
+          setPickerOpen(false);
+        }}
+      />
     </div>
+  );
+}
+
+/** Modal wrapper around `AiSpecialistPersonaPicker`. The picker itself
+ *  already supplies a search field + persona list, so the dialog only
+ *  contributes chrome (header / close / size). Selection commits via
+ *  the picker's existing `onSelect` callback. */
+function AiSpecialistPersonaPickerDialog({
+  open,
+  onClose,
+  onSelect,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onSelect: (persona: AiPersona) => void;
+}) {
+  return (
+    <Dialog open={open} onClose={onClose} size="md" aria-label="Choose a specialist">
+      <DialogHeader onClose={onClose}>Choose a specialist</DialogHeader>
+      <DialogContent>
+        <AiSpecialistPersonaPicker onSelect={onSelect} bare />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Modal wrapper around `ActionSelector`. Same shape as the AI persona
+ *  picker dialog: the picker already brings its own search field + grouped
+ *  list, so the dialog only contributes chrome (header / close button)
+ *  and lets the user cancel without committing a selection. */
+function ActionSelectorDialog({
+  open,
+  onClose,
+  onSelect,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onSelect: (label: string) => void;
+}) {
+  return (
+    <Dialog open={open} onClose={onClose} size="md" aria-label="Choose an action">
+      <DialogHeader onClose={onClose}>Choose an action</DialogHeader>
+      <DialogContent>
+        <ActionSelector onSelect={onSelect} bare />
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -2028,9 +2567,15 @@ interface FieldTagPickerProps {
   available: string[];
   onChange: (next: string[]) => void;
   placeholder?: string;
+  /** When set, render selected entries as Alloy `<Tag>` chips with the
+   *  given colour + variant instead of the default `.fieldChip` shell.
+   *  Reserved for cases where the field semantically reads as a tag (e.g.
+   *  message channel chips on the AI Engage card). */
+  tagColor?: TagColor;
+  tagVariant?: 'subtle' | 'outline' | 'fill';
 }
 
-function FieldTagPicker({ fields, available, onChange, placeholder }: FieldTagPickerProps) {
+function FieldTagPicker({ fields, available, onChange, placeholder, tagColor, tagVariant = 'subtle' }: FieldTagPickerProps) {
   const [search, setSearch] = useState('');
   const [open, setOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -2065,19 +2610,38 @@ function FieldTagPicker({ fields, available, onChange, placeholder }: FieldTagPi
     <div ref={containerRef} className={styles.fieldTagPicker}>
       <div className={styles.aiSpecFieldSubTags}>
         {fields.map(f => (
-          <span key={f} className={styles.fieldChip}>
-            {f}
-            <button
-              type="button"
-              className={styles.fieldChipRemove}
-              onClick={() => removeField(f)}
-              aria-label={`Remove ${f}`}
+          tagColor ? (
+            // Alloy Tag carries a built-in `dismissible` slot that renders
+            // the X glyph INSIDE the pill, so the chip reads as a single
+            // unit instead of a two-piece "tag + outboard X" pair. The
+            // wrapping span is gone — the Tag component owns the chip
+            // shape and the close button alike.
+            <Tag
+              key={f}
+              color={tagColor}
+              variant={tagVariant}
+              size="sm"
+              dismissible
+              onDismiss={() => removeField(f)}
+              aria-label={f}
             >
-              <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden>
-                <path d="M1.5 1.5l5 5M6.5 1.5l-5 5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-              </svg>
-            </button>
-          </span>
+              {f}
+            </Tag>
+          ) : (
+            <span key={f} className={styles.fieldChip}>
+              {f}
+              <button
+                type="button"
+                className={styles.fieldChipRemove}
+                onClick={() => removeField(f)}
+                aria-label={`Remove ${f}`}
+              >
+                <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden>
+                  <path d="M1.5 1.5l5 5M6.5 1.5l-5 5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+                </svg>
+              </button>
+            </span>
+          )
         ))}
         <input
           ref={inputRef}
@@ -2271,20 +2835,17 @@ function AiSpecialistCards({
             <div className={styles.aiSpecDataCardBody}>
               <div className={styles.aiSpecDataFieldRow}>
                 <span className={styles.aiSpecDataFieldLabel}>Message</span>
-                <div className={styles.aiSpecChannelRow}>
-                  {AI_SPEC_CHANNELS.map(ch => (
-                    <ToggleButton
-                      key={ch}
-                      size="sm"
-                      selected={channels.includes(ch)}
-                      selectionStyle="border"
-                      defaultVariant="secondary"
-                      onSelectedChange={() => toggleChannel(ch)}
-                    >
-                      {ch}
-                    </ToggleButton>
-                  ))}
-                </div>
+                {/* Channels render as pink Alloy tags inside a typeahead
+                    picker — same UX as the Read/Write fields above (type
+                    to search, Enter to add, click × to remove, Backspace
+                    when input is empty to remove the last chip). */}
+                <FieldTagPicker
+                  fields={channels}
+                  available={[...AI_SPEC_CHANNELS]}
+                  onChange={next => onUpdateConfigField('ai_channels', next.join(','))}
+                  placeholder={channels.length === 0 ? 'Search channels…' : ''}
+                  tagColor="pink"
+                />
               </div>
               <div className={styles.aiSpecDataFieldRow}>
                 <span className={styles.aiSpecDataFieldLabel}>Target</span>
@@ -2754,9 +3315,13 @@ function AiSpecialistTest({ specialistName, specialistRole, specialistVoice, per
 
 interface ActionSelectorProps {
   onSelect: (label: string) => void;
+  /** When true, drop the selector's internal section paddings — used when
+   *  the picker is rendered inside a Dialog whose `DialogContent` already
+   *  contributes the standard 16px padding around its children. */
+  bare?: boolean;
 }
 
-function ActionSelector({ onSelect }: ActionSelectorProps) {
+function ActionSelector({ onSelect, bare = false }: ActionSelectorProps) {
   const [search, setSearch] = useState('');
 
   const actions = ALL_LIBRARY_ITEMS.filter(i => i.type === 'action');
@@ -2815,8 +3380,8 @@ function ActionSelector({ onSelect }: ActionSelectorProps) {
   };
 
   return (
-    <div className={styles.actionSelectorRoot}>
-      <div className={styles.actionSelectorSearch}>
+    <div className={clsx(styles.actionSelectorRoot, bare && styles.actionSelectorRootBare)}>
+      <div className={clsx(styles.actionSelectorSearch, bare && styles.actionSelectorSearchBare)}>
         <SearchField
           size="sm"
           placeholder="Search actions..."
@@ -2827,7 +3392,7 @@ function ActionSelector({ onSelect }: ActionSelectorProps) {
         />
       </div>
 
-      <div className={styles.actionSelectorList}>
+      <div className={clsx(styles.actionSelectorList, bare && styles.actionSelectorListBare)}>
         {filtered.length === 0 ? (
           <p className={styles.actionSelectorEmpty}>No actions match "{search}"</p>
         ) : showFlat ? (
@@ -2840,6 +3405,110 @@ function ActionSelector({ onSelect }: ActionSelectorProps) {
             </div>
           ))
         )}
+      </div>
+    </div>
+  );
+}
+
+// ─── TriggerModifyTiming ─────────────────────────────────────────────────────
+// Universal "Modify Timing" affordance shown on every trigger node's right-
+// panel config. Lets the user offset the trigger fire moment by an N
+// Min/Hour/Day window before or after the underlying event. State piggybacks
+// on `step.configValues` via three keys:
+//   - modify_timing_amount     ('1', '15', etc — string for input value)
+//   - modify_timing_unit       ('Min' | 'Hour' | 'Day')
+//   - modify_timing_direction  ('After' | 'Before')
+// Active state is derived as "all three present" — partial state shouldn't
+// happen during normal flow (the + button seeds defaults atomically and the
+// X clears all three together) but the derivation tolerates either case.
+
+const MODIFY_TIMING_KEYS = {
+  amount:    'modify_timing_amount',
+  unit:      'modify_timing_unit',
+  direction: 'modify_timing_direction',
+} as const;
+const MODIFY_TIMING_UNITS = ['Min', 'Hour', 'Day'];
+const MODIFY_TIMING_DIRECTIONS = ['After', 'Before'];
+
+interface TriggerModifyTimingProps {
+  vals: Record<string, string>;
+  onUpdate: (key: string, value: string) => void;
+}
+
+function TriggerModifyTiming({ vals, onUpdate }: TriggerModifyTimingProps) {
+  const amount    = vals[MODIFY_TIMING_KEYS.amount]    ?? '';
+  const unit      = vals[MODIFY_TIMING_KEYS.unit]      ?? '';
+  const direction = vals[MODIFY_TIMING_KEYS.direction] ?? '';
+  const isActive  = unit !== '' && direction !== '';
+
+  if (!isActive) {
+    return (
+      <Button
+        variant="ghost"
+        size="sm"
+        leadingArtwork={<AlloyPlusIcon size={14} />}
+        onClick={() => {
+          // Seed sensible defaults so the row is immediately usable
+          // without forcing the user to pick every value before it
+          // makes sense ("1 Min After" is a natural floor).
+          onUpdate(MODIFY_TIMING_KEYS.amount,    '1');
+          onUpdate(MODIFY_TIMING_KEYS.unit,      'Min');
+          onUpdate(MODIFY_TIMING_KEYS.direction, 'After');
+        }}
+        className={styles.modifyTimingAddBtn}
+      >
+        Modify Timing
+      </Button>
+    );
+  }
+
+  const clear = () => {
+    onUpdate(MODIFY_TIMING_KEYS.amount,    '');
+    onUpdate(MODIFY_TIMING_KEYS.unit,      '');
+    onUpdate(MODIFY_TIMING_KEYS.direction, '');
+  };
+
+  return (
+    // Wrap in a popoverFieldRow so the "Modify Timing" label aligns
+    // with every other Configuration field's label above its control,
+    // and the row stretches edge-to-edge inside the section.
+    <div className={styles.popoverFieldRow}>
+      <label className={styles.popoverFieldLabel}>Modify Timing</label>
+      <div className={styles.modifyTimingRow}>
+        <NumberField
+          size="md"
+          min={0}
+          value={amount}
+          onChange={e => onUpdate(MODIFY_TIMING_KEYS.amount, e.target.value)}
+          aria-label="Timing amount"
+          className={styles.modifyTimingNum}
+        />
+        <SelectField
+          size="md"
+          value={unit}
+          onChange={v => onUpdate(MODIFY_TIMING_KEYS.unit, v)}
+          options={MODIFY_TIMING_UNITS.map(u => ({ value: u, label: u }))}
+          aria-label="Timing unit"
+          className={styles.modifyTimingSelect}
+        />
+        <SelectField
+          size="md"
+          value={direction}
+          onChange={v => onUpdate(MODIFY_TIMING_KEYS.direction, v)}
+          options={MODIFY_TIMING_DIRECTIONS.map(d => ({ value: d, label: d }))}
+          aria-label="Timing direction"
+          className={styles.modifyTimingSelect}
+        />
+        <Button
+          variant="ghost"
+          size="md"
+          iconOnly
+          onClick={clear}
+          aria-label="Remove timing modifier"
+          className={styles.modifyTimingClearBtn}
+        >
+          <XIcon size={14} />
+        </Button>
       </div>
     </div>
   );
@@ -2889,7 +3558,7 @@ function ConditionRow({ entry, showRemove, onRemove, onPatch, index }: Condition
   const op  = entry.operator || ops[0] || '';
   const vals = entry.values;
   const isNoVal  = ['is_empty', 'is_not_empty', 'missing_required'].includes(op);
-  const isIn     = op === 'in' || op === 'not_in';
+  const isIn     = op === 'in' || op === 'not_in' || op === 'contains_one_of';
   const isWithin = op === 'within_next';
   return (
     <div className={styles.conditionRow}>
@@ -2913,13 +3582,23 @@ function ConditionRow({ entry, showRemove, onRemove, onPatch, index }: Condition
           onPatch({ fieldId: newId, operator: newDef?.operators[0] ?? '', values: [] });
         }}
         placeholder="Select field…"
+        searchable
+        searchPlaceholder="Search fields…"
         options={[
           { value: '', label: 'Select field…' },
           ...CONDITION_LIBRARY.map(d => ({ value: d.id, label: d.label })),
         ]}
       />
       {def && (
-        <div className={styles.conditionRowOpValue}>
+        <div className={clsx(
+          styles.conditionRowOpValue,
+          // Multi-value verbs (`is one of`, `is not one of`, `contains
+          // one of`) get a stacked layout: verb on top, value field on
+          // the row beneath. The Alloy MultiSelectField below grows
+          // vertically as chips wrap past the first row, so the value
+          // slot needs the full panel width to read comfortably.
+          isIn && styles.conditionRowOpValueStacked,
+        )}>
           <PopoverSelect
             value={op}
             onChange={newOp => onPatch({ operator: newOp, values: [] })}
@@ -2927,23 +3606,26 @@ function ConditionRow({ entry, showRemove, onRemove, onPatch, index }: Condition
             className={styles.conditionRowOpSelect}
           />
           {!isNoVal && isIn && def.valueOptions && (
-            <div className={clsx(styles.popoverTags, styles.conditionRowValue)}>
-              {def.valueOptions.map(opt => {
-                const selected = vals.includes(opt);
-                return (
-                  <button
-                    key={opt}
-                    type="button"
-                    className={clsx(styles.popoverTag, selected && styles.popoverTagSelected)}
-                    onClick={() => onPatch({
-                      values: selected ? vals.filter(v => v !== opt) : [...vals, opt],
-                    })}
-                  >{opt}</button>
-                );
-              })}
+            // All multi-value verbs (in / not_in / contains_one_of)
+            // render with Alloy's MultiSelectField so users see one
+            // consistent chips-inside-the-shell pattern. The shell
+            // grows vertically as chips wrap, so a long selection
+            // never overflows the panel.
+            <div className={styles.conditionRowValue}>
+              <MultiSelectField
+                size="md"
+                value={vals}
+                onChange={next => onPatch({ values: next })}
+                options={def.valueOptions.map(o => ({ value: o, label: o }))}
+                placeholder="Select values…"
+                aria-label="Condition value"
+              />
             </div>
           )}
           {!isNoVal && isIn && !def.valueOptions && (
+            // Free-text fallback for multi-value verbs when the field
+            // doesn't carry a predefined option set. Behaves like the
+            // type-and-Enter chip input the legacy condition rows used.
             <div className={styles.conditionRowValue}>
               <ConditionTagInput values={vals} onChange={next => onPatch({ values: next })} />
             </div>
@@ -3009,6 +3691,18 @@ function ConditionGroupsEditor({ step, onUpdateConditionGroups }: ConditionGroup
   // least one condition on the node.
   const [addPromptOpen, setAddPromptOpen] = useState(false);
 
+  // Per-group collapsed state — keyed by group.id. Set membership = collapsed.
+  // Defaults to expanded so a freshly-added group still shows its rows; the
+  // user collapses by clicking the group header.
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const toggleCollapsed = (id: string) => {
+    setCollapsedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
   const commit = (next: ConditionGroup[]) => onUpdateConditionGroups?.(next);
 
   const patchCondition = (gIdx: number, cIdx: number, patch: Partial<ConditionEntry>) => {
@@ -3063,36 +3757,62 @@ function ConditionGroupsEditor({ step, onUpdateConditionGroups }: ConditionGroup
           </p>
         )}
 
-        {groups.map((group, gIdx) => (
+        {groups.map((group, gIdx) => {
+          const isCollapsed = collapsedGroups.has(group.id);
+          const conditionCount = group.conditions.length;
+          return (
           <Fragment key={group.id}>
-            <div className={styles.conditionGroup}>
-              <div className={styles.conditionGroupRows}>
-                {group.conditions.map((c, cIdx) => (
-                  <ConditionRow
-                    key={cIdx}
-                    entry={c}
-                    index={cIdx}
-                    showRemove={total > 1}
-                    onRemove={() => removeCondition(gIdx, cIdx)}
-                    onPatch={(patch) => patchCondition(gIdx, cIdx, patch)}
-                  />
-                ))}
-              </div>
-              {/* Per-group add (AND — same group). Respects the 5-total cap. */}
-              {total < MAX_CONDITIONS && (
-                <button
-                  type="button"
-                  className={styles.addConditionBtn}
-                  onClick={() => {
-                    if (total >= MAX_CONDITIONS) return;
-                    commit(groups.map((g, gi) => gi === gIdx
-                      ? { ...g, conditions: [...g.conditions, makeEmptyCondition()] }
-                      : g));
-                  }}
-                >
-                  <PlusIcon size={10} />
-                  Add condition
-                </button>
+            <div className={styles.conditionGroup} data-collapsed={isCollapsed ? 'true' : 'false'}>
+              {/* Group header — chevron toggles collapse, AND badge +
+                  "{n} conditions" summarise the group when collapsed,
+                  and surface the same metadata when expanded so users
+                  can scan the structure either way. */}
+              <button
+                type="button"
+                className={styles.conditionGroupHeader}
+                onClick={() => toggleCollapsed(group.id)}
+                aria-expanded={!isCollapsed}
+                aria-label={isCollapsed ? 'Expand group' : 'Collapse group'}
+              >
+                <span className={clsx(styles.conditionGroupChevron, !isCollapsed && styles.conditionGroupChevronOpen)} aria-hidden>
+                  <ChevronDownIcon size={12} />
+                </span>
+                <span className={styles.conditionGroupBadge}>AND</span>
+                <span className={styles.conditionGroupCount}>
+                  {conditionCount} {conditionCount === 1 ? 'condition' : 'conditions'}
+                </span>
+              </button>
+              {!isCollapsed && (
+                <>
+                  <div className={styles.conditionGroupRows}>
+                    {group.conditions.map((c, cIdx) => (
+                      <ConditionRow
+                        key={cIdx}
+                        entry={c}
+                        index={cIdx}
+                        showRemove={total > 1}
+                        onRemove={() => removeCondition(gIdx, cIdx)}
+                        onPatch={(patch) => patchCondition(gIdx, cIdx, patch)}
+                      />
+                    ))}
+                  </div>
+                  {/* Per-group add (AND — same group). Always rendered so
+                      users can keep growing a group without hunting for
+                      a CTA. The global cross-group cap still gates the
+                      bottom "+ Add condition" prompt below. */}
+                  <button
+                    type="button"
+                    className={styles.addConditionBtn}
+                    onClick={() => {
+                      commit(groups.map((g, gi) => gi === gIdx
+                        ? { ...g, conditions: [...g.conditions, makeEmptyCondition()] }
+                        : g));
+                    }}
+                  >
+                    <PlusIcon size={10} />
+                    Add condition
+                  </button>
+                </>
               )}
             </div>
             {gIdx < groups.length - 1 && (
@@ -3101,7 +3821,8 @@ function ConditionGroupsEditor({ step, onUpdateConditionGroups }: ConditionGroup
               </div>
             )}
           </Fragment>
-        ))}
+          );
+        })}
 
         {/* Global add. With 0 conditions: add the first. Otherwise prompt
             the user to choose AND (same group) or OR (new group). */}
@@ -3155,15 +3876,41 @@ function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpda
   // Policy modal state (policy nodes only)
   const [policyModalOpen, setPolicyModalOpen] = useState(false);
 
+  // Action picker dialog state — opens for both the empty-state "Choose"
+  // CTA and the configured-state "Change" button. Mirrors the AI
+  // specialist picker dialog pattern so the right panel stays mounted
+  // while the user browses / cancels the selection.
+  const [actionPickerOpen, setActionPickerOpen] = useState(false);
+
   // AI Specialist tab state (Configure / Test) — only relevant for AI Specialist nodes.
   const [aiSpecTab, setAiSpecTab] = useState<'configure' | 'test'>('configure');
   const isAiSpecialist = step.type === 'ai' && step.selectedValue === 'AI Specialist';
 
   // Right-panel info card — overlay triggered by the header ⓘ icon.
+  // Two state values so the card can animate on both open AND close:
+  //   · `infoOpen`     — the user-driven flag the toggle reads/writes.
+  //   · `infoMounted`  — the actual mount flag for the DOM. Lags
+  //                       `infoOpen` on close to give the exit animation
+  //                       time to play before the card unmounts.
   const [infoOpen, setInfoOpen] = useState(false);
+  const [infoMounted, setInfoMounted] = useState(false);
   const [infoCopied, setInfoCopied] = useState(false);
   const infoTriggerRef = useRef<HTMLButtonElement>(null);
   const infoCardRef = useRef<HTMLDivElement>(null);
+
+  // Sync the mount flag with the open flag. Open mounts immediately so
+  // the entry animation can run from frame 1; close waits for the
+  // CSS exit duration (matches `popoverInfoCardClose` keyframes
+  // duration in BuilderPage.module.css) before unmounting.
+  useEffect(() => {
+    if (infoOpen) {
+      setInfoMounted(true);
+      return;
+    }
+    if (!infoMounted) return;
+    const t = setTimeout(() => setInfoMounted(false), 180);
+    return () => clearTimeout(t);
+  }, [infoOpen, infoMounted]);
 
   // Outside-click: close the info card when the user clicks anywhere that
   // isn't the trigger or the card itself.
@@ -3292,22 +4039,24 @@ function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpda
         </div>
       </div>
 
-      {/* Info overlay card — opens below the header when the info icon is clicked */}
-      {infoOpen && (
-        <div className={styles.popoverInfoCardWrap}>
-          <div id="node-info-card" ref={infoCardRef} className={styles.popoverInfoCard} role="dialog" aria-label="Node info">
-            <div className={styles.popoverInfoCardHeader}>
-              <span className={styles.popoverInfoCardTitle}>Info</span>
-              <Button
-                variant="ghost"
-                size="xs"
-                iconOnly
-                onClick={() => setInfoOpen(false)}
-                aria-label="Close info"
-              >
-                <MinusIcon />
-              </Button>
-            </div>
+      {/* Info overlay card — opens below the header when the info icon
+          is clicked. Stays mounted briefly after `infoOpen` flips false
+          so the close animation has time to play; `data-open` reflects
+          the live `infoOpen` state and the CSS animations key off it. */}
+      {infoMounted && (
+        <div className={styles.popoverInfoCardWrap} data-open={infoOpen || undefined}>
+          <div
+            id="node-info-card"
+            ref={infoCardRef}
+            className={styles.popoverInfoCard}
+            data-open={infoOpen || undefined}
+            role="dialog"
+            aria-label="Node info"
+          >
+            {/* Title + close-info button row removed — closing the Info
+                card is now handled by the existing ⓘ toggle in the
+                popover header (which already drives `infoOpen`), so
+                the redundant in-card header was just noise. */}
             <div className={styles.popoverInfoRows}>
               <div className={styles.popoverInfoRow}>
                 <span className={styles.popoverInfoLabel}>Node ID</span>
@@ -3405,22 +4154,20 @@ function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpda
         </div>
       )}
 
-      {/* ══════════════════════════════════════════════════════════════════
-          AI SPECIALIST NODE — persona picker shown until a persona is chosen
-          ══════════════════════════════════════════════════════════════════ */}
-      {step.type === 'ai' && isEmpty && (
-        <AiSpecialistPersonaPicker
-          onSelect={(persona) => {
-            // Persist the persona choice first so the configured branch can
-            // read it on the same render that flips selectedValue on.
-            onUpdateConfigField('ai_persona_id', persona.id);
-            onSelectSuggestion('AI Specialist');
-          }}
-        />
-      )}
+      {/* AI SPECIALIST NODE — the inline empty-state picker has been
+          replaced by the always-mounted Specialist Persona section
+          (see AiSpecialistMeta below). `Choose` opens the picker in a
+          modal dialog instead of swapping the popover body, so the
+          Specialist Persona section persists across both empty and
+          configured states. */}
 
       {/* ══════════════════════════════════════════════════════════════════
-          ACTION NODE — searchable/browsable list (empty) OR back-header (selected)
+          ACTION NODE — Empty state shows the inline picker (search +
+          grouped list) covering the popover body, matching the original
+          first-add UX. Once an action is configured, the persona-style
+          header reappears with a "Change" button that opens a modal
+          dialog so the user can swap actions without losing the rest of
+          the right-panel content.
           ══════════════════════════════════════════════════════════════════ */}
       {step.type === 'action' && isEmpty && (
         <ActionSelector onSelect={onSelectSuggestion} />
@@ -3434,10 +4181,6 @@ function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpda
               ?? ACTION_CATEGORY_ICON[libItem.category]
               ?? STEP_CONFIG.action.icon)
           : STEP_CONFIG.action.icon;
-        // Mirrors the AI Specialist persona card: Eyebrow + outlined card
-        // (avatar + name/category + Change button). Re-uses .aiSpecPersona*
-        // classes so the chrome stays in lockstep with the AI Specialist
-        // tab and any future spacing tweaks land in one place.
         return (
           <div className={styles.popoverSection}>
             <div className={styles.aiSpecRows}>
@@ -3453,12 +4196,24 @@ function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpda
                       <div className={styles.aiSpecPersonaRole}>{libItem.category}</div>
                     )}
                   </div>
-                  <Button variant="ghost" size="xs" onClick={() => onSelectSuggestion('')}>
+                  {/* Change opens the picker in a dialog so the user can
+                      cancel without losing the currently-configured
+                      action — see ActionSelectorDialog. */}
+                  <Button variant="ghost" size="xs" onClick={() => setActionPickerOpen(true)}>
                     Change
                   </Button>
                 </div>
               </div>
             </div>
+
+            <ActionSelectorDialog
+              open={actionPickerOpen}
+              onClose={() => setActionPickerOpen(false)}
+              onSelect={label => {
+                onSelectSuggestion(label);
+                setActionPickerOpen(false);
+              }}
+            />
           </div>
         );
       })()}
@@ -3646,18 +4401,39 @@ function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpda
       {/* ══════════════════════════════════════════════════════════════════
           TRIGGER / ACTION / AI NODE — existing configuration structure
           ══════════════════════════════════════════════════════════════════ */}
-      {(!isAiSpecialist || aiSpecTab === 'configure') && step.type !== 'condition' && step.type !== 'delay' && !isEmpty && (
+      {(!isAiSpecialist || aiSpecTab === 'configure')
+        && step.type !== 'condition'
+        && step.type !== 'delay'
+        // AI nodes always render their Specialist Persona row (even when
+        // empty) so non-AI nodes still gate on the existing `!isEmpty`
+        // check that hides the configuration UI before a node type is
+        // chosen.
+        && (step.type === 'ai' || !isEmpty)
+        && (
         <>
-          {/* AI Specialist: Action + Persona rows above the Configuration divider */}
-          {step.type === 'ai' && step.selectedValue === 'AI Specialist' && (
+          {/* AI Specialist Persona row — always shown for AI nodes,
+              regardless of whether a persona has been picked yet. The
+              empty-state branch inside AiSpecialistMeta surfaces a
+              "Choose" button that opens the picker in a modal dialog. */}
+          {step.type === 'ai' && (
             <div className={styles.popoverSection}>
               <AiSpecialistMeta
                 step={step}
                 onUpdateConfigField={onUpdateConfigField}
-                onChangePersona={() => onSelectSuggestion('')}
+                onPickPersona={persona => {
+                  // Two writes per pick: persist the persona id first so
+                  // the configured branch can read it on the same render
+                  // that flips selectedValue to the configured sentinel.
+                  onUpdateConfigField('ai_persona_id', persona.id);
+                  onSelectSuggestion('AI Specialist');
+                }}
               />
             </div>
           )}
+          {/* The Configuration divider + section only render once the
+              user has actually picked a specialist — there's nothing to
+              configure on an empty AI node. */}
+          {!(step.type === 'ai' && step.selectedValue !== 'AI Specialist') && <>
           <div className={styles.popoverDivider} />
           <div className={styles.popoverSection}>
             <p className={styles.popoverSectionLabel}>Configuration</p>
@@ -3667,28 +4443,41 @@ function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpda
               const libItem = ALL_LIBRARY_ITEMS.find(i => i.label === step.selectedValue);
               const fields  = libItem ? (NODE_CONFIG[libItem.id] ?? []) : [];
               const vals    = step.configValues ?? {};
-              if (fields.length === 0) return (
-                <p className={styles.popoverConfigPlaceholder}>No additional configuration for this trigger.</p>
-              );
               return (
-                <div className={styles.popoverFields}>
-                  {fields.map(field => {
+                <>
+                  {fields.length === 0 ? (
+                    <p className={styles.popoverConfigPlaceholder}>No additional configuration for this trigger.</p>
+                  ) : (
+                    <div className={styles.popoverFields}>
+                      {fields.map(field => {
                     if (field.hideWhenDependsOnIs && field.dependsOn) {
                       if (vals[field.dependsOn] === field.hideWhenDependsOnIs) return null;
                     }
                     const opts: string[] = field.dependsOn
                       ? (field.optionsByDependency?.[vals[field.dependsOn] ?? ''] ?? [])
                       : (field.options ?? []);
+                    // Dependent fields stay enabled even when their
+                    // parent dependency hasn't been resolved — opening
+                    // the dropdown surfaces an empty list (with the
+                    // "No matches" empty state) instead of a muted
+                    // trigger. The placeholder copy hints at the
+                    // dependency so the user still understands why
+                    // the list is empty.
+                    const hasUnresolvedDep =
+                      !!field.dependsOn && !vals[field.dependsOn];
                     const currentVal = vals[field.key] ?? '';
                     if (field.type === 'select') {
+                      const placeholderCopy = hasUnresolvedDep
+                        ? `Select ${field.dependsOn} first…`
+                        : `Select ${field.label.toLowerCase()}…`;
                       return (
                         <div key={field.key} className={styles.popoverFieldRow}>
                           <label className={styles.popoverFieldLabel}>{field.label}</label>
                           <PopoverSelect
                             value={currentVal}
                             onChange={v => onUpdateConfigField(field.key, v)}
-                            placeholder={`Select ${field.label.toLowerCase()}…`}
-                            options={[{ value: '', label: `Select ${field.label.toLowerCase()}…` }, ...opts.map(o => ({ value: o, label: o }))]}
+                            placeholder={placeholderCopy}
+                            options={opts.map(o => ({ value: o, label: o }))}
                           />
                         </div>
                       );
@@ -3713,7 +4502,16 @@ function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpda
                       />
                     );
                   })}
-                </div>
+                    </div>
+                  )}
+                  {/* Modify Timing — universal across every trigger type.
+                      Lets the user offset the trigger fire moment by N
+                      Min/Hour/Day After/Before the underlying event.
+                      Always rendered (regardless of whether the trigger
+                      has its own config fields), with a "+ Modify
+                      Timing" affordance when none is set yet. */}
+                  <TriggerModifyTiming vals={vals} onUpdate={onUpdateConfigField} />
+                </>
               );
             })()}
 
@@ -3728,9 +4526,23 @@ function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpda
               return (
                 <div className={styles.popoverFields}>
                   {fields.map(field => {
+                    if (field.hideWhenDependsOnIs && field.dependsOn) {
+                      if (vals[field.dependsOn] === field.hideWhenDependsOnIs) return null;
+                    }
+                    // Hide a dependent field whose dependency value has no
+                    // entry in optionsByDependency — keeps the form clean
+                    // for columns that don't drive a value picker (e.g.
+                    // Modify's Value selector only renders when Column
+                    // resolves to a key in optionsByDependency).
+                    if (field.dependsOn && field.optionsByDependency
+                        && !field.optionsByDependency[vals[field.dependsOn] ?? '']) {
+                      return null;
+                    }
                     const currentVal = vals[field.key] ?? '';
                     if (field.type === 'select') {
-                      const opts = field.options ?? [];
+                      const opts = field.dependsOn
+                        ? (field.optionsByDependency?.[vals[field.dependsOn] ?? ''] ?? [])
+                        : (field.options ?? []);
                       return (
                         <div key={field.key} className={styles.popoverFieldRow}>
                           {field.label && <label className={styles.popoverFieldLabel}>{field.label}</label>}
@@ -3777,6 +4589,29 @@ function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpda
                         </div>
                       );
                     }
+                    if (field.type === 'multi_select') {
+                      // Searchable multi-select — Alloy SearchField on top
+                      // surfaces matching unselected options, picking adds
+                      // them to a ListItem stack below where each row
+                      // carries a Trash trailing button for removal. The
+                      // raw value persists as a comma-separated string so
+                      // the on-disk shape stays consistent with multi_add.
+                      const opts = field.options ?? [];
+                      const selectedVals = currentVal
+                        ? currentVal.split(',').map(v => v.trim()).filter(Boolean)
+                        : [];
+                      return (
+                        <div key={field.key} className={styles.popoverFieldRow}>
+                          {field.label && <label className={styles.popoverFieldLabel}>{field.label}</label>}
+                          <MultiSelectSearchPicker
+                            options={opts}
+                            values={selectedVals}
+                            onChange={next => onUpdateConfigField(field.key, next.join(', '))}
+                            placeholder={`Search ${field.label.toLowerCase() || 'options'}…`}
+                          />
+                        </div>
+                      );
+                    }
                     return (
                       <TextField key={field.key} size="md"
                         label={field.label || undefined}
@@ -3798,6 +4633,7 @@ function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpda
                 : <p className={styles.popoverConfigPlaceholder}>No additional configuration for this AI step.</p>
             )}
           </div>
+          </>}{/* end conditional Configuration block */}
         </>
       )}
 
@@ -3875,6 +4711,7 @@ type SaveState = 'idle' | 'saving' | 'saved';
 
 const STATUS_TAG_MAP: Record<AutomationStatus, StatusTagStatus> = {
   active:   'success',
+  paused:   'neutral',
   draft:    'neutral',
   inactive: 'warning',
   archived: 'neutral',
@@ -3882,6 +4719,7 @@ const STATUS_TAG_MAP: Record<AutomationStatus, StatusTagStatus> = {
 
 const STATUS_LABEL: Record<AutomationStatus, string> = {
   active:   'Active',
+  paused:   'Paused',
   draft:    'Draft',
   inactive: 'Inactive',
   archived: 'Archived',
@@ -3896,9 +4734,34 @@ interface TopBarProps {
   onNameChange: (v: string) => void;
   status: AutomationStatus;
   onSettingsOpen: () => void;
+  /** True when this builder was opened from the Templates library (the
+   *  workflow doesn't exist in the user's manage list yet). In template
+   *  mode the right side shows a single "Use this template" CTA, the
+   *  Run test button is hidden, and the status tag next to the name is
+   *  suppressed since the workflow has no real status yet. */
+  isTemplate?: boolean;
+  /** Toggle the AI panel — fired by the layout-left button at the very
+   *  start of the topbar. Replaces the old separate LeftPanel header
+   *  collapse button + the floating diamond expand button. */
+  onToggleAiPanel: () => void;
+  /** Drives the layout-left button's `aria-pressed` state so screen
+   *  readers can tell whether the AI panel is currently collapsed. */
+  aiPanelCollapsed: boolean;
 }
 
-function TopBar({ onBack, onTest, onPublish, saveState, name, onNameChange, status, onSettingsOpen }: TopBarProps) {
+function TopBar({
+  onBack,
+  onTest,
+  onPublish,
+  saveState,
+  name,
+  onNameChange,
+  status,
+  onSettingsOpen,
+  isTemplate = false,
+  onToggleAiPanel,
+  aiPanelCollapsed,
+}: TopBarProps) {
   const nameRef = useRef<HTMLSpanElement>(null);
   const focused = useRef(false);
 
@@ -3919,11 +4782,6 @@ function TopBar({ onBack, onTest, onPublish, saveState, name, onNameChange, stat
   return (
     <header className={styles.topBar}>
       <div className={styles.topBarLeft}>
-        {/* Back chevron + divider have moved to the LeftPanel header
-            (far left of the AI thread column), mirroring how the
-            workflow-list "Edit workflow" CTA hands off into the builder.
-            `onBack` is still kept on TopBar for the collapsed-AI-panel
-            case where the right column carries its own back button. */}
         {/* contenteditable span: width = text content width, so border-bottom
             is always exactly as wide as the visible text — no measurement needed */}
         <span
@@ -3954,9 +4812,83 @@ function TopBar({ onBack, onTest, onPublish, saveState, name, onNameChange, stat
             if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
           }}
         />
-        <StatusTag status={STATUS_TAG_MAP[status]} size="sm" className={styles.topBarStatusTag}>
-          {STATUS_LABEL[status]}
-        </StatusTag>
+        {/* Workflow menu — sits between the name and status tag. The
+            chevron now reads as a "more options" dropdown trigger
+            instead of a single back action: it opens a menu with the
+            back-to-list affordance + workflow Settings (which used to
+            live as its own gear button on the right of the top nav). */}
+        <DropdownMenu
+          trigger={
+            <Button
+              variant="ghost"
+              size="xs"
+              iconOnly
+              aria-label="Workflow menu"
+            >
+              <ChevronDownIcon size={12} />
+            </Button>
+          }
+          groups={[
+            {
+              id: 'workflow',
+              options: [
+                {
+                  id: 'back',
+                  label: 'Back to manage workflows',
+                  leadingSlot: <ChevronLeft />,
+                  onClick: onBack,
+                },
+                {
+                  id: 'settings',
+                  label: 'Settings',
+                  leadingSlot: <SettingsGearIcon />,
+                  onClick: onSettingsOpen,
+                },
+              ],
+            },
+          ]}
+          placement="bottom-start"
+          width="max-content"
+        />
+        {/* AI panel toggle — layout-left glyph slotted between the
+            workflow chevron menu and the status tag. Replaces the
+            standalone LeftPanel header (which used to carry the
+            wordmark + collapse button) and the floating diamond
+            expand button when the panel was collapsed. One
+            affordance, two states: collapsed → expand on click;
+            expanded → collapse on click. */}
+        <Button
+          variant="ghost"
+          size="xs"
+          iconOnly
+          onClick={onToggleAiPanel}
+          aria-label={aiPanelCollapsed ? 'Expand AI panel' : 'Collapse AI panel'}
+          aria-pressed={aiPanelCollapsed}
+        >
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            aria-hidden
+          >
+            <path
+              d="M9 3V21M7.8 3H16.2C17.8802 3 18.7202 3 19.362 3.32698C19.9265 3.6146 20.3854 4.07354 20.673 4.63803C21 5.27976 21 6.11984 21 7.8V16.2C21 17.8802 21 18.7202 20.673 19.362C20.3854 19.9265 19.9265 20.3854 19.362 20.673C18.7202 21 17.8802 21 16.2 21H7.8C6.11984 21 5.27976 21 4.63803 20.673C4.07354 20.3854 3.6146 19.9265 3.32698 19.362C3 18.7202 3 17.8802 3 16.2V7.8C3 6.11984 3 5.27976 3.32698 4.63803C3.6146 4.07354 4.07354 3.6146 4.63803 3.32698C5.27976 3 6.11984 3 7.8 3Z"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </Button>
+        {/* Status tag — suppressed in template mode because templates
+            haven't been added to the workflow list yet, so a status
+            chip would be misleading. */}
+        {!isTemplate && (
+          <StatusTag status={STATUS_TAG_MAP[status]} size="sm" className={styles.topBarStatusTag}>
+            {STATUS_LABEL[status]}
+          </StatusTag>
+        )}
       </div>
       <div className={styles.topBarActions}>
         {saveState !== 'idle' && (
@@ -3964,11 +4896,21 @@ function TopBar({ onBack, onTest, onPublish, saveState, name, onNameChange, stat
             {saveState === 'saving' ? 'Saving…' : 'All changes saved'}
           </span>
         )}
-        <Button variant="ghost" size="sm" iconOnly onClick={onSettingsOpen} aria-label="Workflow settings" className={styles.settingsGearBtn}>
-          <SettingsGearIcon />
-        </Button>
-        <Button variant="tertiary" size="sm" onClick={onTest}>Run test</Button>
-        <Button variant="primary"   size="sm" onClick={onPublish}>Publish</Button>
+        {/* Settings gear was here — moved into the workflow chevron
+            menu next to the workflow name (see DropdownMenu above). */}
+        {isTemplate ? (
+          /* Template mode — single primary CTA that adopts the template
+              into the user's workflow list. Run test is hidden because
+              the workflow has no live state to test yet. */
+          <Button variant="primary" size="sm" onClick={onPublish}>
+            Use this template
+          </Button>
+        ) : (
+          <>
+            <Button variant="tertiary" size="sm" onClick={onTest}>Run test</Button>
+            <Button variant="primary"   size="sm" onClick={onPublish}>Publish</Button>
+          </>
+        )}
       </div>
     </header>
   );
@@ -4566,7 +5508,7 @@ const AI_RESPONSES: Record<string, string[]> = {
   ],
   add_condition: [
     'A condition lets you branch the flow. Configure what to check on the right.',
-    'Condition added — set an operator and value to see the yes/no branches appear.',
+    'Condition added — set an operator and value, then connect downstream paths.',
   ],
   add_action: [
     'Action dropped in. Pick an action type on the right to define what it does.',
@@ -4726,10 +5668,16 @@ function TypingText({ content, onProgress }: { content: string; onProgress?: () 
   return <MarkdownText content={content.slice(0, len)} />;
 }
 
-// ─── NodeChangeCard ──────────────────────────────────────────────────────────────
+// ─── NodeChangeCard / UserChangeGroup ────────────────────────────────────────
 // Inline card rendered in the AI thread whenever a canvas node change is
-// logged. Display-only: header label above, rows for each affected node,
-// separator, and a footer with dot-separated stats + timestamp.
+// logged. Display-only: three label-value rows (Node ID, Last updated,
+// Change made) for the affected node(s).
+//
+// `UserChangeGroup` aggregates several canvas changes that happen within
+// the same wall-clock minute into a single thread block — each change
+// type (Added / Deleted / Connected / Disconnected / Modified) becomes
+// its own collapsible sub-row, with a paginated NodeChangeCard inside
+// when expanded. Mirrors the AI activity-trail visual language.
 
 interface NodeChangeCardProps {
   payload: NodeChangePayload;
@@ -4737,25 +5685,146 @@ interface NodeChangeCardProps {
 }
 
 function NodeChangeCard({ payload, timestamp }: NodeChangeCardProps) {
-  const side = payload.side ?? 'outbound';
   const headerLabel = payload.headerLabel ?? payload.changeType;
 
-  // Node ID(s) — flattened for multi-node changes (e.g. `connected` carries
-  // both endpoints; `deleted` may batch). Falls back to an em-dash when the
-  // payload happens to have no nodes attached.
   const nodeIds = payload.nodes.length > 0
     ? payload.nodes.map(n => n.id).join(', ')
     : '—';
 
-  // Last updated — reuses the right-panel Info card's relative-time
-  // formatter so timestamps read consistently across the app.
   const lastUpdated = formatInfoTimestamp(new Date(timestamp).toISOString());
 
-  // Change made — combines the action (header label, e.g. "AI configured" /
-  // "Node added") with the affected node name(s) so the line carries both
-  // the verb and the target.
   const nodeNames = payload.nodes.map(n => n.name).filter(Boolean).join(', ');
   const changeDesc = nodeNames ? `${headerLabel} — ${nodeNames}` : headerLabel;
+
+  return (
+    <div className={styles.nodeChangeCard}>
+      <div className={styles.nodeChangeMetaRow}>
+        <span className={styles.nodeChangeMetaLabel}>Node ID</span>
+        <code className={styles.nodeChangeMetaValueMono}>{nodeIds}</code>
+      </div>
+      <div className={styles.nodeChangeMetaRow}>
+        <span className={styles.nodeChangeMetaLabel}>Last updated</span>
+        <time
+          className={styles.nodeChangeMetaValue}
+          dateTime={new Date(timestamp).toISOString()}
+        >
+          {lastUpdated}
+        </time>
+      </div>
+      <div className={styles.nodeChangeMetaRow}>
+        <span className={styles.nodeChangeMetaLabel}>Change made</span>
+        <span className={styles.nodeChangeMetaValue}>{changeDesc}</span>
+      </div>
+    </div>
+  );
+}
+
+// ── User change group ───────────────────────────────────────────────────────
+
+/** One change-type subgroup within a UserChangeGroup. Carries every
+ *  individual NodeChangePayload that fell into the same minute window AND
+ *  shares a `changeType` (e.g. all the "Added" events for that minute).
+ *  Each entry remembers its own timestamp so the paginated card inside can
+ *  show the correct relative time per page. */
+interface UserChangeSubgroup {
+  changeType: string;
+  entries: Array<{ payload: NodeChangePayload; timestamp: number; id: string }>;
+}
+
+/** Icon resolver for the change-type sub-row pill. Each `changeType` emitted
+ *  by `emitNodeChange` maps to one of these. Falls back to a neutral edit
+ *  glyph for anything unmapped. */
+function getChangeTypeIcon(changeType: string): React.ReactNode {
+  switch (changeType) {
+    case 'Added':        return <PlusIcon size={14} />;
+    case 'Deleted':      return <Trash03Icon size={14} />;
+    case 'Connected':    return <Link01Icon size={14} />;
+    case 'Disconnected': return <LinkBroken01Icon size={14} />;
+    case 'Modified':     return <Edit03Icon size={14} />;
+    case 'Configured':   return <Edit03Icon size={14} />;
+    default:             return <Edit03Icon size={14} />;
+  }
+}
+
+/** A single sub-row inside a UserChangeGroup. Reads as one of the AI
+ *  activity trail's steps — icon + single-line label, with a "N steps"
+ *  sub-toggle pill that expands to reveal each change's NodeChangeCard
+ *  beneath. Same visual language as the AssistantActivityTrail above so
+ *  user-driven changes and AI activity carry consistent treatment. */
+function UserChangeSubgroupRow({ subgroup }: { subgroup: UserChangeSubgroup }) {
+  // Each individual change becomes one sub-activity entry under the step.
+  // Alloy's AIActivityStep renders these in a typewriter list when its
+  // parent trail is `live`; in `done` state they appear statically inside
+  // the step's collapsible region, shown/hidden by the auto-rendered
+  // "N steps" sub-toggle pill.
+  const subActivities = subgroup.entries.map((e) => (
+    <NodeChangeCard
+      key={e.id}
+      payload={e.payload}
+      timestamp={e.timestamp}
+    />
+  ));
+  return (
+    <AIActivityStep
+      type="tool"
+      status="done"
+      icon={getChangeTypeIcon(subgroup.changeType)}
+      subActivities={subActivities}
+    >
+      {subgroup.changeType}
+    </AIActivityStep>
+  );
+}
+
+interface UserChangeGroupProps {
+  /** Thread entries that share a wall-clock minute window. Already filtered
+   *  by the caller to `kind: 'node_change'` — the component renders nothing
+   *  for non-change kinds. */
+  entries: ThreadEntry[];
+}
+
+/** Grouped block rendered in place of consecutive `node_change` thread
+ *  entries that fall within the same minute window. Sub-groups by
+ *  `changeType` and renders each as its own collapsible sub-row. The outer
+ *  AIActivityTrail surfaces a top-level summary like "Modified · 4 changes"
+ *  using the most recent change as the verb (mirrors the design where the
+ *  group header reads from the latest action). */
+function UserChangeGroup({ entries }: UserChangeGroupProps) {
+  // Pre-compute the sub-groups bucketed by changeType, preserving the
+  // first-seen order of each bucket so the row order in the UI matches
+  // the order the changes happened.
+  const subgroups: UserChangeSubgroup[] = useMemo(() => {
+    const order: string[] = [];
+    const map = new Map<string, UserChangeSubgroup>();
+    entries.forEach(e => {
+      if (!e.nodeChange) return;
+      const key = e.nodeChange.changeType;
+      if (!map.has(key)) {
+        order.push(key);
+        map.set(key, { changeType: key, entries: [] });
+      }
+      map.get(key)!.entries.push({ payload: e.nodeChange, timestamp: e.timestamp, id: e.id });
+    });
+    return order.map(k => map.get(k)!);
+  }, [entries]);
+
+  if (subgroups.length === 0) return null;
+
+  // Total change count drives the outer summary suffix. The verb itself
+  // comes from the most recently-emitted change so the header reads as a
+  // live "what just happened" summary rather than an arbitrary pick.
+  const total = entries.length;
+  const lastType = entries[entries.length - 1]?.nodeChange?.changeType ?? 'Changes';
+  const summaryText = `${lastType} · ${total} ${total === 1 ? 'change' : 'changes'}`;
+
+  // Side comes from the first entry's payload; all entries in a group share
+  // the same side because we only group consecutive same-side mutations.
+  const side = entries[0]?.nodeChange?.side ?? 'outbound';
+
+  // Latest timestamp drives the hover-revealed stamp beneath the trail —
+  // the group reads as "this is when the most recent change in this batch
+  // landed", same convention AIUserMessage uses for its `time` prop.
+  const latestTimestamp = entries[entries.length - 1]?.timestamp;
 
   return (
     <div
@@ -4764,30 +5833,38 @@ function NodeChangeCard({ payload, timestamp }: NodeChangeCardProps) {
         side === 'inbound' ? styles.nodeChangeBlockInbound : styles.nodeChangeBlockOutbound,
       )}
     >
-      <span className={styles.nodeChangeHeaderLabel}>{headerLabel}</span>
-      <div className={styles.nodeChangeCard}>
-        {/* Three label-value rows summarise the change: which node(s)
-            were touched, when, and what kind of change it was. Same
-            shape applies for added / deleted / connected / configured
-            payloads — only the values differ. */}
-        <div className={styles.nodeChangeMetaRow}>
-          <span className={styles.nodeChangeMetaLabel}>Node ID</span>
-          <code className={styles.nodeChangeMetaValueMono}>{nodeIds}</code>
+      {/* "You" label above the activity trail — mirrors the AIUserMessage
+          label so the change group reads as something the user did, with
+          the same typographic treatment as a plain text user message. The
+          inbound (AI) side keeps no label here because the AI's activity
+          context is already conveyed by the surrounding AIAssistantMessage
+          chain. */}
+      {side === 'outbound' && <AILabel align="user">You</AILabel>}
+      <AIActivityTrail
+        state="done"
+        summary={
+          <span className={styles.activityTrailSummary}>
+            <Edit05Icon size={14} />
+            <span>{summaryText}</span>
+          </span>
+        }
+        className={styles.nodeChangeTrail}
+      >
+        <div className={styles.userChangeGroupBody}>
+          {subgroups.map(sg => (
+            <UserChangeSubgroupRow key={sg.changeType} subgroup={sg} />
+          ))}
         </div>
-        <div className={styles.nodeChangeMetaRow}>
-          <span className={styles.nodeChangeMetaLabel}>Last updated</span>
-          <time
-            className={styles.nodeChangeMetaValue}
-            dateTime={new Date(timestamp).toISOString()}
-          >
-            {lastUpdated}
-          </time>
-        </div>
-        <div className={styles.nodeChangeMetaRow}>
-          <span className={styles.nodeChangeMetaLabel}>Change made</span>
-          <span className={styles.nodeChangeMetaValue}>{changeDesc}</span>
-        </div>
-      </div>
+      </AIActivityTrail>
+      {/* Always-on timestamp beneath the trail. We use the `inline`
+          variant rather than the default absolute hover-reveal so the
+          stamp is always visible AND takes real layout space — that
+          way the AI loader (which renders directly after the last
+          thread entry) sits cleanly below the timestamp instead of
+          overlapping it via its negative margin-top. */}
+      {side === 'outbound' && latestTimestamp != null && (
+        <AITimestamp inline align="user" value={latestTimestamp} className={styles.nodeChangeTimestamp} />
+      )}
     </div>
   );
 }
@@ -4891,8 +5968,31 @@ function AssistantActivityTrail({ isLive }: { isLive: boolean }) {
   const allDone = activeIdx >= totalSteps;
   const trailState: 'live' | 'done' = isLive && !allDone ? 'live' : 'done';
 
+  // Replicate the trail's default summary copy ("Working · N steps" while
+  // live; "Thought for 6s · 5 steps" once done) so we can prepend a
+  // leading loader to mark this as AI-side activity while it's running.
+  //
+  // While the trail is `live` (AI is actively streaming), the animated
+  // AILoader pulses at the leading edge — the agreed signal that work
+  // is in flight. Once the trail flips to `done`, the leading icon is
+  // dropped entirely so the settled summary reads as plain text — the
+  // sparkle no longer carries any meaning at that point and would
+  // otherwise compete with the message body that lands beneath it.
+  const summaryText =
+    trailState === 'live'
+      ? `Working · ${totalSteps} steps`
+      : `Thought for 6s · ${totalSteps} steps`;
+  const summaryNode = (
+    <span className={styles.activityTrailSummary}>
+      {trailState === 'live' && (
+        <AILoader size={14} state="loading" aria-label="Streaming" />
+      )}
+      <span>{summaryText}</span>
+    </span>
+  );
+
   return (
-    <AIActivityTrail state={trailState} duration="6s">
+    <AIActivityTrail state={trailState} duration="6s" summary={summaryNode}>
       {ASSISTANT_TRAIL_STEPS.map((step, i) => {
         const status: 'pending' | 'active' | 'done' =
           allDone || i < activeIdx
@@ -5026,48 +6126,13 @@ function LeftPanel({
       className={styles.leftPanel}
       style={{ width: panelWidth }}
     >
-      {/* ── Header — Back chevron · Teambridge AI wordmark · Collapse ── */}
-      <header className={styles.leftPanelHeader}>
-        {/* Back-to-list chevron lives at the far left of the LeftPanel
-            header now (was in the right-column TopBar). Mirrors the
-            workflow-list "Edit workflow" → builder lineage. */}
-        <Button
-          variant="tertiary"
-          size="sm"
-          iconOnly
-          onClick={onBack}
-          aria-label="Back to automations"
-          className={styles.leftPanelBackBtn}
-        >
-          <ChevronLeft />
-        </Button>
-        <Divider orientation="vertical" />
-        <img
-          className={clsx(styles.leftPanelHeaderLogo, styles.leftPanelHeaderLogoLight)}
-          src={tbAiLightLogo}
-          alt="Teambridge AI"
-          aria-hidden="false"
-        />
-        <img
-          className={clsx(styles.leftPanelHeaderLogo, styles.leftPanelHeaderLogoDark)}
-          src={tbAiDarkLogo}
-          alt=""
-          aria-hidden="true"
-        />
-        <span className={styles.leftPanelHeaderSpacer} aria-hidden />
-        <Button
-          variant="ghost"
-          size="sm"
-          iconOnly
-          onClick={onCollapse}
-          aria-label="Collapse AI panel"
-        >
-          {/* Minus reads as "collapse" — clicking it dismisses the whole
-              panel; a re-open button shows up in the right column so the
-              user can bring it back. */}
-          <MinusIcon />
-        </Button>
-      </header>
+      {/* Header removed — the AI panel collapse button + wordmark have
+          been merged into the unified TopBar that spans the top of the
+          builder. The panel itself starts directly with the resize
+          handle + composer body. `onCollapse` is no longer used here
+          (the toggle lives in TopBar instead) but the prop is kept for
+          API symmetry with the resize-handle's click-to-collapse
+          fallback below. */}
       {/* ── Handle — drag to resize, click to collapse ── */}
       <div
         ref={leftHandleRef}
@@ -5103,7 +6168,55 @@ function LeftPanel({
                 // live trail animation; older AI responses always render
                 // their trail in the static `done` state.
                 const latestAiId = [...entries].reverse().find(e => e.kind === 'ai')?.id;
-                return entries.map((entry) => {
+
+                // ── Render-time grouping ──
+                // Consecutive `node_change` entries with timestamps in the
+                // same wall-clock minute fold into a single virtual item so
+                // the renderer below can replace them with a UserChangeGroup
+                // block. Non-change entries pass through unchanged. We bucket
+                // by `Math.floor(ts / 60000)` (UTC-minute index) to keep the
+                // grouping deterministic regardless of locale.
+                type RenderItem =
+                  | { kind: 'entry'; entry: ThreadEntry }
+                  | { kind: 'changes'; key: string; entries: ThreadEntry[] };
+                const items: RenderItem[] = [];
+                entries.forEach((entry) => {
+                  if (entry.kind !== 'node_change' || !entry.nodeChange) {
+                    items.push({ kind: 'entry', entry });
+                    return;
+                  }
+                  const minuteKey = Math.floor(entry.timestamp / 60000);
+                  const last = items[items.length - 1];
+                  // Append to the previous group when (a) it's a changes
+                  // group, (b) it falls in the same minute, and (c) it
+                  // shares the same side. Otherwise start a new group.
+                  if (
+                    last &&
+                    last.kind === 'changes' &&
+                    last.key === `${minuteKey}-${entry.nodeChange.side ?? 'outbound'}`
+                  ) {
+                    last.entries.push(entry);
+                  } else {
+                    items.push({
+                      kind: 'changes',
+                      key: `${minuteKey}-${entry.nodeChange.side ?? 'outbound'}`,
+                      entries: [entry],
+                    });
+                  }
+                });
+
+                return items.map((item) => {
+                  if (item.kind === 'changes') {
+                    // Use the first entry's id as the React key — stable
+                    // across re-renders because thread entries never
+                    // mutate their ids.
+                    return (
+                      <Fragment key={`changes-${item.entries[0].id}`}>
+                        <UserChangeGroup entries={item.entries} />
+                      </Fragment>
+                    );
+                  }
+                  const entry = item.entry;
                   const isInitial = initialEntryIdsRef.current.has(entry.id);
                   const isLatestAi = entry.id === latestAiId;
                   // Trail is live whenever the entry is still pending —
@@ -5204,26 +6317,26 @@ function LeftPanel({
                       )}
                     </>
                   )}
-                  {entry.kind === 'node_change' && entry.nodeChange && (
-                    <NodeChangeCard payload={entry.nodeChange} timestamp={entry.timestamp} />
-                  )}
+                  {/* `node_change` entries are absorbed into UserChangeGroup
+                      via the render-time grouping pass above and never reach
+                      this branch. */}
                 </Fragment>
                   );
                 });
               })()}
 
-              {/* Single AILoader pinned at the end of the conversation — flips
-                  variant between `loading` while the AI is responding and
-                  `ready` while standing by for the next prompt.
-                  `aiChatLoaderRow` overrides the default thread gap so the
-                  loader sits 8px below the action row above instead of 32px. */}
-              <AIAssistantMessage className={styles.aiChatLoaderRow}>
-                <AILoader
-                  variant="gradient-fill"
-                  size="xs"
-                  state={aiTyping ? 'loading' : 'ready'}
-                />
-              </AIAssistantMessage>
+              {/* Idle-state AILoader pinned at the end of the conversation —
+                  shows only while the AI is NOT actively responding. When
+                  `aiTyping` is true, the AssistantActivityTrail's own
+                  in-header loader carries the "working" signal, so this
+                  bottom loader is suppressed to avoid two simultaneous
+                  spinners. The `aiChatLoaderRow` style still pulls the
+                  ready-state indicator close under the action row above. */}
+              {!aiTyping && (
+                <AIAssistantMessage className={styles.aiChatLoaderRow}>
+                  <AILoader variant="gradient-fill" size="xs" state="ready" />
+                </AIAssistantMessage>
+              )}
 
               <div ref={chatBottomRef} aria-hidden="true" />
             </AIThread>
@@ -5266,6 +6379,11 @@ function LeftPanel({
 interface FlowNodeProps {
   step: FlowStep;
   isSelected: boolean;
+  /** True when the node is part of a marquee / Cmd-click multi-selection.
+   *  Drives the same focused visual treatment as `isSelected` (filled
+   *  card chrome, accent border) but does NOT open the right-panel
+   *  popover — multi-selection is for spatial / batch operations only. */
+  isMultiSelected?: boolean;
   isDragging: boolean;
   isDragOver: boolean;
   /** True only when the previous step is the same type — enforces trigger→condition→action order */
@@ -5302,6 +6420,7 @@ interface FlowNodeProps {
 function FlowNode({
   step,
   isSelected,
+  isMultiSelected = false,
   isDragging,
   isDragOver,
   canMoveUp,
@@ -5364,7 +6483,7 @@ function FlowNode({
         {
           id: 'duplicate',
           label: 'Duplicate',
-          leadingSlot: <DuplicateSmallIcon />,
+          leadingSlot: <Copy01Icon size={14} />,
           onClick: onDuplicate,
         },
         ...(canMoveUp ? [{
@@ -5387,7 +6506,7 @@ function FlowNode({
         {
           id: 'delete',
           label: 'Delete',
-          leadingSlot: <TrashIcon />,
+          leadingSlot: <Trash03Icon size={14} />,
           destructive: true,
           onClick: onDelete,
         },
@@ -5405,8 +6524,14 @@ function FlowNode({
   }, [isSelected]);
 
   // Popover is suppressed while editNodeMode is active (click = edit-select, not config).
+  // It's also gated strictly on `isSelected` (not multi-select) so a marquee
+  // sweep doesn't pop the right-panel for every node it touches.
   const showPopover = isSelected && popoverOpen && !isDragging && !editNodeMode;
 
+  // `focused` is the union of single-select + multi-select for VISUAL
+  // purposes — both states get the filled active card chrome. The
+  // popover keeps its strict `isSelected`-only gate above.
+  const focused = isSelected || isMultiSelected;
   const isDelay = step.type === 'delay';
   const isTrigger = step.type === 'trigger';
   const isAction = step.type === 'action';
@@ -5414,11 +6539,11 @@ function FlowNode({
   const isPolicy = step.type === 'policy';
   const isAi = step.type === 'ai';
   const isPill = isDelay || isTrigger;
-  const pillFocused = isPill && isSelected && !editNodeMode;
-  const actionFocused = isAction && isSelected && !editNodeMode;
-  const conditionActive = isCondition && isSelected && !editNodeMode;
-  const policyActive = isPolicy && isSelected && !editNodeMode;
-  const aiFocused = isAi && isSelected && !editNodeMode;
+  const pillFocused = isPill && focused && !editNodeMode;
+  const actionFocused = isAction && focused && !editNodeMode;
+  const conditionActive = isCondition && focused && !editNodeMode;
+  const policyActive = isPolicy && focused && !editNodeMode;
+  const aiFocused = isAi && focused && !editNodeMode;
 
   return (
     <div
@@ -5431,7 +6556,7 @@ function FlowNode({
         isCondition && styles.flowNodeOuterCondition,
         isPolicy && styles.flowNodeOuterPolicy,
         isAi && styles.flowNodeOuterAi,
-        isSelected && !editNodeMode && !isPill && !isAction && !isCondition && !isPolicy && !isAi && styles.flowNodeOuterSelected,
+        focused && !editNodeMode && !isPill && !isAction && !isCondition && !isPolicy && !isAi && styles.flowNodeOuterSelected,
         isDragging && styles.flowNodeOuterDragging,
         isDragOver && styles.flowNodeOuterDragOver,
         isEditSelected && styles.flowNodeOuterEditSelected,
@@ -6062,11 +7187,14 @@ function NodeAiFloatingInput({ step, left, top, zoom, onSubmit }: NodeAiFloating
  *  - Nodes inside a formal condition group cannot receive direct connections
  *    (the group owns its input via the group-level anchor)
  */
-/** Connections that should be rejected without surfacing any error toast to the user. */
+/** Connections that should be rejected without surfacing any error toast to
+ *  the user. Currently just the spec-blocked Delay→Delay and Policy→Policy
+ *  pairs; conditions can fan out to any number of downstream nodes. */
 function isConnectionSilentlyBlocked(
   fromId: string,
   toId: string,
   nodes: GraphNode[],
+  _edges: GraphEdge[] = [],
 ): boolean {
   const fromNode = nodes.find(n => n.id === fromId);
   const toNode   = nodes.find(n => n.id === toId);
@@ -6100,14 +7228,23 @@ function getConnectionError(
     return 'Policy cannot connect to another Policy';
   }
 
-  // Action / AI can only chain to another action or AI specialist.
-  if (fromNode.type === 'action' || fromNode.type === 'ai') {
+  // AI nodes can only chain to another action or AI specialist.
+  // Actions are unrestricted (any non-trigger target — the trigger
+  // guard below catches `toNode.type === 'trigger'`).
+  if (fromNode.type === 'ai') {
     if (toNode.type !== 'action' && toNode.type !== 'ai') {
-      return "Action/AI nodes can only connect to another Action or AI node";
+      return "AI nodes can only connect to another Action or AI node";
     }
   }
 
-  // Triggers accept no incoming edges
+  // Triggers accept no incoming edges (they're always graph roots).
+  // Note: any non-trigger target accepts MULTIPLE incoming edges,
+  // which means several triggers can fan into the same node — the
+  // duplicate guard in `appendEdgeIfMissing` only rejects exact
+  // (from, to) repeats, so distinct sources to the same target stay
+  // valid. This is what powers multi-trigger workflows: drop a second
+  // (or third) trigger and drag-connect each to a shared downstream
+  // condition / action / AI / delay / policy node.
   if (toNode.type === 'trigger') {
     return "Can't connect to a trigger";
   }
@@ -6188,6 +7325,31 @@ function FlowCanvas({
   const [invalidConnection, setInvalidConnection] = useState<{ x: number; y: number; msg: string } | null>(null);
   const invalidConnectionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // ── Post-commit measurement tick ─────────────────────────────────────────
+  // Edges are SVG paths whose endpoints are computed at render time by
+  // `getAnchorCenter`, which queries the DOM for the actual anchor element
+  // positions (the only way to get correct coordinates for cards whose
+  // height varies by type — condition / policy cards are roughly half the
+  // height of action / trigger cards). On the FIRST render after a node
+  // is added, the new node's anchor isn't in the DOM yet, so the lookup
+  // falls back to a generic NODE_H rectangle that's wrong for the
+  // shorter card types. The path then renders with a noticeable visual
+  // gap below the actual anchor on the new node's neighbour edges.
+  //
+  // To self-heal, we run a layout effect that bumps a tick counter whenever
+  // the graph topology changes. The tick threads into the edges' rendering
+  // (it's read into the closure via `measureTick`) so the next render
+  // forces a re-measure after React has committed the new DOM, snapping
+  // every edge endpoint to its real anchor position.
+  const [measureTick, setMeasureTick] = useState(0);
+  useLayoutEffect(() => {
+    setMeasureTick(t => t + 1);
+  }, [nodes, edges, nodePositions]);
+  // Read in render so the closure captures the value — without this the
+  // bundler may strip the dep and the tick wouldn't actually trigger a
+  // re-measure of `getAnchorCenter` calls in the JSX below.
+  void measureTick;
+
   // Refs so mousemove/mouseup callbacks don't go stale
   const isPanning      = useRef(false);
   const panStart       = useRef({ mx: 0, my: 0, px: 0, py: 0 });
@@ -6195,12 +7357,33 @@ function FlowCanvas({
     id: string;
     offsetX: number;
     offsetY: number;
+    /** Cursor's canvas coords at drag start. Only set when this drag is a
+     *  multi-drag (`> 1` nodes selected and the dragged node is one of
+     *  them). Used to compute a uniform delta for every selected node. */
+    multiAnchorX?: number;
+    multiAnchorY?: number;
   } | null>(null);
   const pendingEdgeRef         = useRef<PendingEdge | null>(null);
   const draggingOverNodeIdRef  = useRef<string | null>(null);
   const reconnectingEdgeIdRef  = useRef<string | null>(null);
   const [draggingOverNodeId, setDraggingOverNodeId] = useState<string | null>(null);
   const zoomRef        = useRef(zoom);
+
+  // ── Marquee multi-selection ─────────────────────────────────────────────
+  // Shift-drag on empty canvas paints a selection rectangle; nodes whose
+  // wrapper bbox intersects the box are added to the multi-select set on
+  // mousemove (live preview) and committed on mouseup. While > 1 nodes are
+  // multi-selected, dragging any one of them moves the whole group, and
+  // pressing Delete / Backspace removes them all in one undo step.
+  const [marquee, setMarquee] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
+  const marqueeRef = useRef<typeof marquee>(null);
+  const [multiSelectedIds, setMultiSelectedIds] = useState<Set<string>>(new Set());
+  const multiSelectedIdsRef = useRef(multiSelectedIds);
+  multiSelectedIdsRef.current = multiSelectedIds;
+  /** Per-node initial position captured at the start of a multi-drag so we
+   *  can apply a uniform delta to every selected node without compounding
+   *  rounding errors over a long drag. */
+  const multiDragOriginsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   zoomRef.current      = zoom;
 
   // Close type picker when clicking outside
@@ -6215,6 +7398,66 @@ function FlowCanvas({
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [typePickerPos]);
+
+  // ── Selection keyboard shortcuts ────────────────────────────────────────
+  // Esc clears any active marquee selection (and deselects the single node
+  // when there's no marquee). Delete / Backspace removes every selected
+  // node in one batch — multi-selected ids first, falling back to the
+  // single `selectedId` so the same keystroke works whether the user
+  // has one or many nodes picked.
+  //
+  // Each `onDeleteNode` call lands on the undo stack as a separate
+  // snapshot, but they're contiguous, so a single Cmd+Z restores the
+  // most-recently-deleted node and a run of Cmd+Z restores the full
+  // set. The shortcuts are suppressed while the user is typing into a
+  // form control so we don't eat their text-edit Backspace.
+  //
+  // Refs (rather than the closed-over props) drive both the
+  // `multiSelectedIds` AND `selectedId` reads at firing time so the
+  // handler always sees the latest selection without re-attaching on
+  // every render.
+  const selectedIdRef = useRef(selectedId);
+  selectedIdRef.current = selectedId;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      // Suppress when focus is on a text-editing surface — but Esc still
+      // gets to clear the canvas selection so a "stuck" focus state
+      // can't trap the user (Esc is a safe no-op in form fields anyway).
+      const inText = !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+      if (e.key === 'Escape') {
+        if (multiSelectedIdsRef.current.size > 0) {
+          e.preventDefault();
+          setMultiSelectedIds(new Set());
+          return;
+        }
+        if (selectedIdRef.current && !inText) {
+          e.preventDefault();
+          onDeselectNode();
+        }
+        return;
+      }
+      if (inText) return;
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (multiSelectedIdsRef.current.size > 0) {
+          e.preventDefault();
+          // Snapshot the ids before mutation — `onDeleteNode` will
+          // trigger setState cascades that update `multiSelectedIdsRef`
+          // too.
+          const ids = [...multiSelectedIdsRef.current];
+          ids.forEach(id => onDeleteNode(id));
+          setMultiSelectedIds(new Set());
+          return;
+        }
+        if (selectedIdRef.current) {
+          e.preventDefault();
+          onDeleteNode(selectedIdRef.current);
+        }
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onDeleteNode, onDeselectNode]);
 
   // Close edge drag-drop picker when clicking outside
   useEffect(() => {
@@ -6256,6 +7499,23 @@ function FlowCanvas({
   // ── MouseDown: start anchor-edge draw OR node drag OR canvas pan ──
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement;
+
+    /** Drop focus from text-editing surfaces (the contenteditable workflow
+     *  name in TopBar, popover form fields, AI composer, etc.) before
+     *  we transition into a canvas interaction. Without this, the
+     *  Backspace / Delete / Escape multi-select handler bails because
+     *  `e.target.isContentEditable` is true on the focused TopBar field
+     *  even though the user is now operating on the canvas. We only
+     *  blur on canvas-empty interactions (marquee / pan / deselect) —
+     *  if the target is a node interior or a button, leave focus alone
+     *  so per-node a11y / typing flows aren't disrupted. */
+    const blurTextFocus = () => {
+      const ae = document.activeElement as HTMLElement | null;
+      if (!ae) return;
+      if (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable) {
+        ae.blur();
+      }
+    };
 
     // If the click is on an interactive control inside a node, still select the node
     // (so the right panel opens) but skip drag/pan setup.
@@ -6331,15 +7591,90 @@ function FlowCanvas({
       const gc = graphContentRef.current.getBoundingClientRect();
       const mx = (e.clientX - gc.left) / zoomRef.current;
       const my = (e.clientY - gc.top)  / zoomRef.current;
-      nodeDragRef.current = { id: nodeId, offsetX: mx - pos.x, offsetY: my - pos.y };
+
+      // Cmd/Ctrl+click → toggle this node into the multi-select set
+      // additively, without starting a drag. Useful for picking a few
+      // non-adjacent nodes after an initial marquee.
+      if (e.metaKey || e.ctrlKey) {
+        // Drop focus from any text-editing surface so the next Backspace
+        // / Delete / Escape lands on the canvas multi-select handler
+        // instead of the focused input or contenteditable.
+        blurTextFocus();
+        // Clear any single-node selection so the popover closes — the
+        // user is composing a multi-selection now, not configuring one
+        // node.
+        onDeselectNode();
+        setMultiSelectedIds(prev => {
+          const next = new Set(prev);
+          if (next.has(nodeId)) next.delete(nodeId);
+          else next.add(nodeId);
+          return next;
+        });
+        return;
+      }
+
+      // Multi-drag: if this node is part of a > 1 multi-selection, capture
+      // every selected node's start position so mousemove can apply a
+      // uniform delta. The dragged node itself still drives the cursor
+      // tracking via `nodeDragRef.current.id`.
+      const isMultiDrag =
+        multiSelectedIdsRef.current.has(nodeId) &&
+        multiSelectedIdsRef.current.size > 1;
+      if (isMultiDrag) {
+        multiDragOriginsRef.current = new Map();
+        multiSelectedIdsRef.current.forEach(id => {
+          const p = nodePositions[id];
+          if (p) multiDragOriginsRef.current.set(id, { x: p.x, y: p.y });
+        });
+        nodeDragRef.current = {
+          id: nodeId,
+          offsetX: mx - pos.x,
+          offsetY: my - pos.y,
+          multiAnchorX: mx,
+          multiAnchorY: my,
+        };
+      } else {
+        // Plain single-node drag clears any prior multi-selection so the
+        // user doesn't get stuck dragging a phantom group after picking a
+        // new node solo.
+        if (multiSelectedIdsRef.current.size > 0) setMultiSelectedIds(new Set());
+        multiDragOriginsRef.current = new Map();
+        nodeDragRef.current = { id: nodeId, offsetX: mx - pos.x, offsetY: my - pos.y };
+      }
       setDraggingNodeId(nodeId);
       onSelectNode(nodeId);
       return;
     }
 
-    // Canvas pan (skip if the target is a button-like focusable role)
+    // Empty canvas — plain drag paints a marquee (Figma-style multi-select);
+    // hold Shift to pan instead. (skip if the target is a button-like role)
     if (target.closest('[role="button"]')) return;
+
+    if (!e.shiftKey && graphContentRef.current) {
+      const gc = graphContentRef.current.getBoundingClientRect();
+      const cx = (e.clientX - gc.left) / zoomRef.current;
+      const cy = (e.clientY - gc.top)  / zoomRef.current;
+      marqueeRef.current = { x1: cx, y1: cy, x2: cx, y2: cy };
+      setMarquee(marqueeRef.current);
+      // Marquee starts a fresh selection — clearer than trying to merge
+      // the previous set, since the user already has Cmd-click for
+      // additive picking after the marquee is committed.
+      setMultiSelectedIds(new Set());
+      // Also clear any single-node selection so the marquee is the only
+      // active selection while it's being drawn.
+      onDeselectNode();
+      // Drop focus off any text-editing surface (TopBar workflow name,
+      // popover form fields, AI composer) so the subsequent Backspace
+      // / Delete / Escape goes to the canvas multi-select handler.
+      blurTextFocus();
+      return;
+    }
+
+    // Shift+drag → pan. Single-node selection is cleared so the empty-
+    // canvas drag doesn't carry stale selection state through the pan.
     onDeselectNode();
+    if (multiSelectedIdsRef.current.size > 0) setMultiSelectedIds(new Set());
+    blurTextFocus();
     isPanning.current = true;
     panStart.current  = { mx: e.clientX, my: e.clientY, px: pan.x, py: pan.y };
     (e.currentTarget as HTMLElement).dataset.panning = 'true';
@@ -6390,11 +7725,67 @@ function FlowCanvas({
       const gc = graphContentRef.current.getBoundingClientRect();
       const mx = (e.clientX - gc.left) / zoomRef.current;
       const my = (e.clientY - gc.top)  / zoomRef.current;
+      // Multi-drag: every selected node moves by the same (dx, dy) the
+      // cursor has travelled since drag start. Computing the delta from
+      // the captured origins (rather than from the current positions)
+      // avoids rounding drift over a long drag.
+      if (
+        nodeDragRef.current.multiAnchorX != null &&
+        nodeDragRef.current.multiAnchorY != null &&
+        multiDragOriginsRef.current.size > 1
+      ) {
+        const dx = mx - nodeDragRef.current.multiAnchorX;
+        const dy = my - nodeDragRef.current.multiAnchorY;
+        const merged: Record<string, { x: number; y: number }> = { ...nodePositions };
+        multiDragOriginsRef.current.forEach((origin, id) => {
+          merged[id] = { x: origin.x + dx, y: origin.y + dy };
+        });
+        onSetAllPositions(merged);
+        return;
+      }
       onPositionChange(
         nodeDragRef.current.id,
         mx - nodeDragRef.current.offsetX,
         my - nodeDragRef.current.offsetY,
       );
+      return;
+    }
+    if (marqueeRef.current && graphContentRef.current) {
+      const gc = graphContentRef.current.getBoundingClientRect();
+      const cx = (e.clientX - gc.left) / zoomRef.current;
+      const cy = (e.clientY - gc.top)  / zoomRef.current;
+      const next = { ...marqueeRef.current, x2: cx, y2: cy };
+      marqueeRef.current = next;
+      setMarquee(next);
+      // Live preview of the hit set. Treat each node as a NODE_W × NODE_H
+      // rectangle for hit-testing — close enough for marquee semantics
+      // (it's an inclusive intersection test, not a precise card-shape
+      // hit). Condition / policy cards are slightly wider than NODE_W
+      // but their wrapper still uses NODE_W as its layout footprint, so
+      // the hit-test stays consistent with what the user sees.
+      const xMin = Math.min(next.x1, next.x2);
+      const xMax = Math.max(next.x1, next.x2);
+      const yMin = Math.min(next.y1, next.y2);
+      const yMax = Math.max(next.y1, next.y2);
+      const hits = new Set<string>();
+      nodes.forEach(n => {
+        const p = nodePositions[n.id];
+        if (!p) return;
+        const ax = p.x;
+        const bx = p.x + NODE_W;
+        const ay = p.y;
+        const by = p.y + NODE_H;
+        if (ax < xMax && bx > xMin && ay < yMax && by > yMin) {
+          hits.add(n.id);
+        }
+      });
+      // Cheap reference-equality short-circuit so the live preview doesn't
+      // schedule a render every mousemove tick when the hit set hasn't
+      // changed (e.g. while the box is sweeping over empty space).
+      const cur = multiSelectedIdsRef.current;
+      if (hits.size !== cur.size || [...hits].some(id => !cur.has(id))) {
+        setMultiSelectedIds(hits);
+      }
       return;
     }
     if (isPanning.current) {
@@ -6415,8 +7806,9 @@ function FlowCanvas({
       const targetId = draggingOverNodeIdRef.current;
 
       if (targetId && targetId !== fromNodeId) {
-        // Silent rejection for cases like delay→delay — no toast, no edge, no snapback state
-        if (isConnectionSilentlyBlocked(fromNodeId, targetId, nodes)) {
+        // Silent rejection for cases like delay→delay or policy→policy —
+        // no toast, no edge, no snapback state.
+        if (isConnectionSilentlyBlocked(fromNodeId, targetId, nodes, edges)) {
           if (isReconnect) reconnectingEdgeIdRef.current = null;
           pendingEdgeRef.current        = null;
           draggingOverNodeIdRef.current = null;
@@ -6465,11 +7857,23 @@ function FlowCanvas({
       setDraggingOverNodeId(null);
       return;
     }
+    if (marqueeRef.current) {
+      // Tiny drag → treat as a click → wipe selection. Real drags leave
+      // multiSelectedIds populated by the live-preview pass in mousemove.
+      const m = marqueeRef.current;
+      const dx = Math.abs(m.x2 - m.x1);
+      const dy = Math.abs(m.y2 - m.y1);
+      if (dx < 4 && dy < 4) setMultiSelectedIds(new Set());
+      marqueeRef.current = null;
+      setMarquee(null);
+      return;
+    }
     nodeDragRef.current = null;
+    multiDragOriginsRef.current = new Map();
     setDraggingNodeId(null);
     isPanning.current   = false;
     delete (_e.currentTarget as HTMLElement).dataset.panning;
-  }, [onAddEdge, onDeleteEdge, nodes]);
+  }, [onAddEdge, onDeleteEdge, nodes, edges]);
 
   // ── Palette drag-over handlers — accept all types, track cursor position ──
   const handleCanvasDragOver = (e: React.DragEvent) => {
@@ -6868,22 +8272,50 @@ function FlowCanvas({
                   key={`midplus-${edge.id}`}
                   className={styles.edgeMidpointArea}
                   style={{ left: midX - 60, top: midY - 25, width: 120, height: 50 }}
+                  /* Block the canvas pan / deselect handler from running
+                     for mousedowns on the midpoint area — otherwise the
+                     parent graphContent would treat this as a click on
+                     empty space and start a pan, which can swallow the
+                     subsequent click event before it reaches our
+                     button. */
+                  onMouseDown={e => e.stopPropagation()}
                 >
                   <button
+                    type="button"
                     className={styles.edgeMidplusBtn}
+                    onMouseDown={e => {
+                      // stopPropagation on click isn't enough — the
+                      // canvas listens on mousedown for pan / drag
+                      // detection, which can intercept the synthetic
+                      // click before it lands on the button.
+                      e.stopPropagation();
+                    }}
                     onClick={e => {
                       e.stopPropagation();
                       const rect = e.currentTarget.getBoundingClientRect();
                       setEdgeInsert({ edge, anchorRect: rect });
                     }}
                     aria-label="Insert node on edge"
-                    type="button"
                   >
                     <PlusIcon size={8} />
                   </button>
                 </div>
               );
             })}
+
+            {/* Marquee selection rectangle — rendered in canvas space so
+                it pans / zooms naturally with the rest of the content. */}
+            {marquee && (
+              <div
+                className={styles.marqueeBox}
+                style={{
+                  left: Math.min(marquee.x1, marquee.x2),
+                  top:  Math.min(marquee.y1, marquee.y2),
+                  width:  Math.abs(marquee.x2 - marquee.x1),
+                  height: Math.abs(marquee.y2 - marquee.y1),
+                }}
+              />
+            )}
 
             {/* Nodes + connector anchors */}
             {nodes.map(node => {
@@ -6897,6 +8329,7 @@ function FlowCanvas({
                   style={{ left: pos.x, top: pos.y }}
                   data-node-id={node.id}
                   data-selected={selectedId === node.id ? 'true' : undefined}
+                  data-multi-selected={multiSelectedIds.has(node.id) ? 'true' : undefined}
                   data-drag-target={draggingOverNodeId === node.id ? 'true' : undefined}
                 >
                   {/* Top anchor — all non-trigger nodes */}
@@ -6917,6 +8350,7 @@ function FlowCanvas({
                   <FlowNode
                     step={node}
                     isSelected={node.id === selectedId}
+                    isMultiSelected={multiSelectedIds.has(node.id)}
                     isDragging={isNodeDragging}
                     isDragOver={false}
                     canMoveUp={false}
@@ -6940,9 +8374,11 @@ function FlowCanvas({
                     onSaveNodePopover={onSaveNodePopover}
                   />
 
-                  {/* Bottom anchor — output handle. Always shows + and always
-                      allows drawing a new connection (multiple outgoing edges
-                      are permitted). */}
+                  {/* Bottom anchor — output handle. Always shows + and
+                      allows drawing a new connection. Multiple outgoing
+                      edges are permitted on every node type (conditions
+                      can fan out to any number of downstream nodes; the
+                      old 2-edge Yes/No cap was removed). */}
                   <div
                     className={clsx(styles.anchor, styles.anchorBottom)}
                     data-anchor="bottom"
@@ -7043,11 +8479,13 @@ function FlowCanvas({
           style={{ position: 'fixed', left: edgeDragDrop.screenX, top: edgeDragDrop.screenY, zIndex: 1000 }}
           onMouseDown={e => e.stopPropagation()}
         >
-          {(edgeDragDrop.fromNodeType === 'action'
-            ? ['action'] as StepType[]
+          {(edgeDragDrop.fromNodeType === 'ai'
+            ? ['action', 'ai'] as StepType[]  // AI nodes still constrained to action/AI
             : edgeDragDrop.fromNodeType === 'delay'
-              ? ['condition', 'action', 'ai'] as StepType[]  // Delay→Delay is disallowed
-              : ['condition', 'action', 'delay', 'ai'] as StepType[]
+              ? ['condition', 'action', 'ai', 'policy'] as StepType[]  // Delay→Delay is disallowed
+              : edgeDragDrop.fromNodeType === 'policy'
+                ? ['condition', 'action', 'delay', 'ai'] as StepType[]  // Policy→Policy is disallowed
+                : ['condition', 'action', 'delay', 'ai', 'policy'] as StepType[]
           ).map(type => {
             const cfg = STEP_CONFIG[type];
             return (
@@ -7149,6 +8587,10 @@ interface WorkflowTemplate {
    *  built, what changed last, and an offer to keep iterating. Falls back
    *  to the generic welcome when omitted. */
   summary?: string;
+  /** Workflow lifecycle status — mirrors the value the workflow list
+   *  shows for this id so the builder's TopBar status tag matches the
+   *  card chip the user clicked through from. Defaults to `'draft'`. */
+  status?: AutomationStatus;
 }
 
 /** Helper — build a trigger node that's already configured. */
@@ -7351,12 +8793,52 @@ function buildRouterTemplateSummary(state: RouterTemplateState): string {
 
 /** Synthesize a linear node chain from a TemplatesPage template spec. Reuses
  *  the mk* factories so conditions / delays / actions render with the same
- *  chrome + Info metadata as any other node on the canvas. */
+ *  chrome + Info metadata as any other node on the canvas. Also handles AI
+ *  and policy steps so library templates can showcase the full node set. */
 function buildTemplateGraph(state: RouterTemplateState): { nodes: GraphNode[]; edges: GraphEdge[] } {
   const nodes: GraphNode[] = [];
   const edges: GraphEdge[] = [];
   let prevId: string | null = null;
-  let actionIdx = 0;
+  // Per-type indices so each repeated step can pick a different config —
+  // makes a [trigger, action, action, action] template render with three
+  // distinct action labels rather than three "Send email" copies.
+  let actionIdx    = 0;
+  let conditionIdx = 0;
+  let delayIdx     = 0;
+  let aiIdx        = 0;
+  let policyIdx    = 0;
+
+  // Action labels rotate through a notification-heavy spread, since most
+  // templates are notification flows.
+  const ACTION_LABELS = [
+    'Send feed message',
+    'Send email',
+    'Send chat message',
+    'Send one-way SMS',
+    'Send report',
+    'Webhook notification',
+  ] as const;
+
+  // Condition library entries that exist in CONDITION_LIBRARY. Each one
+  // varies the field/operator/value so consecutive condition steps don't
+  // render identically.
+  const CONDITION_VARIANTS: { fieldId: string; operator: string; values: string[] }[] = [
+    { fieldId: 'shift_policy_main_credential', operator: 'is',              values: ['Enabled'] },
+    { fieldId: 'shift_policy_status',          operator: 'is',              values: ['Active'] },
+    { fieldId: 'shift_policy_published',       operator: 'is',              values: ['true'] },
+    { fieldId: 'shift_policy_regular_hours',   operator: 'is greater than', values: ['8'] },
+  ];
+
+  const DELAY_VARIANTS: { amount: string; unit: string; summary: string }[] = [
+    { amount: '5',  unit: 'minutes', summary: '5 minutes' },
+    { amount: '30', unit: 'minutes', summary: '30 minutes' },
+    { amount: '1',  unit: 'hours',   summary: '1 hour' },
+    { amount: '24', unit: 'hours',   summary: '24 hours' },
+  ];
+
+  // Personas in display order — match the AI_PERSONAS catalog.
+  const PERSONA_IDS = ['persona-001', 'persona-002', 'persona-003', 'persona-004', 'persona-005'] as const;
+
   state.templateSteps.forEach((step, i) => {
     const id = `tmpl-${state.templateId}-${step}-${i}`;
     let node: GraphNode;
@@ -7364,12 +8846,35 @@ function buildTemplateGraph(state: RouterTemplateState): { nodes: GraphNode[]; e
       const label = TRIGGER_LABEL_BY_CATEGORY[state.triggerCategory] ?? state.templateName;
       node = mkTrigger(id, label);
     } else if (step === 'action') {
+      const label = ACTION_LABELS[actionIdx % ACTION_LABELS.length];
       actionIdx++;
-      node = mkAction(id, actionIdx === 1 ? 'Send feed message' : 'Send email');
+      node = mkAction(id, label);
     } else if (step === 'condition') {
-      node = mkCondition(id, 'shift_policy_main_credential', 'is', ['Enabled']);
+      const v = CONDITION_VARIANTS[conditionIdx % CONDITION_VARIANTS.length];
+      conditionIdx++;
+      node = mkCondition(id, v.fieldId, v.operator, v.values);
     } else if (step === 'delay') {
-      node = mkDelay(id, '5', 'minutes', '5 minutes');
+      const v = DELAY_VARIANTS[delayIdx % DELAY_VARIANTS.length];
+      delayIdx++;
+      node = mkDelay(id, v.amount, v.unit, v.summary);
+    } else if (step === 'ai') {
+      const personaId = PERSONA_IDS[aiIdx % PERSONA_IDS.length];
+      aiIdx++;
+      node = mkAi(id, personaId);
+    } else if (step === 'policy') {
+      // A believable, lightly-configured policy. Each one rotates through a
+      // different threshold so repeated policy steps look distinct.
+      const thresholds = ['70', '80', '85', '90'] as const;
+      const threshold = thresholds[policyIdx % thresholds.length];
+      policyIdx++;
+      node = mkPolicy(
+        id,
+        ['folder-default-compliance'],
+        ['policy-default-fill'],
+        [],
+        threshold,
+        'percentage',
+      );
     } else {
       node = mkAction(id, state.templateName);
     }
@@ -7381,77 +8886,210 @@ function buildTemplateGraph(state: RouterTemplateState): { nodes: GraphNode[]; e
 }
 
 const WORKFLOW_TEMPLATES: Record<string, WorkflowTemplate> = {
-  // 1 · New hire onboarding — Employee created → eligible check → Send email → Start next shift
+  // 1 · New hire onboarding — fan-out flow with onboarding policy, multi-group
+  // condition, AI handoff to Onbi, and parallel comms + task-assignment branches.
   wf_01HGXZ7K3QN4A2MB: {
     name: 'New hire onboarding',
+    status: 'active',
     summary: [
-      'Welcome back to **New hire onboarding**.',
+      'Welcome back to **New hire onboarding** — the full-fat onboarding flow.',
       '',
       '**What this flow does:**',
-      '- Fires when a **new employee is created**',
-      "- Confirms credential → **New hire**",
-      '- Sends a **welcome email**',
-      "- Starts the employee's **next shift**",
+      '- Fires when an **Employee** record is created',
+      '- Applies the **New Hire Compliance** policy (3 folders · 4 policies · **90% threshold**)',
+      '- Filters to **full-time** OR **contract starting within 7 days**',
+      '- Hands off to **Onbi** (onboarding specialist)',
+      '- **Branch A** — welcome email → 1 hr delay → assign onboarding task group → chat ping the team',
+      '- **Branch B** — create HR record entry → send welcome packet report',
       '',
       '**Recent activity:**',
       '- **Mar 28** — pre-shift email template was refreshed',
+      '- **62 of last 65 runs** completed cleanly',
       '',
       '**Suggested next steps:**',
-      '- Add a **Slack ping** to the team after the welcome email',
-      '- Wire a **manager handoff** before the shift starts',
+      '- Add a **manager handoff** before the welcome packet sends',
+      '- Wire a **fallback** if the credential check fails',
     ].join('\n'),
     nodes: [
-      mkTrigger('nh-trigger-1', 'Employee created'),
-      mkCondition('nh-cond-1', 'shift_policy_main_credential', 'is', ['New hire']),
-      mkAction('nh-action-1', 'Send email'),
-      mkAction('nh-action-2', 'Start next shift'),
+      mkTrigger('nh-trigger-1', 'Something is created'),
+      mkPolicy(
+        'nh-policy-1',
+        ['folder-hr-onboarding', 'folder-compliance-newhire', 'folder-credentials-core'],
+        ['policy-newhire-i9', 'policy-newhire-w4', 'policy-newhire-handbook', 'policy-newhire-direct-deposit'],
+        ['subpolicy-remote-onboarding'],
+        '90',
+        'percentage',
+      ),
+      mkConditionGroups('nh-cond-1', [
+        [
+          { fieldId: 'shift_user_link_employment_type', operator: 'is',  values: ['Full-time'] },
+        ],
+        [
+          { fieldId: 'shift_user_link_employment_type', operator: 'is',  values: ['Contract'] },
+          { fieldId: 'shift_user_link_start_date',      operator: 'within next', values: ['7 days'] },
+        ],
+      ]),
+      mkAi('nh-ai-1', 'persona-003'),
+      // Branch A
+      {
+        ...mkAction('nh-actionA-1', 'Send email'),
+        configValues: {
+          subject: 'Welcome to the team!',
+          reply_to_address: 'onboarding@teambridge.app',
+          send_to_type: 'Specific Group of Users',
+          send_to_value: 'New Hire',
+          message:
+            'Welcome aboard — your onboarding specialist will reach out shortly with next steps. Reply to this email if anything is unclear.',
+        },
+      },
+      mkDelay('nh-delayA-1', '1', 'hours', '1 hour'),
+      {
+        ...mkAction('nh-actionA-2', 'Assign task group'),
+        configValues: { task_group: 'Driver License' },
+      },
+      {
+        ...mkAction('nh-actionA-3', 'Send chat message'),
+        configValues: {
+          send_to_type: 'Specific Group of Users',
+          send_to_value: 'Onboarding Team',
+          message: 'A new hire has been onboarded — please prep their first-week schedule.',
+        },
+      },
+      // Branch B
+      {
+        ...mkAction('nh-actionB-1', 'Create new entry'),
+        configValues: { collection: 'Employee Resources' },
+      },
+      {
+        ...mkAction('nh-actionB-2', 'Send report'),
+        configValues: {
+          send_to_type: 'Specific Group of Users',
+          send_to_value: 'HR Operations',
+          message: 'New hire report — credentials, role, location, and assigned manager included.',
+        },
+      },
     ],
     edges: [
-      { id: 'nh-e1', from: 'nh-trigger-1', to: 'nh-cond-1' },
-      { id: 'nh-e2', from: 'nh-cond-1',    to: 'nh-action-1' },
-      { id: 'nh-e3', from: 'nh-action-1',  to: 'nh-action-2' },
+      { id: 'nh-e1',  from: 'nh-trigger-1',  to: 'nh-policy-1'   },
+      { id: 'nh-e2',  from: 'nh-policy-1',   to: 'nh-cond-1'     },
+      { id: 'nh-e3',  from: 'nh-cond-1',     to: 'nh-ai-1'       },
+      // Fan-out
+      { id: 'nh-e4a', from: 'nh-ai-1',       to: 'nh-actionA-1'  },
+      { id: 'nh-e4b', from: 'nh-ai-1',       to: 'nh-actionB-1'  },
+      // Branch A chain
+      { id: 'nh-e5',  from: 'nh-actionA-1',  to: 'nh-delayA-1'   },
+      { id: 'nh-e6',  from: 'nh-delayA-1',   to: 'nh-actionA-2'  },
+      { id: 'nh-e7',  from: 'nh-actionA-2',  to: 'nh-actionA-3'  },
+      // Branch B chain
+      { id: 'nh-e8',  from: 'nh-actionB-1',  to: 'nh-actionB-2'  },
     ],
   },
 
-  // 2 · Timesheet approval reminder — Weekly Fri 3pm → Pending timesheets? → Send email
+  // 2 · Timesheet approval reminder — recurring schedule, multi-group condition,
+  // DataOps AI audit, parallel email-escalation + payroll-webhook branches.
   wf_01HGY2F9PW4VRJ8N: {
     name: 'Timesheet approval reminder',
+    status: 'active',
     summary: [
-      "You're back on **Timesheet approval reminder**.",
+      "You're back on **Timesheet approval reminder** — the weekly payroll-prep sweep.",
       '',
       '**What this flow does:**',
       '- Runs on a schedule — **every Friday at 3pm**',
-      '- Sweeps for **pending timesheets**',
-      '- Emails the **matching managers**',
+      '- Filters to **timesheet pending** AND **hours worked > 0**, OR **overtime hours > 0**',
+      '- Hands off to **DataOps** for an audit pass',
+      '- **Branch A** — manager email → **24 hr delay** → re-check pending → SMS escalation if still open',
+      '- **Branch B** — webhook to payroll → audit report to finance',
       '',
       '**Recent activity:**',
       '- **Apr 24** — last run **errored** (one manager address bounced)',
+      '- **115 of last 120 runs** completed cleanly',
       '',
       '**Suggested next steps:**',
       '- Re-check the **recipient list** on the Send email step',
       '- Add a **fallback** for invalid addresses',
     ].join('\n'),
     nodes: [
-      mkTrigger('ts-trigger-1', 'Schedule — weekly (Fri 3pm)'),
-      mkCondition('ts-cond-1', 'shift_policy_upload_timesheet', 'is', ['pending']),
-      mkAction('ts-action-1', 'Send email'),
+      mkTrigger('ts-trigger-1', 'Recurring at time interval'),
+      mkConditionGroups('ts-cond-1', [
+        [
+          { fieldId: 'shift_policy_upload_timesheet', operator: 'is',           values: ['false'] },
+          { fieldId: 'shift_policy_hours_worked',     operator: 'is greater than', values: ['0'] },
+        ],
+        [
+          { fieldId: 'shift_policy_overtime_hours',   operator: 'is greater than', values: ['0'] },
+        ],
+      ]),
+      mkAi('ts-ai-1', 'persona-005'),
+      // Branch A — manager email + escalation
+      {
+        ...mkAction('ts-actionA-1', 'Send email'),
+        configValues: {
+          subject: 'Action required — pending timesheets',
+          reply_to_address: 'no-reply@teambridge.app',
+          send_to_type: 'Specific Group of Users',
+          send_to_value: 'Site Managers',
+          message:
+            'You have unsigned timesheets for this pay period. Please review and approve before EOD Sunday so payroll can run on Monday.',
+        },
+      },
+      mkDelay('ts-delayA-1', '24', 'hours', '24 hours'),
+      mkCondition('ts-condA-2', 'shift_policy_upload_timesheet', 'is', ['false']),
+      {
+        ...mkAction('ts-actionA-2', 'Send one-way SMS'),
+        configValues: {
+          send_to_type: 'Specific Group of Users',
+          send_to_value: 'Site Managers — On Call',
+          message:
+            'Reminder: timesheet approvals still pending past the 24-hr window. Payroll cutoff is in 12 hours.',
+        },
+      },
+      // Branch B — payroll webhook + audit report
+      {
+        ...mkAction('ts-actionB-1', 'Webhook notification'),
+        configValues: {
+          message: 'POST /payroll/timesheet-summary — pending review queue',
+        },
+      },
+      {
+        ...mkAction('ts-actionB-2', 'Send report'),
+        configValues: {
+          send_to_type: 'Specific Group of Users',
+          send_to_value: 'Finance Operations',
+          message: 'Weekly timesheet audit — outstanding approvals + overtime exceptions attached.',
+        },
+      },
     ],
     edges: [
-      { id: 'ts-e1', from: 'ts-trigger-1', to: 'ts-cond-1' },
-      { id: 'ts-e2', from: 'ts-cond-1',    to: 'ts-action-1' },
+      { id: 'ts-e1',  from: 'ts-trigger-1', to: 'ts-cond-1'    },
+      { id: 'ts-e2',  from: 'ts-cond-1',    to: 'ts-ai-1'      },
+      // Fan-out
+      { id: 'ts-e3a', from: 'ts-ai-1',      to: 'ts-actionA-1' },
+      { id: 'ts-e3b', from: 'ts-ai-1',      to: 'ts-actionB-1' },
+      // Branch A chain
+      { id: 'ts-e4',  from: 'ts-actionA-1', to: 'ts-delayA-1'  },
+      { id: 'ts-e5',  from: 'ts-delayA-1',  to: 'ts-condA-2'   },
+      { id: 'ts-e6',  from: 'ts-condA-2',   to: 'ts-actionA-2' },
+      // Branch B chain
+      { id: 'ts-e7',  from: 'ts-actionB-1', to: 'ts-actionB-2' },
     ],
   },
 
-  // 3 · Shift swap notification — Shift updated → Is open shift? → Send feed message
+  // 3 · Shift swap notification — full dispatch flow with shift policy, multi-
+  // group condition (urgent or high-priority), Sched AI handoff, and parallel
+  // worker-outreach + manager-status branches.
   wf_01HGYH6CXD3TZ5QK: {
     name: 'Shift swap notification',
+    status: 'paused',
     summary: [
       'Hey — this is **Shift swap notification**.',
       '',
       '**What this flow does:**',
-      '- Fires when a **shift is updated**',
-      '- Filters down to **open shifts**',
-      "- Posts a **feed message** to the role's team",
+      '- Fires when a **Shift** record is updated',
+      '- Applies the **Shift Dispatch** policy (2 folders · 2 policies · **75% threshold**)',
+      '- Filters to **open shifts starting within 24 hours** OR **published high-priority shifts**',
+      '- Hands off to **Sched** to rank candidates',
+      '- **Branch A** — feed message → 15 min delay → re-check open → SMS escalation to qualified RNs',
+      '- **Branch B** — modify shift (mark notified) → chat ping the regional manager',
       '',
       '**Recent activity:**',
       "- **Apr 2** — last successful run (the flow has been **paused** for ~1 week since)",
@@ -7461,26 +9099,91 @@ const WORKFLOW_TEMPLATES: Record<string, WorkflowTemplate> = {
       '- Or **rework the targeting** before re-enabling',
     ].join('\n'),
     nodes: [
-      mkTrigger('ss-trigger-1', 'Shift updated'),
-      mkCondition('ss-cond-1', 'shift_policy_regular_bill', 'is', ['open']),
-      mkAction('ss-action-1', 'Send feed message'),
+      mkTrigger('ss-trigger-1', 'Something is updated'),
+      mkPolicy(
+        'ss-policy-1',
+        ['folder-clinical-shifts', 'folder-dispatch-priority'],
+        ['policy-shift-fill-priority', 'policy-rn-credentials'],
+        [],
+        '75',
+        'percentage',
+      ),
+      mkConditionGroups('ss-cond-1', [
+        [
+          { fieldId: 'shift_policy_status',     operator: 'is',           values: ['Open'] },
+          { fieldId: 'shift_policy_start_time', operator: 'within next',  values: ['24 hours'] },
+        ],
+        [
+          { fieldId: 'shift_policy_published', operator: 'is', values: ['true'] },
+          { fieldId: 'shift_policy_rating',    operator: 'is greater than', values: ['4'] },
+        ],
+      ]),
+      mkAi('ss-ai-1', 'persona-002'),
+      // Branch A — feed → delay → re-check → SMS
+      {
+        ...mkAction('ss-actionA-1', 'Send feed message'),
+        configValues: {
+          send_to_type: 'All Qualified Users',
+          send_to_value: 'Open shift candidates',
+          message:
+            'A shift just opened in your role. Tap to claim if you’re available — first-come, first-served.',
+        },
+      },
+      mkDelay('ss-delayA-1', '15', 'minutes', '15 minutes'),
+      mkCondition('ss-condA-2', 'shift_policy_status', 'is', ['Open']),
+      {
+        ...mkAction('ss-actionA-2', 'Send one-way SMS'),
+        configValues: {
+          send_to_type: 'Specific Group of Users',
+          send_to_value: 'On-call RN pool',
+          message:
+            'Open shift still unclaimed after 15 min — review and claim now to avoid coverage gaps.',
+        },
+      },
+      // Branch B — modify shift status → ping manager
+      {
+        ...mkAction('ss-actionB-1', 'Modify'),
+        configValues: { column: 'Status', modifier: 'Set' },
+      },
+      {
+        ...mkAction('ss-actionB-2', 'Send chat message'),
+        configValues: {
+          send_to_type: 'Specific Group of Users',
+          send_to_value: 'Regional Manager',
+          message: 'A shift swap notification went out — see dispatch dashboard for status.',
+        },
+      },
     ],
     edges: [
-      { id: 'ss-e1', from: 'ss-trigger-1', to: 'ss-cond-1' },
-      { id: 'ss-e2', from: 'ss-cond-1',    to: 'ss-action-1' },
+      { id: 'ss-e1',  from: 'ss-trigger-1',  to: 'ss-policy-1'  },
+      { id: 'ss-e2',  from: 'ss-policy-1',   to: 'ss-cond-1'    },
+      { id: 'ss-e3',  from: 'ss-cond-1',     to: 'ss-ai-1'      },
+      // Fan-out
+      { id: 'ss-e4a', from: 'ss-ai-1',       to: 'ss-actionA-1' },
+      { id: 'ss-e4b', from: 'ss-ai-1',       to: 'ss-actionB-1' },
+      // Branch A chain
+      { id: 'ss-e5',  from: 'ss-actionA-1',  to: 'ss-delayA-1'  },
+      { id: 'ss-e6',  from: 'ss-delayA-1',   to: 'ss-condA-2'   },
+      { id: 'ss-e7',  from: 'ss-condA-2',    to: 'ss-actionA-2' },
+      // Branch B chain
+      { id: 'ss-e8',  from: 'ss-actionB-1',  to: 'ss-actionB-2' },
     ],
   },
 
-  // 4 · Overtime alert (draft) — Hours logged → Approaching threshold → Send webhook notification
+  // 4 · Overtime alert (draft) — clock-out trigger, multi-tier overtime check,
+  // DataOps audit, parallel employee-warning + manager-review branches.
   wf_01HGZM4P8BKFYTR7: {
     name: 'Overtime alert',
+    status: 'draft',
     summary: [
       'This is the **Overtime alert** draft.',
       '',
       '**What this flow does:**',
-      '- Fires on **hours logged**',
-      '- Checks the **40-hour single-overtime threshold**',
-      "- Fires a **webhook** to payroll's external system",
+      '- Fires when a **user clocks out** of a shift',
+      '- Filters to **regular hours > 35** OR **single-overtime hours > 0**',
+      '- Hands off to **DataOps** for an audit pass',
+      '- **Branch A** — employee warning email → 2 hr delay → re-check overtime → webhook to payroll',
+      '- **Branch B** — manager chat alert → modify shift (flag for review)',
       '',
       '**Recent activity:**',
       "- Still a **draft** — **no runs yet**",
@@ -7491,27 +9194,80 @@ const WORKFLOW_TEMPLATES: Record<string, WorkflowTemplate> = {
       '- Add a **manager email** alongside the webhook for visibility',
     ].join('\n'),
     nodes: [
-      mkTrigger('ot-trigger-1', 'Hours logged'),
-      mkCondition('ot-cond-1', 'shift_policy_single_overtime_bill_hours', 'is', ['40']),
-      mkAction('ot-action-1', 'Webhook notification'),
+      mkTrigger('ot-trigger-1', 'User clocks out of shift'),
+      mkConditionGroups('ot-cond-1', [
+        [
+          { fieldId: 'shift_policy_regular_hours',         operator: 'is greater than', values: ['35'] },
+        ],
+        [
+          { fieldId: 'shift_policy_single_overtime_bill_hours', operator: 'is greater than', values: ['0'] },
+        ],
+        [
+          { fieldId: 'shift_policy_double_overtime_hours', operator: 'is greater than', values: ['0'] },
+        ],
+      ]),
+      mkAi('ot-ai-1', 'persona-005'),
+      // Branch A — employee comms + payroll webhook
+      {
+        ...mkAction('ot-actionA-1', 'Send email'),
+        configValues: {
+          subject: 'You are approaching the overtime threshold',
+          reply_to_address: 'payroll@teambridge.app',
+          send_to_type: 'Specific Group of Users',
+          send_to_value: 'Initiating User',
+          message:
+            'Heads up — you’re close to the weekly overtime threshold. Confirm coverage with your manager before logging additional hours.',
+        },
+      },
+      mkDelay('ot-delayA-1', '2', 'hours', '2 hours'),
+      mkCondition('ot-condA-2', 'shift_policy_overtime_hours', 'is greater than', ['0']),
+      {
+        ...mkAction('ot-actionA-2', 'Webhook notification'),
+        configValues: { message: 'POST /payroll/overtime — flagged user with hours payload' },
+      },
+      // Branch B — manager review
+      {
+        ...mkAction('ot-actionB-1', 'Send chat message'),
+        configValues: {
+          send_to_type: 'Specific Group of Users',
+          send_to_value: 'Direct Manager',
+          message: 'One of your team members crossed the overtime threshold this period.',
+        },
+      },
+      {
+        ...mkAction('ot-actionB-2', 'Modify'),
+        configValues: { column: 'Payroll Status', modifier: 'Set' },
+      },
     ],
     edges: [
-      { id: 'ot-e1', from: 'ot-trigger-1', to: 'ot-cond-1' },
-      { id: 'ot-e2', from: 'ot-cond-1',    to: 'ot-action-1' },
+      { id: 'ot-e1',  from: 'ot-trigger-1', to: 'ot-cond-1'    },
+      { id: 'ot-e2',  from: 'ot-cond-1',    to: 'ot-ai-1'      },
+      { id: 'ot-e3a', from: 'ot-ai-1',      to: 'ot-actionA-1' },
+      { id: 'ot-e3b', from: 'ot-ai-1',      to: 'ot-actionB-1' },
+      { id: 'ot-e4',  from: 'ot-actionA-1', to: 'ot-delayA-1'  },
+      { id: 'ot-e5',  from: 'ot-delayA-1',  to: 'ot-condA-2'   },
+      { id: 'ot-e6',  from: 'ot-condA-2',   to: 'ot-actionA-2' },
+      { id: 'ot-e7',  from: 'ot-actionB-1', to: 'ot-actionB-2' },
     ],
   },
 
-  // 5 · Contractor offboarding — Contract end date → Delay 1 hour → Modify (cleanup) → Send email
+  // 5 · Contractor offboarding — full offboarding flow with policy guard, AI
+  // checklist (Onbi), 1-hour grace delay, and parallel access-revocation +
+  // equipment-recovery branches.
   wf_01HH01VQY7JN4E5M: {
     name: 'Contractor offboarding',
+    status: 'active',
     summary: [
       "Here's **Contractor offboarding**.",
       '',
       '**What this flow does:**',
-      '- Fires on **contract end date**',
-      '- Waits **1 hour**',
-      '- Runs a **Modify** step to clean up the access record',
-      '- Emails **finance** with the offboarding summary',
+      '- Fires when a **Contract** record is updated',
+      '- Applies the **Offboarding Compliance** policy (2 folders · 3 policies)',
+      '- Filters to **employment_type = Contract** AND **archived = false**',
+      '- Waits **1 hour** for any in-flight work to settle',
+      '- Hands off to **Onbi** to run the offboarding checklist',
+      '- **Branch A** — modify access record → finance summary email → lock the record',
+      '- **Branch B** — assign equipment-return task → audit report → chat to people-ops',
       '',
       '**Recent activity:**',
       "- **~5 hours ago** — last run **exited early** (the email step didn't reach)",
@@ -7521,15 +9277,76 @@ const WORKFLOW_TEMPLATES: Record<string, WorkflowTemplate> = {
       '- Add a **retry** policy on the Modify step',
     ].join('\n'),
     nodes: [
-      mkTrigger('co-trigger-1', 'Contract end date'),
+      mkTrigger('co-trigger-1', 'Something is updated'),
+      mkPolicy(
+        'co-policy-1',
+        ['folder-hr-offboarding', 'folder-it-deprovision'],
+        ['policy-access-revoke', 'policy-final-pay', 'policy-equipment-return'],
+        [],
+        '80',
+        'percentage',
+      ),
+      mkConditionGroups('co-cond-1', [
+        [
+          { fieldId: 'shift_user_link_employment_type', operator: 'is', values: ['Contract'] },
+          { fieldId: 'shift_user_link_archived',        operator: 'is', values: ['false'] },
+        ],
+      ]),
       mkDelay('co-delay-1', '1', 'hours', '1 hour'),
-      mkAction('co-action-1', 'Modify'),
-      mkAction('co-action-2', 'Send email'),
+      mkAi('co-ai-1', 'persona-003'),
+      // Branch A — access revocation + finance comms
+      {
+        ...mkAction('co-actionA-1', 'Modify'),
+        configValues: { column: 'User Link / Access Group', modifier: 'Set' },
+      },
+      {
+        ...mkAction('co-actionA-2', 'Send email'),
+        configValues: {
+          subject: 'Contractor offboarding — finance summary',
+          reply_to_address: 'no-reply@teambridge.app',
+          send_to_type: 'Specific Group of Users',
+          send_to_value: 'Finance Operations',
+          message:
+            'Final timesheet, accrued PTO, and last paycheck details attached. Please confirm before payroll runs Monday.',
+        },
+      },
+      {
+        ...mkAction('co-actionA-3', 'Lock record'),
+        configValues: {},
+      },
+      // Branch B — equipment return + audit
+      {
+        ...mkAction('co-actionB-1', 'Assign task'),
+        configValues: { task: 'Driver License' },
+      },
+      {
+        ...mkAction('co-actionB-2', 'Send report'),
+        configValues: {
+          send_to_type: 'Specific Group of Users',
+          send_to_value: 'IT Helpdesk',
+          message: 'Equipment-return audit — laptop, badge, and access-token IDs attached.',
+        },
+      },
+      {
+        ...mkAction('co-actionB-3', 'Send chat message'),
+        configValues: {
+          send_to_type: 'Specific Group of Users',
+          send_to_value: 'People Ops',
+          message: 'Contractor offboarded — exit interview window has been opened.',
+        },
+      },
     ],
     edges: [
-      { id: 'co-e1', from: 'co-trigger-1', to: 'co-delay-1'  },
-      { id: 'co-e2', from: 'co-delay-1',   to: 'co-action-1' },
-      { id: 'co-e3', from: 'co-action-1',  to: 'co-action-2' },
+      { id: 'co-e1',  from: 'co-trigger-1', to: 'co-policy-1'  },
+      { id: 'co-e2',  from: 'co-policy-1',  to: 'co-cond-1'    },
+      { id: 'co-e3',  from: 'co-cond-1',    to: 'co-delay-1'   },
+      { id: 'co-e4',  from: 'co-delay-1',   to: 'co-ai-1'      },
+      { id: 'co-e5a', from: 'co-ai-1',      to: 'co-actionA-1' },
+      { id: 'co-e5b', from: 'co-ai-1',      to: 'co-actionB-1' },
+      { id: 'co-e6',  from: 'co-actionA-1', to: 'co-actionA-2' },
+      { id: 'co-e7',  from: 'co-actionA-2', to: 'co-actionA-3' },
+      { id: 'co-e8',  from: 'co-actionB-1', to: 'co-actionB-2' },
+      { id: 'co-e9',  from: 'co-actionB-2', to: 'co-actionB-3' },
     ],
   },
 
@@ -7566,6 +9383,7 @@ const WORKFLOW_TEMPLATES: Record<string, WorkflowTemplate> = {
 
     return {
       name: 'Premium shift dispatch & compliance',
+      status: 'active' as AutomationStatus,
       summary: [
         "You're back on **Premium shift dispatch & compliance** — the showcase routing flow.",
         '',
@@ -7594,7 +9412,7 @@ const WORKFLOW_TEMPLATES: Record<string, WorkflowTemplate> = {
         withInfo(
           {
             ...mkTrigger('pd-trigger-1', 'Something is created'),
-            configValues: { entity: 'Shifts' },
+            configValues: { entity: 'Shifts', record_field: 'Status' },
           },
           'node_pd_trg_1',
           '2026-04-26T22:10:00Z',
@@ -7753,6 +9571,356 @@ const WORKFLOW_TEMPLATES: Record<string, WorkflowTemplate> = {
       ],
     };
   })(),
+
+  // 7 · Credential expiry monitor — recurring scan, multi-tier check on
+  // credential expiry windows, DataOps audit, parallel renewal-reminder +
+  // scheduling-block branches with delayed re-check + escalation.
+  wf_01HK_CREDENTIAL_EXPIRY: {
+    name: 'Credential expiry monitor',
+    status: 'active',
+    summary: [
+      'Welcome to **Credential expiry monitor** — the daily compliance sweep.',
+      '',
+      '**What this flow does:**',
+      '- Runs **every weekday at 8am**',
+      '- Filters to **credentials expiring within 30 days** AND **user not archived**',
+      '- Hands off to **DataOps** for an audit pass',
+      '- **Branch A** — renewal email → 7 day delay → re-check → SMS escalation → lock record if still expired',
+      '- **Branch B** — modify user (block from new shifts) → assign credential-renewal task → manager chat ping',
+      '',
+      '**Recent activity:**',
+      '- **Yesterday at 08:00** — flagged 14 users for renewal',
+      '- **142 of last 145 runs** completed cleanly',
+      '',
+      '**Suggested next steps:**',
+      '- Tighten the **30-day window** if too many users get flagged at once',
+      '- Add a **fallback** for users without an email on file',
+    ].join('\n'),
+    nodes: [
+      mkTrigger('ce-trigger-1', 'Recurring at time interval'),
+      mkConditionGroups('ce-cond-1', [
+        [
+          { fieldId: 'shift_credentials_main_credential_expiry_date', operator: 'within next', values: ['30 days'] },
+          { fieldId: 'shift_user_link_archived',                       operator: 'is',          values: ['false'] },
+        ],
+      ]),
+      mkAi('ce-ai-1', 'persona-005'),
+      // Branch A — renewal reminder cascade
+      {
+        ...mkAction('ce-actionA-1', 'Send email'),
+        configValues: {
+          subject: 'Action required — credential expires soon',
+          reply_to_address: 'compliance@teambridge.app',
+          send_to_type: 'Specific Group of Users',
+          send_to_value: 'Credential Holder',
+          message:
+            'Your credential expires within 30 days. Please upload a renewed copy to keep your scheduling eligibility active.',
+        },
+      },
+      mkDelay('ce-delayA-1', '7', 'days', '7 days'),
+      mkCondition('ce-condA-2', 'shift_credentials_main_credential_expiry_date', 'within next', ['7 days']),
+      {
+        ...mkAction('ce-actionA-2', 'Send one-way SMS'),
+        configValues: {
+          send_to_type: 'Specific Group of Users',
+          send_to_value: 'Credential Holder',
+          message:
+            'Final reminder: your credential expires within a week. Upload renewal to avoid being blocked from upcoming shifts.',
+        },
+      },
+      {
+        ...mkAction('ce-actionA-3', 'Lock record'),
+        configValues: {},
+      },
+      // Branch B — operations side
+      {
+        ...mkAction('ce-actionB-1', 'Modify'),
+        configValues: { column: 'User Link / Access Group', modifier: 'Set' },
+      },
+      {
+        ...mkAction('ce-actionB-2', 'Assign task'),
+        configValues: { task: 'Driver License' },
+      },
+      {
+        ...mkAction('ce-actionB-3', 'Send chat message'),
+        configValues: {
+          send_to_type: 'Specific Group of Users',
+          send_to_value: 'Credentialing Team',
+          message: 'Credential expiry queue refreshed — see today’s flagged users.',
+        },
+      },
+    ],
+    edges: [
+      { id: 'ce-e1',  from: 'ce-trigger-1', to: 'ce-cond-1'    },
+      { id: 'ce-e2',  from: 'ce-cond-1',    to: 'ce-ai-1'      },
+      { id: 'ce-e3a', from: 'ce-ai-1',      to: 'ce-actionA-1' },
+      { id: 'ce-e3b', from: 'ce-ai-1',      to: 'ce-actionB-1' },
+      // Branch A chain
+      { id: 'ce-e4',  from: 'ce-actionA-1', to: 'ce-delayA-1'  },
+      { id: 'ce-e5',  from: 'ce-delayA-1',  to: 'ce-condA-2'   },
+      { id: 'ce-e6',  from: 'ce-condA-2',   to: 'ce-actionA-2' },
+      { id: 'ce-e7',  from: 'ce-actionA-2', to: 'ce-actionA-3' },
+      // Branch B chain
+      { id: 'ce-e8',  from: 'ce-actionB-1', to: 'ce-actionB-2' },
+      { id: 'ce-e9',  from: 'ce-actionB-2', to: 'ce-actionB-3' },
+    ],
+  },
+
+  // 8 · Pay period close — bi-weekly trigger, 3-way fan-out (audit, comms,
+  // payroll) showing how the canvas handles wider branching.
+  wf_01HK_PAY_PERIOD_CLOSE: {
+    name: 'Pay period close & payroll prep',
+    status: 'active',
+    summary: [
+      'Welcome to **Pay period close & payroll prep** — the bi-weekly close-out.',
+      '',
+      '**What this flow does:**',
+      '- Runs **every other Friday at 5pm**',
+      '- Applies the **Pay Period Compliance** policy (3 folders · 4 policies · **95% threshold**)',
+      '- Filters to **timesheets unsigned** OR **rate change pending** OR **bonus exception**',
+      '- Hands off to **DataOps** for the close-out audit',
+      '- **Branch A — audit** — send report → lock pay period record',
+      '- **Branch B — comms** — chat managers → 4 hr delay → re-check signed → email escalation',
+      '- **Branch C — payroll** — webhook to ADP → modify status to "submitted"',
+      '',
+      '**Recent activity:**',
+      '- **Apr 18** — last close ran cleanly with 0 exceptions',
+      '',
+      '**Suggested next steps:**',
+      '- Add a **chat ping to finance** at the start of the audit branch',
+      '- Wire a **retry policy** on the payroll webhook',
+    ].join('\n'),
+    nodes: [
+      mkTrigger('pp-trigger-1', 'Recurring at time interval'),
+      mkPolicy(
+        'pp-policy-1',
+        ['folder-pay-policy', 'folder-payroll-rates', 'folder-bonus-overrides'],
+        ['policy-pay-cutoff', 'policy-rate-changes', 'policy-bonus-eligibility', 'policy-statutory-holidays'],
+        ['subpolicy-statutory-stat-pay'],
+        '95',
+        'percentage',
+      ),
+      mkConditionGroups('pp-cond-1', [
+        [
+          { fieldId: 'shift_policy_upload_timesheet', operator: 'is', values: ['false'] },
+        ],
+        [
+          { fieldId: 'shift_policy_pay_rate', operator: 'is greater than', values: ['0'] },
+        ],
+        [
+          { fieldId: 'shift_policy_bill_bonus', operator: 'is greater than', values: ['0'] },
+        ],
+      ]),
+      mkAi('pp-ai-1', 'persona-005'),
+      // Branch A — audit
+      {
+        ...mkAction('pp-actionA-1', 'Send report'),
+        configValues: {
+          send_to_type: 'Specific Group of Users',
+          send_to_value: 'Finance Operations',
+          message: 'Pay period close audit — exceptions, rate changes, and bonus eligibility attached.',
+        },
+      },
+      {
+        ...mkAction('pp-actionA-2', 'Lock record'),
+        configValues: {},
+      },
+      // Branch B — manager comms + escalation
+      {
+        ...mkAction('pp-actionB-1', 'Send chat message'),
+        configValues: {
+          send_to_type: 'Specific Group of Users',
+          send_to_value: 'Site Managers',
+          message: 'Pay period close window opens — please sign off on outstanding timesheets.',
+        },
+      },
+      mkDelay('pp-delayB-1', '4', 'hours', '4 hours'),
+      mkCondition('pp-condB-2', 'shift_policy_upload_timesheet', 'is', ['false']),
+      {
+        ...mkAction('pp-actionB-2', 'Send email'),
+        configValues: {
+          subject: 'Pay period close — outstanding sign-offs',
+          reply_to_address: 'payroll@teambridge.app',
+          send_to_type: 'Specific Group of Users',
+          send_to_value: 'Site Managers',
+          message: 'Outstanding timesheet sign-offs are blocking payroll close. Please review and approve before EOD.',
+        },
+      },
+      // Branch C — payroll
+      {
+        ...mkAction('pp-actionC-1', 'Webhook notification'),
+        configValues: { message: 'POST /payroll/run — close-out trigger' },
+      },
+      {
+        ...mkAction('pp-actionC-2', 'Modify'),
+        configValues: { column: 'Payroll Status', modifier: 'Set' },
+      },
+    ],
+    edges: [
+      { id: 'pp-e1',  from: 'pp-trigger-1', to: 'pp-policy-1'  },
+      { id: 'pp-e2',  from: 'pp-policy-1',  to: 'pp-cond-1'    },
+      { id: 'pp-e3',  from: 'pp-cond-1',    to: 'pp-ai-1'      },
+      // 3-way fan-out
+      { id: 'pp-e4a', from: 'pp-ai-1',      to: 'pp-actionA-1' },
+      { id: 'pp-e4b', from: 'pp-ai-1',      to: 'pp-actionB-1' },
+      { id: 'pp-e4c', from: 'pp-ai-1',      to: 'pp-actionC-1' },
+      // Branch A
+      { id: 'pp-e5',  from: 'pp-actionA-1', to: 'pp-actionA-2' },
+      // Branch B
+      { id: 'pp-e6',  from: 'pp-actionB-1', to: 'pp-delayB-1'  },
+      { id: 'pp-e7',  from: 'pp-delayB-1',  to: 'pp-condB-2'   },
+      { id: 'pp-e8',  from: 'pp-condB-2',   to: 'pp-actionB-2' },
+      // Branch C
+      { id: 'pp-e9',  from: 'pp-actionC-1', to: 'pp-actionC-2' },
+    ],
+  },
+
+  // 9 · Document e-sign workflow — focused on document/notification node mix.
+  wf_01HK_DOC_ESIGN: {
+    name: 'Document e-sign reminder',
+    status: 'active',
+    summary: [
+      'Welcome to **Document e-sign reminder**.',
+      '',
+      '**What this flow does:**',
+      '- Fires when a **Document** is completed',
+      '- Filters to **document type = Contract** OR **type = Compliance**',
+      '- Hands off to **Cassie** to manage the signer follow-up',
+      '- **Branch A** — send e-sign packet → 48 hr delay → still unsigned? → SMS reminder',
+      '- **Branch B** — webhook to records → chat archive team',
+      '',
+      '**Recent activity:**',
+      '- **Apr 22** — collected 29 signatures during the last sweep',
+      '',
+      '**Suggested next steps:**',
+      '- Add a **second escalation** at 96 hours',
+      '- Wire a **fallback** for unsigned documents past the deadline',
+    ].join('\n'),
+    nodes: [
+      mkTrigger('de-trigger-1', 'Document completed'),
+      mkConditionGroups('de-cond-1', [
+        [
+          { fieldId: 'shift_credentials_main_credential_type', operator: 'is', values: ['Contract'] },
+        ],
+        [
+          { fieldId: 'shift_credentials_main_credential_type', operator: 'is', values: ['Compliance'] },
+        ],
+      ]),
+      mkAi('de-ai-1', 'persona-004'),
+      // Branch A — signer cascade
+      {
+        ...mkAction('de-actionA-1', 'Send e-sign document'),
+        configValues: {},
+      },
+      mkDelay('de-delayA-1', '48', 'hours', '48 hours'),
+      mkCondition('de-condA-2', 'shift_credentials_main_credential_file', 'is empty', []),
+      {
+        ...mkAction('de-actionA-2', 'Send one-way SMS'),
+        configValues: {
+          send_to_type: 'Specific Group of Users',
+          send_to_value: 'Document Signer',
+          message: 'You have an outstanding document awaiting your signature. Tap the link in your email to complete.',
+        },
+      },
+      // Branch B — records + archive
+      {
+        ...mkAction('de-actionB-1', 'Webhook notification'),
+        configValues: { message: 'POST /records/document-status — signing initiated' },
+      },
+      {
+        ...mkAction('de-actionB-2', 'Send chat message'),
+        configValues: {
+          send_to_type: 'Specific Group of Users',
+          send_to_value: 'Records Team',
+          message: 'New e-sign packet sent — see records dashboard for status.',
+        },
+      },
+    ],
+    edges: [
+      { id: 'de-e1',  from: 'de-trigger-1', to: 'de-cond-1'    },
+      { id: 'de-e2',  from: 'de-cond-1',    to: 'de-ai-1'      },
+      { id: 'de-e3a', from: 'de-ai-1',      to: 'de-actionA-1' },
+      { id: 'de-e3b', from: 'de-ai-1',      to: 'de-actionB-1' },
+      { id: 'de-e4',  from: 'de-actionA-1', to: 'de-delayA-1'  },
+      { id: 'de-e5',  from: 'de-delayA-1',  to: 'de-condA-2'   },
+      { id: 'de-e6',  from: 'de-condA-2',   to: 'de-actionA-2' },
+      { id: 'de-e7',  from: 'de-actionB-1', to: 'de-actionB-2' },
+    ],
+  },
+
+  // 10 · Branch decision demo — small flow whose only purpose is to exercise
+  // a condition node that splits into two parallel downstream paths. The
+  // condition has 2 outgoing edges seeded so the canvas renders the fan-out
+  // on first load — useful as a stress-test case for condition fan-out and
+  // node-card interactions.
+  wf_01HK_BRANCH_DEMO: {
+    name: 'Eligibility branch demo',
+    status: 'active',
+    summary: [
+      'Welcome to **Eligibility branch demo** — a focused flow that splits a single condition into two parallel downstream paths.',
+      '',
+      '**What this flow does:**',
+      '- Fires when a **shift request** is received',
+      '- Checks whether the requester **meets the eligibility bar**',
+      '- **Match** path — sends an instant approval feed message',
+      '- **No match** path — emails the manager for manual review with a 30 min escalation if no response',
+      '',
+      '**Recent activity:**',
+      '- Authored to exercise condition fan-out into multiple downstream paths',
+      '',
+      '**Suggested next steps:**',
+      '- **Drag** a connection from the condition to add a third downstream path',
+      '- **Delete** one of the outgoing edges to prune that path',
+      '- **Reword** the condition criteria to tighten which requests qualify',
+    ].join('\n'),
+    nodes: [
+      mkTrigger('br-trigger-1', 'User claims a shift'),
+      mkConditionGroups('br-cond-1', [
+        [
+          { fieldId: 'shift_policy_main_credential',   operator: 'is',              values: ['RN'] },
+          { fieldId: 'shift_policy_rating',            operator: 'is greater than', values: ['4'] },
+        ],
+      ]),
+      // Yes branch — auto-approve
+      {
+        ...mkAction('br-yes-1', 'Send feed message'),
+        configValues: {
+          send_to_type: 'Specific Group of Users',
+          send_to_value: 'Initiating User',
+          message: 'Your shift claim has been approved automatically — see your schedule for details.',
+        },
+      },
+      // No branch — manager review with escalation
+      {
+        ...mkAction('br-no-1', 'Send email'),
+        configValues: {
+          subject: 'Manual review required — shift claim',
+          reply_to_address: 'scheduling@teambridge.app',
+          send_to_type: 'Specific Group of Users',
+          send_to_value: 'Site Managers',
+          message: 'A shift claim is awaiting manual review — eligibility criteria were not met automatically.',
+        },
+      },
+      mkDelay('br-no-delay-1', '30', 'minutes', '30 minutes'),
+      {
+        ...mkAction('br-no-2', 'Send chat message'),
+        configValues: {
+          send_to_type: 'Specific Group of Users',
+          send_to_value: 'Regional Manager',
+          message: 'Manual review still pending after 30 minutes — please action.',
+        },
+      },
+    ],
+    edges: [
+      { id: 'br-e1',     from: 'br-trigger-1', to: 'br-cond-1'      },
+      // Condition fan-out — two parallel downstream paths from the same
+      // condition. No labels; both edges render identically.
+      { id: 'br-e-yes',  from: 'br-cond-1',    to: 'br-yes-1' },
+      { id: 'br-e-no',   from: 'br-cond-1',    to: 'br-no-1'  },
+      { id: 'br-e2',     from: 'br-no-1',      to: 'br-no-delay-1'  },
+      { id: 'br-e3',     from: 'br-no-delay-1', to: 'br-no-2'       },
+    ],
+  },
 };
 
 export function BuilderPage() {
@@ -7777,7 +9945,13 @@ export function BuilderPage() {
   );
   const [description, setDescription] = useState('');
   const [tags, setTags] = useState<string[]>([]);
-  const [status] = useState<AutomationStatus>('draft');
+  // Initial status mirrors the workflow list's status chip — every catalog
+  // entry seeds this via the matching `WORKFLOW_TEMPLATES[id].status`. New
+  // workflows + unknown ids fall back to `'draft'` so the TopBar tag still
+  // renders correctly.
+  const [status] = useState<AutomationStatus>(
+    template?.status ?? (isNew ? 'draft' : 'draft'),
+  );
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Backfill Info metadata on every node — covers INIT_NODES (hardcoded
@@ -7795,23 +9969,34 @@ export function BuilderPage() {
     }));
   };
   // Pick the initial node/edge shape in priority order:
-  //   1. Library-template spec from router state (TemplatesPage → builder)
-  //   2. Prebuilt per-workflow template matched by id
-  //   3. New (blank) trigger stub
-  //   4. Generic two-node edit shape for unmatched existing workflows
-  const initialNodes: GraphNode[] = routerTemplateGraph?.nodes
+  //   1. Persisted graph blob from localStorage (set by previous edit
+  //      session — only when the user navigates back to a workflow they
+  //      already touched).
+  //   2. Library-template spec from router state (TemplatesPage → builder)
+  //   3. Prebuilt per-workflow template matched by id
+  //   4. New (blank) trigger stub
+  //   5. Generic two-node edit shape for unmatched existing workflows
+  const persistedGraph: WorkflowGraphEntry | undefined =
+    id ? loadWorkflowGraphs()[id] : undefined;
+  const initialNodes: GraphNode[] = (persistedGraph?.nodes as GraphNode[] | undefined)
+    ?? routerTemplateGraph?.nodes
     ?? (isNew ? INIT_NODES_NEW : (template?.nodes ?? INIT_NODES_EDIT));
-  const initialEdges: GraphEdge[] = routerTemplateGraph?.edges
+  const initialEdges: GraphEdge[] = (persistedGraph?.edges as GraphEdge[] | undefined)
+    ?? routerTemplateGraph?.edges
     ?? (isNew ? [] : (template?.edges ?? INIT_EDGES_EDIT));
 
   const [nodes, setNodes] = useState<GraphNode[]>(() => seedInfoMetadata(initialNodes));
-  const [edges, setEdges] = useState<GraphEdge[]>(initialEdges);
+  const [edges, setEdges] = useState<GraphEdge[]>(() => initialEdges);
 
   // ── Free-positioning: store each node's canvas coordinates ──
+  // When restoring a persisted graph, prefer the saved coordinates so the
+  // user sees the exact layout they last had (including any manual nudges).
+  // Otherwise fall back to the auto-layout for the seed/template shape.
   const [nodePositions, setNodePositions] = useState<Record<string, { x: number; y: number }>>(() => {
-    const initNodes = initialNodes;
-    const initEdges = initialEdges;
-    const layout    = computeLayout(initNodes, initEdges);
+    if (persistedGraph?.nodePositions) {
+      return { ...persistedGraph.nodePositions };
+    }
+    const layout = computeLayout(initialNodes, initialEdges);
     const result: Record<string, { x: number; y: number }> = {};
     layout.forEach((pos, id) => { result[id] = pos; });
     return result;
@@ -7833,22 +10018,31 @@ export function BuilderPage() {
   const [aiPanelCollapsed, setAiPanelCollapsed] = useState(false);
 
   // ── Undo history (Cmd/Ctrl+Z) ─────────────────────────────────────────────
-  // Snapshots `{ nodes, edges, name }` before each mutation; Cmd/Ctrl+Z pops
-  // the most recent snapshot and restores it.
+  // Snapshots `{ nodes, edges, name, nodePositions }` before each mutation;
+  // Cmd/Ctrl+Z pops the most recent snapshot and restores it.
   //
   // Why this shape, not a per-mutation wrapper:
   // - Mutation surface is wide (8+ setNodes / setEdges call sites for add,
-  //   delete, configure, connect, edit, drop-onto-edge, etc). Wrapping each
-  //   one would mean threading the history capture through every helper.
-  // - A useEffect that watches `[nodes, edges, name]` runs after every state
-  //   change, so capturing the *previous* render's snapshot from a ref gives
-  //   us a single source of truth for "what was on the canvas before this
+  //   delete, configure, connect, edit, drop-onto-edge, drag-to-move, etc).
+  //   Wrapping each one would mean threading the history capture through
+  //   every helper.
+  // - A useEffect that watches the canvas state runs after every commit,
+  //   so capturing the *previous* render's snapshot from a ref gives us a
+  //   single source of truth for "what was on the canvas before this
   //   commit?" — covers every existing setter and any new ones added later.
-  type Snapshot = { nodes: GraphNode[]; edges: GraphEdge[]; name: string };
+  // - `nodePositions` is included so drag-to-move is undoable too. Without
+  //   it the user would feel undo is "not working" any time they nudge a
+  //   node and expect Cmd+Z to put it back.
+  type Snapshot = {
+    nodes:         GraphNode[];
+    edges:         GraphEdge[];
+    name:          string;
+    nodePositions: Record<string, { x: number; y: number }>;
+  };
   const undoStackRef = useRef<Snapshot[]>([]);
   // Most-recently-rendered snapshot. Updated synchronously inside the watcher
   // useEffect so the next mutation can read it as the "from" half of the pair.
-  const prevSnapshotRef = useRef<Snapshot>({ nodes, edges, name });
+  const prevSnapshotRef = useRef<Snapshot>({ nodes, edges, name, nodePositions });
   // Set to `true` immediately before applying an undo, then cleared inside
   // the watcher effect. Skips re-pushing the undo result onto the stack
   // (which would defeat redo intent and trap the user in a no-op loop).
@@ -7858,15 +10052,20 @@ export function BuilderPage() {
   useEffect(() => {
     if (isApplyingUndoRef.current) {
       isApplyingUndoRef.current = false;
-      prevSnapshotRef.current = { nodes, edges, name };
+      prevSnapshotRef.current = { nodes, edges, name, nodePositions };
       return;
     }
     const prev = prevSnapshotRef.current;
-    if (prev.nodes === nodes && prev.edges === edges && prev.name === name) return;
+    if (
+      prev.nodes === nodes &&
+      prev.edges === edges &&
+      prev.name === name &&
+      prev.nodePositions === nodePositions
+    ) return;
     undoStackRef.current.push(prev);
     if (undoStackRef.current.length > UNDO_STACK_MAX) undoStackRef.current.shift();
-    prevSnapshotRef.current = { nodes, edges, name };
-  }, [nodes, edges, name]);
+    prevSnapshotRef.current = { nodes, edges, name, nodePositions };
+  }, [nodes, edges, name, nodePositions]);
 
   const undo = useCallback(() => {
     const last = undoStackRef.current.pop();
@@ -7875,11 +10074,14 @@ export function BuilderPage() {
     setNodes(last.nodes);
     setEdges(last.edges);
     setName(last.name);
+    setNodePositions(last.nodePositions);
   }, []);
 
   // Global Cmd/Ctrl+Z handler. Suppresses the shortcut when the user is
   // typing into a form control (otherwise we'd undo the canvas while they
-  // expect text-field undo to handle their typing).
+  // expect text-field undo to handle their typing). Uses `keydown` capture
+  // so we win against any inner handler that might call stopPropagation
+  // (the Alloy contenteditable workflow-name field does this on Enter).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const isMac = navigator.platform.toUpperCase().includes('MAC');
@@ -7895,8 +10097,8 @@ export function BuilderPage() {
       e.preventDefault();
       undo();
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener('keydown', onKey, { capture: true });
+    return () => window.removeEventListener('keydown', onKey, { capture: true });
   }, [undo]);
 
   // Rolling index per response bank so consecutive AI reactions don't repeat.
@@ -7965,6 +10167,22 @@ export function BuilderPage() {
     appendThreadEntry({ kind: 'activity', content });
   }, [appendThreadEntry]);
 
+  /**
+   * Emit a `node_change` thread entry for any user-driven canvas mutation.
+   * The thread render groups consecutive `node_change` entries that fall in
+   * the same wall-clock minute into a single UserChangeGroup block, where
+   * each change type (Added / Deleted / Connected / Modified) is its own
+   * collapsible sub-row showing the affected nodes via a paginated card.
+   *
+   * `changeType` drives the row icon + label; `headerLabel` overrides the
+   * sub-row title (defaults to `changeType`); `nodes` carries one entry per
+   * node touched (both endpoints for connect/disconnect, the deleted node
+   * for delete, etc.).
+   */
+  const emitNodeChange = useCallback((payload: NodeChangePayload, content: string) => {
+    appendThreadEntry({ kind: 'node_change', content, nodeChange: payload });
+  }, [appendThreadEntry]);
+
   // Welcome message — appended once when the thread is empty on mount.
   // `seeded: true` so the renderer skips the activity-trail summary on
   // this bubble (it's a static greeting, not a response).
@@ -7995,6 +10213,12 @@ export function BuilderPage() {
   }, []);
 
   // ── Debounced auto-save ──
+  // Persists the current canvas state (nodes / edges / positions) to
+  // localStorage so the user can navigate away and return to the same
+  // workflow with all of their edits intact. The "saving…" → "saved"
+  // chrome the top bar already renders is driven off the same effect,
+  // so the visual feedback now reflects an actual write rather than a
+  // metadata-only ping.
   const isMount = useRef(true);
   useEffect(() => {
     if (isMount.current) { isMount.current = false; return; }
@@ -8002,6 +10226,14 @@ export function BuilderPage() {
     if (savedTimer.current) clearTimeout(savedTimer.current);
     setSaveState('saving');
     saveTimer.current = setTimeout(() => {
+      if (id) {
+        saveWorkflowGraphEntry(id, {
+          nodes,
+          edges,
+          nodePositions,
+          savedAt: new Date().toISOString(),
+        });
+      }
       setSaveState('saved');
       savedTimer.current = setTimeout(() => setSaveState('idle'), 2500);
     }, 1200);
@@ -8009,7 +10241,7 @@ export function BuilderPage() {
       if (saveTimer.current)  clearTimeout(saveTimer.current);
       if (savedTimer.current) clearTimeout(savedTimer.current);
     };
-  }, [name, description, status, nodes, edges, tags]);
+  }, [id, name, description, status, nodes, edges, nodePositions, tags]);
 
   // ── Load saved workflow settings from localStorage on mount ──
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -8082,9 +10314,16 @@ export function BuilderPage() {
       setEdges(prev => [...prev, e]);
     }
     setSelectedId(n.id);
-    logActivity(
-      `${STEP_CONFIG[type].label} added${selectedValue ? ` \u2014 ${selectedValue}` : ''}`,
-      `add_${type}`,
+    const label = STEP_CONFIG[type].label;
+    const nodeName = selectedValue || label;
+    emitNodeChange(
+      {
+        nodes: [{ id: n.id, type, name: nodeName }],
+        changeType: 'Added',
+        headerLabel: `${label} added`,
+        side: 'outbound',
+      },
+      `${label} added`,
     );
   };
 
@@ -8269,7 +10508,16 @@ export function BuilderPage() {
     setSelectedId(prev => prev === id ? null : prev);
     if (target) {
       const label = STEP_CONFIG[target.type].label;
-      logActivity(`${label} deleted${target.selectedValue ? ` \u2014 ${target.selectedValue}` : ''}`, 'delete');
+      const nodeName = target.selectedValue || label;
+      emitNodeChange(
+        {
+          nodes: [{ id: target.id, type: target.type, name: nodeName }],
+          changeType: 'Deleted',
+          headerLabel: `${label} deleted`,
+          side: 'outbound',
+        },
+        `${label} deleted`,
+      );
     }
   };
 
@@ -8285,8 +10533,11 @@ export function BuilderPage() {
     const initY   = fromPos && toPos ? (fromPos.y + NODE_H + toPos.y) / 2 : CANVAS_TOP;
     setNodePositions(prev => ({ ...prev, [n.id]: { x: initX, y: initY } }));
 
-    // Replace old edge with two new edges: from→new, new→to
-    const e1: GraphEdge = { id: `edge-${++_nextId}`, from: edge.from, to: n.id   };
+    // Replace old edge with two new edges: from→new, new→to. Plain edge
+    // splicing — no branch label to carry forward, no special handling
+    // for condition fan-out (a condition can have any number of outgoing
+    // edges and they're all rendered the same).
+    const e1: GraphEdge = { id: `edge-${++_nextId}`, from: edge.from, to: n.id };
     const e2: GraphEdge = { id: `edge-${++_nextId}`, from: n.id,     to: edge.to };
     setEdges(prev => [...prev.filter(e => e.id !== edge.id), e1, e2]);
     setNodes(prev => [...prev, n]);
@@ -8295,35 +10546,65 @@ export function BuilderPage() {
 
   // ── Add edge between two existing nodes ──
   // Validation (getConnectionError) is performed by the sole caller in the
-  // drag-drop MouseUp handler.
+  // drag-drop MouseUp handler. Duplicates are silently rejected; conditions
+  // can fan out to any number of downstream nodes.
   const addEdge = (fromNodeId: string, toNodeId: string) => {
-    if (edges.some(e => e.from === fromNodeId && e.to === toNodeId)) return;
-    if (isConnectionSilentlyBlocked(fromNodeId, toNodeId, nodes)) return;
-    setEdges(prev => [...prev, { id: `edge-${++_nextId}`, from: fromNodeId, to: toNodeId }]);
+    if (isConnectionSilentlyBlocked(fromNodeId, toNodeId, nodes, edges)) return;
+    const fromNode = nodes.find(n => n.id === fromNodeId);
+    const newEdgeId = `edge-${++_nextId}`;
+    let didAdd = false;
+    setEdges(prev => {
+      const next = appendEdgeIfMissing(prev, fromNodeId, toNodeId, newEdgeId);
+      if (next === null) return prev;
+      didAdd = true;
+      return next;
+    });
+    if (!didAdd) return;
     // Connection changes count as mutations on both endpoint nodes for Info.
     touchNodesById([fromNodeId, toNodeId]);
-    const fromNode = nodes.find(n => n.id === fromNodeId);
-    const toNode   = nodes.find(n => n.id === toNodeId);
+    const toNode = nodes.find(n => n.id === toNodeId);
     if (fromNode && toNode) {
-      logActivity(
-        `${STEP_CONFIG[fromNode.type].label} connected to ${STEP_CONFIG[toNode.type].label}`,
-        'connect',
+      const fromLabel = STEP_CONFIG[fromNode.type].label;
+      const toLabel   = STEP_CONFIG[toNode.type].label;
+      emitNodeChange(
+        {
+          nodes: [
+            { id: fromNode.id, type: fromNode.type, name: fromNode.selectedValue || fromLabel },
+            { id: toNode.id,   type: toNode.type,   name: toNode.selectedValue   || toLabel },
+          ],
+          changeType: 'Connected',
+          headerLabel: `${fromLabel} → ${toLabel}`,
+          side: 'outbound',
+        },
+        `${fromLabel} connected to ${toLabel}`,
       );
     }
   };
 
   // ── Remove an existing edge ──
+  // Plain edge filter — conditions can have any number of outgoing edges,
+  // so removing one needs no special "collapse a binary branch" handling.
   const deleteEdge = (edgeId: string) => {
     const edge = edges.find(e => e.id === edgeId);
+    const fromNode = edge ? nodes.find(n => n.id === edge.from) : undefined;
     setEdges(prev => prev.filter(e => e.id !== edgeId));
     if (edge) {
       touchNodesById([edge.from, edge.to]);
-      const fromNode = nodes.find(n => n.id === edge.from);
-      const toNode   = nodes.find(n => n.id === edge.to);
+      const toNode = nodes.find(n => n.id === edge.to);
       if (fromNode && toNode) {
-        logActivity(
-          `Connection between ${STEP_CONFIG[fromNode.type].label} and ${STEP_CONFIG[toNode.type].label} removed`,
-          'disconnect',
+        const fromLabel = STEP_CONFIG[fromNode.type].label;
+        const toLabel   = STEP_CONFIG[toNode.type].label;
+        emitNodeChange(
+          {
+            nodes: [
+              { id: fromNode.id, type: fromNode.type, name: fromNode.selectedValue || fromLabel },
+              { id: toNode.id,   type: toNode.type,   name: toNode.selectedValue   || toLabel },
+            ],
+            changeType: 'Disconnected',
+            headerLabel: `${fromLabel} ⇸ ${toLabel}`,
+            side: 'outbound',
+          },
+          `${fromLabel} disconnected from ${toLabel}`,
         );
       }
     }
@@ -8360,18 +10641,17 @@ export function BuilderPage() {
     const segs = buildNodeSnippet(node);
     const summary = segs ? segs.map(s => s.text).join('').trim() : node.selectedValue;
     const content = summary ? `${label} configured \u2014 ${summary}` : `${label} saved`;
-    appendThreadEntry({
-      kind: 'node_change',
-      content,
-      nodeChange: {
+    emitNodeChange(
+      {
         nodes: [{ id: node.id, type: node.type, name: summary || label }],
-        changeType: 'Configured',
+        changeType: 'Modified',
         headerLabel: `${label} configured`,
         stats: [1],
         side: 'outbound',
       },
-    });
-  }, [nodes, appendThreadEntry]);
+      content,
+    );
+  }, [nodes, emitNodeChange]);
 
   /**
    * Shared entry point for the node-level floating AI input. Pipes the message
@@ -8396,17 +10676,40 @@ export function BuilderPage() {
     setNodePositions(prev => ({ ...prev, [n.id]: { x: x - NODE_W / 2, y: y - NODE_H / 2 } }));
     setNodes(prev => [...prev, n]);
     setSelectedId(n.id);
-    logActivity(`${STEP_CONFIG[type].label} added`, `add_${type}`);
+    const label = STEP_CONFIG[type].label;
+    emitNodeChange(
+      {
+        nodes: [{ id: n.id, type, name: label }],
+        changeType: 'Added',
+        headerLabel: `${label} added`,
+        side: 'outbound',
+      },
+      `${label} added`,
+    );
   };
 
   const createNodeAndConnect = (fromId: string, type: StepType, x: number, y: number) => {
     const n = makeNode(type);
+    const newEdgeId = `edge-${++_nextId}`;
     setNodePositions(prev => ({ ...prev, [n.id]: { x: x - NODE_W / 2, y: y - NODE_H / 2 } }));
     setNodes(prev => [...prev, n]);
-    const edge: GraphEdge = { id: `edge-${++_nextId}`, from: fromId, to: n.id };
-    setEdges(prev => [...prev, edge]);
+    setEdges(prev => {
+      const next = appendEdgeIfMissing(prev, fromId, n.id, newEdgeId);
+      // Returns null on exact duplicate; for a brand-new node target that
+      // can't happen, so this fallback is defensive only.
+      return next ?? prev;
+    });
     setSelectedId(n.id);
-    logActivity(`${STEP_CONFIG[type].label} added`, `add_${type}`);
+    const label = STEP_CONFIG[type].label;
+    emitNodeChange(
+      {
+        nodes: [{ id: n.id, type, name: label }],
+        changeType: 'Added',
+        headerLabel: `${label} added`,
+        side: 'outbound',
+      },
+      `${label} added`,
+    );
   };
 
   // ── Canvas drop: lib item dropped at cursor position → new disconnected node ──
@@ -8419,9 +10722,16 @@ export function BuilderPage() {
     setNodePositions(prev => ({ ...prev, [n.id]: { x, y } }));
     setNodes(prev => [...prev, n]);
     setSelectedId(n.id);
-    logActivity(
-      `${STEP_CONFIG[item.type].label} added${item.label ? ` \u2014 ${item.label}` : ''}`,
-      `add_${item.type}`,
+    const label = STEP_CONFIG[item.type].label;
+    const nodeName = item.label || label;
+    emitNodeChange(
+      {
+        nodes: [{ id: n.id, type: item.type, name: nodeName }],
+        changeType: 'Added',
+        headerLabel: `${label} added`,
+        side: 'outbound',
+      },
+      `${label} added`,
     );
   };
 
@@ -8439,6 +10749,24 @@ export function BuilderPage() {
         tags={tags}
         onClose={() => setSettingsOpen(false)}
         onSave={handleSettingsSave}
+      />
+
+      {/* Unified topbar — spans the full width of the page above both
+          the LeftPanel and the right column. Hoisted out of the right
+          column so the workflow chrome is one continuous bar across
+          the screen. */}
+      <TopBar
+        onBack={() => navigate('/automations')}
+        onTest={() => {}}
+        onPublish={() => {}}
+        saveState={saveState}
+        name={name}
+        onNameChange={setName}
+        status={status}
+        onSettingsOpen={() => setSettingsOpen(true)}
+        isTemplate={!!routerTemplate}
+        aiPanelCollapsed={aiPanelCollapsed}
+        onToggleAiPanel={() => setAiPanelCollapsed(c => !c)}
       />
 
       <div className={styles.body} data-ai-collapsed={aiPanelCollapsed}>
@@ -8465,43 +10793,8 @@ export function BuilderPage() {
         )}
 
         <div className={styles.rightColumn}>
-          <TopBar
-            onBack={() => navigate('/automations')}
-            onTest={() => {}}
-            onPublish={() => {}}
-            saveState={saveState}
-            name={name}
-            onNameChange={setName}
-            status={status}
-            onSettingsOpen={() => setSettingsOpen(true)}
-          />
-          {/* Re-open AI panel + back-to-list — surface below the top bar
-              only while the AI panel is collapsed. Back chevron lives at
-              the far left so the back affordance is reachable even when
-              the LeftPanel (which now owns the canonical back button) is
-              dismissed. */}
-          {aiPanelCollapsed && (
-            <div className={styles.collapsedAiCluster}>
-              <Button
-                variant="tertiary"
-                size="sm"
-                iconOnly
-                onClick={() => navigate('/automations')}
-                aria-label="Back to automations"
-              >
-                <ChevronLeft />
-              </Button>
-              <Button
-                variant="tertiary"
-                size="sm"
-                iconOnly
-                onClick={() => setAiPanelCollapsed(false)}
-                aria-label="Expand AI panel"
-              >
-                <TeambridgeAIIcon size={16} />
-              </Button>
-            </div>
-          )}
+          {/* TopBar moved up to .page level so the unified topbar spans
+              the full screen width above both columns. */}
           <FlowCanvas
           nodes={nodes}
           edges={edges}

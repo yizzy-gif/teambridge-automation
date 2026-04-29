@@ -11,7 +11,7 @@
    (folders / policies / sub-policies) on Save.
    ───────────────────────────────────────────────────────────────────────────── */
 
-import { useMemo, useState, useEffect } from 'react';
+import { useCallback, useMemo, useState, useEffect } from 'react';
 import { Dialog, DialogHeader, DialogContent, DialogFooter } from '@alloy/components/Dialog';
 import { Button } from '@alloy/components/Button';
 import { SearchField } from '@alloy/components/Input';
@@ -155,6 +155,17 @@ const ALL_TAGS = Array.from(
   ),
 ).sort();
 
+/** Flat lists of every id in the library — used by the "All selected"
+ *  master checkbox above the tree to toggle everything in one action. */
+const ALL_FOLDER_IDS = POLICY_LIBRARY.map(f => f.id);
+const ALL_POLICY_IDS = POLICY_LIBRARY.flatMap(f => f.policies.map(p => p.id));
+const ALL_SUBPOLICY_IDS = POLICY_LIBRARY.flatMap(f =>
+  f.policies.flatMap(p => p.subPolicies.map(s => s.id)),
+);
+const TOTAL_FOLDER_COUNT    = ALL_FOLDER_IDS.length;
+const TOTAL_POLICY_COUNT    = ALL_POLICY_IDS.length;
+const TOTAL_SUBPOLICY_COUNT = ALL_SUBPOLICY_IDS.length;
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function matchesQuery(text: string, query: string): boolean {
@@ -203,9 +214,31 @@ export interface PolicyMatchingModalProps {
 // ── Component ────────────────────────────────────────────────────────────────
 
 export function PolicyMatchingModal({ open, initialSelection, onCancel, onSave }: PolicyMatchingModalProps) {
-  const [folders,     setFolders]     = useState<Set<string>>(new Set(initialSelection.folders));
-  const [policies,    setPolicies]    = useState<Set<string>>(new Set(initialSelection.policies));
-  const [subPolicies, setSubPolicies] = useState<Set<string>>(new Set(initialSelection.subPolicies));
+  // Initial selection is empty by default; we seed it with the full
+  // library so the "All selected" master checkbox at the top of the
+  // tree starts checked. Callers passing their own non-empty initial
+  // selection (e.g. previously-configured policy nodes) keep that.
+  const seedInitial = useCallback(() => {
+    const hasAny =
+      initialSelection.folders.length +
+      initialSelection.policies.length +
+      initialSelection.subPolicies.length > 0;
+    return hasAny
+      ? {
+          f: new Set<string>(initialSelection.folders),
+          p: new Set<string>(initialSelection.policies),
+          s: new Set<string>(initialSelection.subPolicies),
+        }
+      : {
+          f: new Set<string>(ALL_FOLDER_IDS),
+          p: new Set<string>(ALL_POLICY_IDS),
+          s: new Set<string>(ALL_SUBPOLICY_IDS),
+        };
+  }, [initialSelection]);
+
+  const [folders,     setFolders]     = useState<Set<string>>(() => seedInitial().f);
+  const [policies,    setPolicies]    = useState<Set<string>>(() => seedInitial().p);
+  const [subPolicies, setSubPolicies] = useState<Set<string>>(() => seedInitial().s);
   const [query,       setQuery]       = useState('');
   const [activeTags,  setActiveTags]  = useState<Set<string>>(new Set());
   const [expanded,    setExpanded]    = useState<Set<string>>(new Set());
@@ -213,15 +246,38 @@ export function PolicyMatchingModal({ open, initialSelection, onCancel, onSave }
   // Reset draft state whenever modal opens with a (possibly new) initial selection
   useEffect(() => {
     if (!open) return;
-    setFolders(new Set(initialSelection.folders));
-    setPolicies(new Set(initialSelection.policies));
-    setSubPolicies(new Set(initialSelection.subPolicies));
+    const seed = seedInitial();
+    setFolders(seed.f);
+    setPolicies(seed.p);
+    setSubPolicies(seed.s);
     setQuery('');
     setActiveTags(new Set());
     // Expand any folder/policy that already has a selection so the user sees their picks
-    const toExpand = new Set<string>([...initialSelection.folders, ...initialSelection.policies]);
+    const toExpand = new Set<string>([...seed.f, ...seed.p]);
     setExpanded(toExpand);
-  }, [open, initialSelection]);
+  }, [open, seedInitial]);
+
+  // True when the current selection covers every id in the library — drives
+  // the "All selected" master checkbox at the top of the tree. Becomes
+  // false the moment the user unchecks any item.
+  const allSelected =
+    folders.size    === TOTAL_FOLDER_COUNT &&
+    policies.size   === TOTAL_POLICY_COUNT &&
+    subPolicies.size === TOTAL_SUBPOLICY_COUNT;
+
+  const toggleAll = () => {
+    if (allSelected) {
+      // Clearing — drop every selection.
+      setFolders(new Set());
+      setPolicies(new Set());
+      setSubPolicies(new Set());
+    } else {
+      // Selecting all — populate every id from the library.
+      setFolders(new Set(ALL_FOLDER_IDS));
+      setPolicies(new Set(ALL_POLICY_IDS));
+      setSubPolicies(new Set(ALL_SUBPOLICY_IDS));
+    }
+  };
 
   const visible = useMemo(() => filterLibrary(query, activeTags), [query, activeTags]);
 
@@ -299,6 +355,31 @@ export function PolicyMatchingModal({ open, initialSelection, onCancel, onSave }
       <DialogHeader onClose={onCancel}>Policy matching</DialogHeader>
       <DialogContent>
         <div className={styles.body}>
+          {/* Master "All selected" row — sits at the very top of the
+              modal body, above the search and tag filters, so the
+              user's "select everything" affordance is the first thing
+              they see. Checked by default (the modal seeds the
+              selection with the full library when no prior selection
+              exists); the `allSelected` flag is derived from the
+              selection sets, so unchecking any item below
+              automatically flips this back to off. */}
+          <div
+            className={`${styles.row} ${styles.rowFolder}`}
+            onClick={toggleAll}
+            role="button"
+            aria-pressed={allSelected}
+          >
+            <span className={styles.checkboxSlot} onClick={e => e.stopPropagation()}>
+              <Checkbox size="sm" checked={allSelected} onChange={toggleAll} />
+            </span>
+            <span className={styles.rowLabel}>All selected</span>
+            <span className={styles.countBadge}>
+              {folders.size + policies.size + subPolicies.size}
+              {' / '}
+              {TOTAL_FOLDER_COUNT + TOTAL_POLICY_COUNT + TOTAL_SUBPOLICY_COUNT}
+            </span>
+          </div>
+
           <div className={styles.filters}>
             <div className={styles.searchField}>
               <SearchField

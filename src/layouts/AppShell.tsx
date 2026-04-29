@@ -1,52 +1,30 @@
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { ScrollArea } from '@alloy/components/ScrollArea';
+import { ListBulletIcon } from '@alloy/components/icons/ListBulletIcon';
+import { Grid01Icon } from '@alloy/components/icons/Grid01Icon';
+import { BarChart02Icon } from '@alloy/components/icons/BarChart02Icon';
+import { SettingsGearIcon } from '@alloy/components/icons/SettingsGearIcon';
+import { DotsHorizontalIcon } from '@alloy/components/icons/DotsHorizontalIcon';
+import { Menu02Icon } from '@alloy/components/icons/Menu02Icon';
 import { PrimaryNav } from '@/components/PrimaryNav';
 import styles from './AppShell.module.css';
 
-// ─── Top bar icons (visual chrome only — no state) ────────────────────────────
-
-function DotsHorizontalIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
-      <circle cx="2.5" cy="7" r="1.25" fill="currentColor" />
-      <circle cx="7" cy="7" r="1.25" fill="currentColor" />
-      <circle cx="11.5" cy="7" r="1.25" fill="currentColor" />
-    </svg>
-  );
-}
-
-function MenuIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
-      <path d="M1.75 3.5h10.5M1.75 7h10.5M1.75 10.5h10.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-    </svg>
-  );
-}
-
 // ─── Secondary nav items ──────────────────────────────────────────────────────
+// Icons are pulled from `@alloy/components/icons/*` so the visual language
+// stays in lockstep with the rest of the product (every other icon in the
+// app shell, top bar, builder canvas, etc. comes from the same set).
 
 const primaryNav = [
   {
     to: '/automations',
     label: 'Manage',
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
-        <path d="M2 4h3v3H2V4ZM6.5 4h7.5M6.5 7.5h7.5M2 9h3v3H2V9ZM6.5 9h7.5M6.5 12.5h7.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
-      </svg>
-    ),
+    icon: <ListBulletIcon size={16} />,
   },
   {
     to: '/templates',
     label: 'Templates',
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
-        <rect x="1.5" y="1.5" width="5.5" height="5.5" rx="1" stroke="currentColor" strokeWidth="1.2"/>
-        <rect x="9" y="1.5" width="5.5" height="5.5" rx="1" stroke="currentColor" strokeWidth="1.2"/>
-        <rect x="1.5" y="9" width="5.5" height="5.5" rx="1" stroke="currentColor" strokeWidth="1.2"/>
-        <rect x="9" y="9" width="5.5" height="5.5" rx="1" stroke="currentColor" strokeWidth="1.2"/>
-      </svg>
-    ),
+    icon: <Grid01Icon size={16} />,
   },
 ];
 
@@ -54,21 +32,12 @@ const bottomNav = [
   {
     to: '/usage',
     label: 'Usage',
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
-        <path d="M2 13.5V9M6 13.5V5M10 13.5V7.5M14 13.5V2.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
-      </svg>
-    ),
+    icon: <BarChart02Icon size={16} />,
   },
   {
     to: '/settings',
     label: 'Settings',
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
-        <circle cx="8" cy="8" r="2" stroke="currentColor" strokeWidth="1.2"/>
-        <path d="M8 1.5v1.3M8 13.2v1.3M1.5 8h1.3M13.2 8h1.3M3.4 3.4l.9.9M11.7 11.7l.9.9M12.6 3.4l-.9.9M4.3 11.7l-.9.9" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
-      </svg>
-    ),
+    icon: <SettingsGearIcon size={16} />,
   },
 ];
 
@@ -149,7 +118,7 @@ export function AppShell() {
                 aria-label="More options"
                 title="More options"
               >
-                <DotsHorizontalIcon />
+                <DotsHorizontalIcon size={14} />
               </button>
               <button
                 type="button"
@@ -157,7 +126,7 @@ export function AppShell() {
                 aria-label="Activity"
                 title="Activity"
               >
-                <MenuIcon />
+                <Menu02Icon size={14} />
               </button>
             </div>
           </header>

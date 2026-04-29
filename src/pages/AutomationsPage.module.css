@@ -20,6 +20,52 @@
   display: flex;
   align-items: center;
   gap: var(--space-3);
+  /* Right-align the page-level actions (view toggle + new workflow) now
+     that the search input has moved out of this row and into the per-tab
+     filter row below the tabs. */
+  justify-content: flex-end;
+}
+
+/* Tabs row — status tabs on the left, "+ New workflow" pinned to the
+   right. The row owns the underline so it continues all the way across
+   the row (Tabs' own bottom border stops where the tab list ends). */
+.toolbarTabsRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  border-bottom: 1px solid var(--color-border-opaque);
+}
+
+/* Strip the Tabs component's own bottom border so it doesn't paint a
+   double line on top of the row-level underline above. The active-tab
+   sliding indicator inside Tabs still anchors to its own bottom (-1px)
+   which lines up exactly with the row's border-bottom — same Y, same
+   color reference, so the indicator reads cleanly atop the row line. */
+.toolbarTabs {
+  flex: 1;
+  border-bottom: none !important;
+}
+
+/* Per-tab filter rows — sits beneath the status tabs. Stacks the search
+   input + view toggle on top and the tag-filter pill group on the row
+   below it; both narrow the workflow list within whichever tab is
+   currently active. Vertical stacking keeps the row dedicated to query
+   input full-width and gives the pill row below it room to wrap as
+   more tag pills are added. */
+.toolbarFilterRow {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-2);
+}
+
+/* Inner row that pairs the search input (flex:1) with the view-toggle
+   group at its trailing edge. The toggle buttons are fixed-size so the
+   search input grows to fill the remaining space. */
+.toolbarSearchRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
 }
 
 .searchWrap {
@@ -140,6 +186,90 @@
 .draftPillInput::placeholder {
   color: var(--color-content-tertiary);
   font-weight: var(--font-weight-regular);
+}
+
+/* ─── FilterPopover ───────────────────────────────────────────────────────────
+   Stacked condition rows anchored beneath the "+ Filter" button. Each row
+   carries a Field/Operator pair on the top line and a value control below.
+   Fixed-positioned via inline `top` / `left` from the trigger's bounding
+   rect; the parent stacks rows vertically with a tight gap and adds a
+   "+ Add Filter" button at the bottom. */
+/* ─── Tab context menu — anchors below a tab's "⋯" affordance. Wraps a
+   single Alloy ListItem (Remove) inside a card-shaped panel that matches
+   the FilterPopover chrome. */
+.tabMenu {
+  position: fixed;
+  z-index: 2000;
+  /* Hug the text content of the single ListItem inside (currently
+     "Remove") rather than reserving a 160px floor — the menu only ever
+     contains short tab-action labels, so a fixed min-width left a
+     visible empty gutter to the right of the label. `width: max-content`
+     sizes to the widest label naturally. */
+  width: max-content;
+  padding: var(--space-1);
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-above-md);
+}
+
+.filterPopover {
+  position: fixed;
+  z-index: 2000;
+  min-width: 360px;
+  max-width: 480px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-above-md);
+}
+
+.filterRow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.filterRowControls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Layout-only — Alloy's SelectField / TextField / NumberField bring
+   their own outlined-shell chrome (height, border, focus ring). The
+   rule below just stretches them inside the row. */
+.filterSelect {
+  flex: 1;
+  min-width: 0;
+}
+
+.filterValueInput {
+  width: 100%;
+}
+
+/* Native date input still appears inline on date-typed filters since
+   Alloy has no DateField yet — match the field-shell metrics so it
+   visually lines up with the SelectField/TextField siblings. */
+input.filterValueInput[type="date"] {
+  height: 32px;
+  padding: 0 var(--space-3);
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-md);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  color: var(--color-content-primary);
+  outline: none;
+}
+
+input.filterValueInput[type="date"]:focus-visible {
+  border-color: var(--color-border-focus);
+  box-shadow: 0 0 0 3px var(--color-bg-focus-ring);
 }
 
 /* ─── Metric cards ──────────────────────────────────────────────────────────── */

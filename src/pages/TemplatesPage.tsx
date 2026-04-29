@@ -341,52 +341,56 @@ const CATEGORIES: TemplateCategory[] = [
   {
     id: 'pay', name: 'Pay', suggestedFor: 'Pay Management',
     workflows: [
-      { id: 'pay-1', name: 'Next day pay reminder on clock-out',           steps: ['trigger', 'action', 'action'], triggerCategory: 'clock_in_clock_out', tags: [{ label: 'Pay', color: 'purple' }, { label: 'Notification', color: 'orange' }] },
-      { id: 'pay-2', name: 'Signature reminder on clock-out',              steps: ['trigger', 'action', 'action'], triggerCategory: 'clock_in_clock_out', tags: [{ label: 'Pay', color: 'purple' }, { label: 'Notification', color: 'orange' }] },
-      { id: 'pay-3', name: 'Pay period attestation reminder on clock-out', steps: ['trigger', 'action', 'action'], triggerCategory: 'clock_in_clock_out', tags: [{ label: 'Pay', color: 'purple' }, { label: 'Notification', color: 'orange' }] },
-      { id: 'pay-4', name: 'Apply bonus to claimed shift',                 steps: ['trigger', 'action'],           triggerCategory: 'shift_request',      tags: [{ label: 'Pay', color: 'purple' }, { label: 'Shift', color: 'orange' }] },
+      // Mixes condition gating + AI specialist + delayed reminder.
+      { id: 'pay-1', name: 'Next day pay reminder on clock-out',           steps: ['trigger', 'condition', 'ai', 'action', 'delay', 'action'], triggerCategory: 'clock_in_clock_out', tags: [{ label: 'Pay', color: 'purple' }, { label: 'Notification', color: 'orange' }] },
+      { id: 'pay-2', name: 'Signature reminder on clock-out',              steps: ['trigger', 'condition', 'action', 'delay', 'condition', 'action'], triggerCategory: 'clock_in_clock_out', tags: [{ label: 'Pay', color: 'purple' }, { label: 'Notification', color: 'orange' }] },
+      { id: 'pay-3', name: 'Pay period attestation reminder on clock-out', steps: ['trigger', 'policy', 'condition', 'ai', 'action', 'action'], triggerCategory: 'clock_in_clock_out', tags: [{ label: 'Pay', color: 'purple' }, { label: 'Notification', color: 'orange' }] },
+      { id: 'pay-4', name: 'Apply bonus to claimed shift',                 steps: ['trigger', 'condition', 'policy', 'action', 'action'], triggerCategory: 'shift_request',      tags: [{ label: 'Pay', color: 'purple' }, { label: 'Shift', color: 'orange' }] },
     ],
   },
   {
     id: 'performance', name: 'Performance', suggestedFor: 'Performance Monitoring',
     workflows: [
-      { id: 'perf-1', name: 'No show notification',                 steps: ['trigger', 'action', 'action'], triggerCategory: 'scheduling',    tags: [{ label: 'Performance', color: 'blue' }, { label: 'Notification', color: 'orange' }] },
-      { id: 'perf-2', name: 'Release shift warning',                steps: ['trigger', 'action', 'action'], triggerCategory: 'shift_release', tags: [{ label: 'Performance', color: 'blue' }, { label: 'Shift', color: 'green' }] },
-      { id: 'perf-3', name: 'Thank you message for claiming shift', steps: ['trigger', 'action', 'action'], triggerCategory: 'shift_request', tags: [{ label: 'Performance', color: 'blue' }, { label: 'Shift', color: 'green' }] },
+      { id: 'perf-1', name: 'No show notification',                 steps: ['trigger', 'delay', 'condition', 'ai', 'action', 'action'], triggerCategory: 'scheduling',    tags: [{ label: 'Performance', color: 'blue' }, { label: 'Notification', color: 'orange' }] },
+      { id: 'perf-2', name: 'Release shift warning',                steps: ['trigger', 'condition', 'condition', 'action', 'delay', 'action'], triggerCategory: 'shift_release', tags: [{ label: 'Performance', color: 'blue' }, { label: 'Shift', color: 'green' }] },
+      { id: 'perf-3', name: 'Thank you message for claiming shift', steps: ['trigger', 'condition', 'ai', 'action', 'action'], triggerCategory: 'shift_request', tags: [{ label: 'Performance', color: 'blue' }, { label: 'Shift', color: 'green' }] },
     ],
   },
   {
     id: 'time-tracking', name: 'Time Tracking', suggestedFor: 'Time & Attendance',
     workflows: [
-      { id: 'tt-1', name: '30 minutes shift reminder',                    steps: ['trigger', 'action', 'action'], triggerCategory: 'scheduling',        tags: [{ label: 'Time Tracking', color: 'green' }, { label: 'Reminder', color: 'orange' }] },
-      { id: 'tt-2', name: '1 hour shift reminder',                        steps: ['trigger', 'action', 'action'], triggerCategory: 'scheduling',        tags: [{ label: 'Time Tracking', color: 'green' }, { label: 'Reminder', color: 'orange' }] },
-      { id: 'tt-3', name: '12 hour shift reminder',                       steps: ['trigger', 'action', 'action'], triggerCategory: 'scheduling',        tags: [{ label: 'Time Tracking', color: 'green' }, { label: 'Reminder', color: 'orange' }] },
-      { id: 'tt-4', name: 'Notify users if they are late to a shift',     steps: ['trigger', 'action', 'action'], triggerCategory: 'scheduling',        tags: [{ label: 'Time Tracking', color: 'green' }, { label: 'Notification', color: 'orange' }] },
-      { id: 'tt-5', name: 'Clock in when user enters geofence',           steps: ['trigger', 'action'],           triggerCategory: 'geofence',          tags: [{ label: 'Time Tracking', color: 'green' }, { label: 'Geofence', color: 'blue' }] },
-      { id: 'tt-6', name: 'Clock out when user leaves geofence',          steps: ['trigger', 'action'],           triggerCategory: 'geofence',          tags: [{ label: 'Time Tracking', color: 'green' }, { label: 'Geofence', color: 'blue' }] },
-      { id: 'tt-7', name: 'Auto clock in',                                steps: ['trigger', 'action'],           triggerCategory: 'clock_in_clock_out', tags: [{ label: 'Time Tracking', color: 'green' }, { label: 'Clock In', color: 'blue' }] },
-      { id: 'tt-8', name: 'Auto clock out',                               steps: ['trigger', 'action'],           triggerCategory: 'clock_in_clock_out', tags: [{ label: 'Time Tracking', color: 'green' }, { label: 'Clock Out', color: 'blue' }] },
+      { id: 'tt-1', name: '30 minutes shift reminder',                    steps: ['trigger', 'delay', 'condition', 'action', 'action'], triggerCategory: 'scheduling',        tags: [{ label: 'Time Tracking', color: 'green' }, { label: 'Reminder', color: 'orange' }] },
+      { id: 'tt-2', name: '1 hour shift reminder',                        steps: ['trigger', 'delay', 'condition', 'ai', 'action', 'action'], triggerCategory: 'scheduling',        tags: [{ label: 'Time Tracking', color: 'green' }, { label: 'Reminder', color: 'orange' }] },
+      { id: 'tt-3', name: '12 hour shift reminder',                       steps: ['trigger', 'delay', 'condition', 'action', 'action', 'action'], triggerCategory: 'scheduling',        tags: [{ label: 'Time Tracking', color: 'green' }, { label: 'Reminder', color: 'orange' }] },
+      { id: 'tt-4', name: 'Notify users if they are late to a shift',     steps: ['trigger', 'condition', 'ai', 'action', 'delay', 'condition', 'action'], triggerCategory: 'scheduling',        tags: [{ label: 'Time Tracking', color: 'green' }, { label: 'Notification', color: 'orange' }] },
+      { id: 'tt-5', name: 'Clock in when user enters geofence',           steps: ['trigger', 'condition', 'action'], triggerCategory: 'geofence',          tags: [{ label: 'Time Tracking', color: 'green' }, { label: 'Geofence', color: 'blue' }] },
+      { id: 'tt-6', name: 'Clock out when user leaves geofence',          steps: ['trigger', 'condition', 'action', 'action'], triggerCategory: 'geofence',          tags: [{ label: 'Time Tracking', color: 'green' }, { label: 'Geofence', color: 'blue' }] },
+      { id: 'tt-7', name: 'Auto clock in',                                steps: ['trigger', 'condition', 'action', 'action'], triggerCategory: 'clock_in_clock_out', tags: [{ label: 'Time Tracking', color: 'green' }, { label: 'Clock In', color: 'blue' }] },
+      { id: 'tt-8', name: 'Auto clock out',                               steps: ['trigger', 'condition', 'action', 'action'], triggerCategory: 'clock_in_clock_out', tags: [{ label: 'Time Tracking', color: 'green' }, { label: 'Clock Out', color: 'blue' }] },
     ],
   },
   {
     id: 'scheduling', name: 'Scheduling', suggestedFor: 'Shift Scheduling',
     workflows: [
-      { id: 'sched-1', name: 'Notify managers when shift is claimed',     steps: ['trigger', 'action', 'action'], triggerCategory: 'shift_request',      tags: [{ label: 'Scheduling', color: 'orange' }, { label: 'Notification', color: 'blue' }] },
-      { id: 'sched-2', name: 'Notify employee when shift claim approved', steps: ['trigger', 'action', 'action'], triggerCategory: 'shift_request',      tags: [{ label: 'Scheduling', color: 'orange' }, { label: 'Notification', color: 'blue' }] },
-      { id: 'sched-3', name: 'Notify employee when shift claim rejected', steps: ['trigger', 'action', 'action'], triggerCategory: 'shift_request',      tags: [{ label: 'Scheduling', color: 'orange' }, { label: 'Notification', color: 'blue' }] },
-      { id: 'sched-4', name: 'New timeoff requested',                     steps: ['trigger', 'action', 'action'], triggerCategory: 'data_workflows',     tags: [{ label: 'Scheduling', color: 'orange' }, { label: 'Time Off', color: 'purple' }] },
-      { id: 'sched-5', name: 'Timeoff approved',                          steps: ['trigger', 'action'],           triggerCategory: 'data_workflows',     tags: [{ label: 'Scheduling', color: 'orange' }, { label: 'Time Off', color: 'purple' }] },
-      { id: 'sched-6', name: 'Timeoff rejected',                          steps: ['trigger', 'action'],           triggerCategory: 'data_workflows',     tags: [{ label: 'Scheduling', color: 'orange' }, { label: 'Time Off', color: 'purple' }] },
+      { id: 'sched-1', name: 'Notify managers when shift is claimed',     steps: ['trigger', 'policy', 'condition', 'ai', 'action', 'action'], triggerCategory: 'shift_request',      tags: [{ label: 'Scheduling', color: 'orange' }, { label: 'Notification', color: 'blue' }] },
+      { id: 'sched-2', name: 'Notify employee when shift claim approved', steps: ['trigger', 'condition', 'action', 'delay', 'action'], triggerCategory: 'shift_request',      tags: [{ label: 'Scheduling', color: 'orange' }, { label: 'Notification', color: 'blue' }] },
+      { id: 'sched-3', name: 'Notify employee when shift claim rejected', steps: ['trigger', 'condition', 'ai', 'action', 'action'], triggerCategory: 'shift_request',      tags: [{ label: 'Scheduling', color: 'orange' }, { label: 'Notification', color: 'blue' }] },
+      { id: 'sched-4', name: 'New timeoff requested',                     steps: ['trigger', 'policy', 'condition', 'ai', 'action', 'action', 'action'], triggerCategory: 'data_workflows',     tags: [{ label: 'Scheduling', color: 'orange' }, { label: 'Time Off', color: 'purple' }] },
+      { id: 'sched-5', name: 'Timeoff approved',                          steps: ['trigger', 'condition', 'action', 'action'], triggerCategory: 'data_workflows',     tags: [{ label: 'Scheduling', color: 'orange' }, { label: 'Time Off', color: 'purple' }] },
+      { id: 'sched-6', name: 'Timeoff rejected',                          steps: ['trigger', 'condition', 'action', 'action'], triggerCategory: 'data_workflows',     tags: [{ label: 'Scheduling', color: 'orange' }, { label: 'Time Off', color: 'purple' }] },
+      // Showcase: a long flow that exercises every node type plus repeats —
+      // useful for confirming the canvas handles tall stacks gracefully.
+      { id: 'sched-7', name: 'Premium shift dispatch & escalation',       steps: ['trigger', 'policy', 'condition', 'condition', 'ai', 'action', 'delay', 'condition', 'action', 'action'], triggerCategory: 'shift_request', tags: [{ label: 'Scheduling', color: 'orange' }, { label: 'AI', color: 'purple' }, { label: 'Premium', color: 'blue' }] },
     ],
   },
   {
     id: 'training', name: 'Training', suggestedFor: 'Employee Training',
     workflows: [
-      { id: 'train-1', name: 'Extra clock-in reminder',           steps: ['trigger', 'action'], triggerCategory: 'scheduling',        tags: [{ label: 'Training', color: 'orange' }, { label: 'Reminder', color: 'blue' }] },
-      { id: 'train-2', name: 'Extra clock-out reminder',          steps: ['trigger', 'action'], triggerCategory: 'scheduling',        tags: [{ label: 'Training', color: 'orange' }, { label: 'Reminder', color: 'blue' }] },
-      { id: 'train-3', name: 'Extra break start reminder',        steps: ['trigger', 'action'], triggerCategory: 'breaks',            tags: [{ label: 'Training', color: 'orange' }, { label: 'Reminder', color: 'blue' }] },
-      { id: 'train-4', name: 'Extra break end reminder',          steps: ['trigger', 'action'], triggerCategory: 'breaks',            tags: [{ label: 'Training', color: 'orange' }, { label: 'Reminder', color: 'blue' }] },
-      { id: 'train-5', name: 'Send training packet to new users', steps: ['trigger', 'action', 'action'], triggerCategory: 'data_workflows', tags: [{ label: 'Training', color: 'orange' }, { label: 'Onboarding', color: 'green' }] },
+      { id: 'train-1', name: 'Extra clock-in reminder',           steps: ['trigger', 'delay', 'condition', 'action'], triggerCategory: 'scheduling',        tags: [{ label: 'Training', color: 'orange' }, { label: 'Reminder', color: 'blue' }] },
+      { id: 'train-2', name: 'Extra clock-out reminder',          steps: ['trigger', 'condition', 'action', 'action'], triggerCategory: 'scheduling',        tags: [{ label: 'Training', color: 'orange' }, { label: 'Reminder', color: 'blue' }] },
+      { id: 'train-3', name: 'Extra break start reminder',        steps: ['trigger', 'condition', 'action'], triggerCategory: 'breaks',            tags: [{ label: 'Training', color: 'orange' }, { label: 'Reminder', color: 'blue' }] },
+      { id: 'train-4', name: 'Extra break end reminder',          steps: ['trigger', 'condition', 'action'], triggerCategory: 'breaks',            tags: [{ label: 'Training', color: 'orange' }, { label: 'Reminder', color: 'blue' }] },
+      { id: 'train-5', name: 'Send training packet to new users', steps: ['trigger', 'policy', 'condition', 'ai', 'action', 'delay', 'action', 'action'], triggerCategory: 'data_workflows', tags: [{ label: 'Training', color: 'orange' }, { label: 'Onboarding', color: 'green' }] },
     ],
   },
 ];
@@ -540,14 +544,12 @@ function TemplateCard({
         </div>
       </div>
 
-      {/* ── Expanded panel — full-width inside the grid row ── */}
+      {/* ── Expanded panel — full-width inside the grid row. The flow
+            preview diagram used to render at the top of this panel; it
+            has been removed in favour of just the About / Tags
+            sections + Use Template CTA. ── */}
       {isExpanded && (
         <div className={styles.cardExpanded} data-card-action>
-          <TemplatePreviewDiagram
-            steps={workflow.steps}
-            triggerLabel={triggerMeta.label}
-          />
-
           {/* About row — copy on the left, Use Template button anchored to
               the right. The button vertically centers against the section
               block so it lines up with the description rather than the
@@ -566,7 +568,7 @@ function TemplateCard({
               onClick={onUseTemplate}
               className={styles.expandedAboutCta}
             >
-              Use Template
+              Try Template
             </Button>
           </div>
 

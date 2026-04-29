@@ -6,19 +6,22 @@
 /* ─── Page shell ──────────────────────────────────────────────────────────────── */
 
 .page {
+  /* Flex column so the unified topbar can sit above the body and span
+     the full screen width. Body takes the remaining height. */
   position: relative;
   height: 100dvh;
   overflow: hidden;
   user-select: none;
+  display: flex;
+  flex-direction: column;
 }
 
-/* Two-column layout — fixed 2:8 ratio, full page height.
-   Left column hosts the AI chat (thread + composer). Right column hosts
-   the topBar, canvas, toolbar, and right-panel popover stacked vertically.
-   A 1px divider runs full height between them. */
+/* Two-column layout — fixed 2:8 ratio, takes the height left after the
+   topbar at the top. Left column hosts the AI chat (thread + composer).
+   Right column hosts the canvas, toolbar, and right-panel popover. */
 .body {
-  position: absolute;
-  inset: 0;
+  flex: 1;
+  min-height: 0;
   display: grid;
   grid-template-columns: 360px 1px 1fr;
 }
@@ -86,7 +89,11 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 8px;
+  /* Asymmetric padding — 12px on the left aligns the workflow name with
+     the content column beneath, while the right side keeps its 8px so
+     the trailing action cluster (Run test / Publish) hugs the panel
+     edge. */
+  padding: 0 8px 0 12px;
   background: var(--color-bg-primary);
   border-bottom: 1px solid var(--color-border-opaque);
   z-index: var(--z-sticky);
@@ -100,16 +107,18 @@
 .topBarLeft {
   display: flex;
   align-items: center;
-  gap: var(--space-1);
+  /* 8px between back chevron, workflow name, and status tag — single
+     consistent rhythm now (was 4px with a +4px margin on the status tag
+     to fake an 8px name→tag offset). */
+  gap: var(--space-2);
   min-width: 0;
   pointer-events: auto;
 }
 
-/* Status tag gets an extra 4px on its left so the name → tag spacing
-   reads as 8px (4px flex gap + 4px margin) while the rest of topBarLeft
-   keeps its tighter 4px rhythm. */
+/* Status tag — extra margin no longer needed since the row gap is 8px
+   already; class kept for any callers that target it. */
 .topBarStatusTag {
-  margin-left: var(--space-1);
+  margin-left: 0;
 }
 
 /* Subtle vertical separator between back button and name */
@@ -726,10 +735,27 @@
 }
 
 .aiChatBubbleUser {
-  align-self: flex-end;
+  align-self: flex-start;
   background: var(--color-bg-inverse-primary);
   color: var(--color-content-inverse-primary);
-  border-bottom-right-radius: var(--radius-xs);
+  border-bottom-left-radius: var(--radius-xs);
+}
+
+/* ── Outbound (user) alignment overrides ──────────────────────────────────
+   By default Alloy's AIThread right-anchors user messages, labels, and
+   timestamps. We pin everything to the left edge instead so the user
+   thread reads as a single left-aligned column matching the AI inbound
+   side. We target Alloy's hashed CSS-module classes via attribute
+   substring selectors so the overrides survive rebuilds. */
+.aiChatWindow [class*="messageBlockUser"] {
+  align-self: flex-start;
+}
+.aiChatWindow [class*="labelUser"] {
+  align-self: flex-start;
+}
+.aiChatWindow [class*="timestampUser"] {
+  left: 0;
+  right: auto;
 }
 
 .aiChatBubbleAssistant {
@@ -758,9 +784,10 @@
 
 /* Context row — subtle one-line label above a user bubble (e.g. "From
    Trigger node —") that explains where the message originated. No bubble,
-   right-aligned so it visually pairs with the outbound pill below it. */
+   left-aligned so it visually pairs with the outbound pill below it,
+   which is now pinned to the left side of the thread. */
 .threadContextRow {
-  align-self: flex-end;
+  align-self: flex-start;
   padding: 0 var(--space-2);
   font-family: var(--font-sans);
   font-size: var(--text-xs);
@@ -991,32 +1018,88 @@
 .nodeChangeBlock {
   display: flex;
   flex-direction: column;
+  /* `position: relative` anchors the absolute-positioned AITimestamp
+     child (rendered beneath the trail) to this wrapper's bottom edge,
+     same way Alloy's `.messageBlock` does for AIUserMessage. */
+  position: relative;
+  /* 4px gap between the header label and the card body — keeps the
+     pair reading as a single visual unit rather than two stacked rows. */
   gap: var(--space-1);
-  max-width: 88%;
+  /* Stretch the card across the full width of the thread column rather than
+     hugging its content — node-change rows can be long ("Action configured
+     — Feed message to Specific Group of Users") and look cramped when the
+     card shrinks to fit. The header label still respects its side via
+     .nodeChangeBlockInbound / Outbound below. */
+  align-self: stretch;
+  width: 100%;
 }
-/* AI-side (inbound) cards anchor to the left, mirroring .threadAiBlock. */
+/* AI-side (inbound) cards: left-anchor the small mono header above the card. */
 .nodeChangeBlockInbound {
-  align-self: flex-start;
   align-items: flex-start;
 }
-/* User-side (outbound) cards anchor to the right, mirroring .threadUserBlock. */
+/* User-side (outbound) cards: now mirror the inbound layout — header
+   chip on the left, timeline rule on the left of the body, sub-rows
+   left-anchored — so the entire AI thread reads as a single left-
+   aligned column. The trail still stretches the full thread width by
+   default; no inner overrides needed because Alloy's defaults already
+   left-anchor everything.
+   The slide-in + fade-in animation matches Alloy's `.messageBlockUser`
+   (220ms / ease-out / 16px lift) so a user-driven change landing in
+   the thread reads with the same kinetic signature as a user-message
+   bubble — both are "the user just did something" moments. */
 .nodeChangeBlockOutbound {
-  align-self: flex-end;
-  align-items: flex-end;
+  align-items: flex-start;
+  animation: nodeChangeBlockOutboundIn 220ms var(--ease-out) both;
 }
 
-/* Small code-style header above the card. */
+@keyframes nodeChangeBlockOutboundIn {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Reduced motion — keep a fade so the new entry is still discoverable,
+   drop the lift to honor the system preference. Mirrors Alloy's
+   reduced-motion override on `.messageBlockUser`. */
+@media (prefers-reduced-motion: reduce) {
+  .nodeChangeBlockOutbound {
+    animation: nodeChangeBlockOutboundFadeIn 120ms var(--ease-out) both;
+  }
+  @keyframes nodeChangeBlockOutboundFadeIn {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+}
+
+/* Inline-variant timestamp beneath the outbound trail. The
+   `inline` AITimestamp ships with `margin-left: var(--space-1)` —
+   useful inside an AIMessageActions cluster (where it sits beside
+   buttons), but it reads as a tiny indent here where the stamp is
+   the lone row beneath the trail. Zero it out so the stamp's left
+   edge lines up with the rest of the outbound column. */
+.nodeChangeTimestamp {
+  margin-left: 0;
+}
+
+/* Header label above the card — matches the user-message label style
+   in Alloy's AIThread (`.label` / `.labelUser`) so user-side and AI-
+   side activity reads with consistent typography. */
 .nodeChangeHeaderLabel {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: var(--text-xs);
-  font-weight: var(--font-weight-regular);
-  line-height: var(--line-height-tight);
-  color: var(--color-slate-bg-secondary);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-snug);
+  color: var(--color-content-secondary);
   letter-spacing: var(--tracking-normal);
   padding: 0 var(--space-1);
 }
 
-/* White card body with subtle Alloy border and 6px radius. */
+/* White card body with subtle Alloy border and 6px radius. Stretches the
+   full width of the surrounding thread column so long meta values like
+   "Action configured — Feed message to Specific Group of Users" have room
+   to read instead of forcing the card to hug content and overflow the panel.
+   The parent block (`.nodeChangeBlock`) uses `align-items: flex-start /
+   flex-end` to side-anchor the small mono header label above the card —
+   `align-self: stretch` here overrides that for the card itself. */
 .nodeChangeCard {
   display: flex;
   flex-direction: column;
@@ -1025,7 +1108,10 @@
   background: var(--color-bg-primary);
   border: 1px solid var(--color-border-opaque);
   border-radius: 6px;
-  min-width: 200px;
+  align-self: stretch;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 /* Stacked node rows, 8px gap between. */
@@ -1117,7 +1203,10 @@
    value summary. */
 .nodeChangeMetaRow {
   display: flex;
-  align-items: baseline;
+  /* `align-items: flex-start` so the label hugs the top of a wrapping
+     value (was `baseline` with `nowrap`, which doesn't matter once the
+     value can grow to multiple lines). */
+  align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-3);
   font-family: var(--font-sans);
@@ -1136,9 +1225,12 @@
   color: var(--color-content-primary);
   text-align: right;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* Wrap to as many lines as the value needs instead of ellipsizing.
+     `overflow-wrap: anywhere` handles long unbroken substrings (e.g.
+     a recipient list with no spaces) without overflowing the card. */
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 /* Mono treatment for IDs so the string reads as machine identifier
@@ -1150,9 +1242,153 @@
   color: var(--color-content-primary);
   text-align: right;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* Mono IDs wrap too — long generated ids would otherwise truncate
+     to an ellipsis and lose the trailing characters. */
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
+/* Leading icon + label inside an AIActivityTrail summary. Used by both
+   the assistant trail (TeambridgeAI sparkle) and the user-change group
+   (Edit pencil) so the trail header reads as either AI- or user-driven
+   activity at a glance. The flex layout keeps the icon at a fixed
+   inline anchor next to the text without nudging the chevron. */
+.activityTrailSummary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* Completed state — Alloy's default trail summary uses content-secondary
+   in done mode; we drop it one notch to content-tertiary so finished
+   activity reads as inert background information rather than something
+   active. The live state above is unaffected (its gradient shimmer is
+   set on the trail's headerSummary directly). */
+[data-state="done"] .activityTrailSummary {
+  color: var(--color-content-tertiary);
+}
+
+/* ── User change group — collapsible sub-rows for grouped canvas changes ──
+   Each sub-row is an Alloy-styled chip pill (icon + label + chevron) that
+   expands to reveal a paginated NodeChangeCard. Mirrors the AI activity
+   trail's visual language so canvas-driven changes read as part of the
+   same low-noise thread log. */
+
+.userChangeGroupBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.userChangeSubgroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* Pill trigger — matches Alloy Tag's subtle / md size visually but is its
+   own component because it needs a chevron + click toggle. */
+.userChangeSubgroupChip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  align-self: flex-start;
+  padding: 4px var(--space-2);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-full);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-primary);
+  cursor: pointer;
+  transition: background var(--duration-fast), border-color var(--duration-fast);
+}
+
+.userChangeSubgroupChip:hover {
+  background: var(--color-bg-tertiary);
+  border-color: var(--color-border-opaque);
+}
+
+.userChangeSubgroupChip:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+}
+
+.userChangeSubgroupChipIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-content-secondary);
+}
+
+.userChangeSubgroupChipLabel {
   white-space: nowrap;
+}
+
+.userChangeSubgroupChipChevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-content-tertiary);
+  transition: transform var(--duration-fast);
+}
+
+.userChangeSubgroupChipChevronOpen {
+  transform: rotate(180deg);
+}
+
+.userChangeSubgroupBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* Pagination footer inside a sub-group — only renders when there's more
+   than one change for that type. Compact prev / "i / N" / next row. */
+.userChangePagination {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  color: var(--color-content-secondary);
+}
+
+.userChangePageBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  color: var(--color-content-primary);
+  cursor: pointer;
+  transition: background var(--duration-fast);
+}
+
+.userChangePageBtn:hover:not(:disabled) {
+  background: var(--color-bg-tertiary);
+}
+
+.userChangePageBtn:disabled {
+  color: var(--color-content-disabled);
+  cursor: not-allowed;
+}
+
+.userChangePageBtn:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+}
+
+.userChangePageLabel {
+  font-variant-numeric: tabular-nums;
+  min-width: 28px;
+  text-align: center;
 }
 
 /* ── Typing indicator (three bouncing dots) ── */
@@ -2145,7 +2381,7 @@
   padding: var(--space-1) var(--space-3);
 }
 
-/* ── Output port handle (condition node yes/no / multi-value handles) ──
+/* ── Output port handle (condition / multi-value out-port handles) ──
    Intentionally does NOT extend .anchor — avoids CSS cascade conflicts
    since .anchor is defined later in this file with equal specificity. ── */
 .outputPortHandle {
@@ -2178,6 +2414,25 @@
 .nodeWrapperDragging {
   z-index: 10;
   cursor: grabbing;
+}
+
+/* Marquee multi-selection no longer paints a wrapping outline — every
+   hit node flips into its own active/focused visual via `isMultiSelected`
+   → `focused` inside FlowNode (same chrome as a single-click selection).
+   The `data-multi-selected="true"` attribute stays on the wrapper for
+   a11y / inspector tooling but carries no styling of its own. */
+
+/* Marquee selection box — translucent brand-tinted rectangle drawn in
+   canvas space while the user shift-drags on empty canvas. `pointer-
+   events: none` so the box itself never intercepts mousemove (would
+   interrupt the live hit-test loop). */
+.marqueeBox {
+  position: absolute;
+  border: 1px solid var(--color-border-selected);
+  background: color-mix(in srgb, var(--color-border-selected) 10%, transparent);
+  border-radius: 2px;
+  pointer-events: none;
+  z-index: 5;
 }
 
 /* ─── Output ports ────────────────────────────────────────────────────────────── */
@@ -2597,14 +2852,20 @@
 /* Operator part (e.g. "is", "is not", "contains") — type tertiary colour */
 .nodeConfigSummary[data-type="trigger"]   .nodeConfigOp { color: var(--color-orange-content-tertiary); }
 .nodeConfigSummary[data-type="condition"] .nodeConfigOp { color: var(--color-blue-content-tertiary); }
-.nodeConfigSummary[data-type="action"]    .nodeConfigOp { color: var(--color-green-content-tertiary); }
+.nodeConfigSummary[data-type="action"]    .nodeConfigOp { color: var(--color-blue-content-tertiary); }
 .nodeConfigSummary[data-type="ai"]        .nodeConfigOp { color: var(--color-purple-content-tertiary); }
 
 /* Value part (user-entered / selected values) — type secondary colour */
 .nodeConfigSummary[data-type="trigger"]   .nodeConfigVal { color: var(--color-orange-content-secondary); }
 .nodeConfigSummary[data-type="condition"] .nodeConfigVal { color: var(--color-blue-content-secondary); }
-.nodeConfigSummary[data-type="action"]    .nodeConfigVal { color: var(--color-green-content-secondary); }
+.nodeConfigSummary[data-type="action"]    .nodeConfigVal { color: var(--color-blue-content-secondary); }
 .nodeConfigSummary[data-type="ai"]        .nodeConfigVal { color: var(--color-purple-content-secondary); }
+
+/* Action-node label override — keep the entire snippet (label / op / val)
+   inside the blue scale so a configured action reads as one cohesive
+   blue line rather than mixing the global secondary content colour
+   with the type-tinted op / val parts. */
+.nodeConfigSummary[data-type="action"]    .nodeConfigLabel { color: var(--color-blue-content-secondary); }
 
 /* ─── Right panel — mirrors left panel, anchored to right edge ───────────────── */
 
@@ -2809,9 +3070,42 @@
   background: var(--color-bg-secondary);
   border: 1px solid var(--color-border-opaque);
   border-radius: 6px;
-  padding: 12px;
+  /* 4px top/bottom keeps the rows compact; 8px side padding keeps
+     the labels/values comfortably inside the card edge. */
+  padding: var(--space-1) var(--space-2);
   box-shadow: var(--shadow-below-md);
   pointer-events: auto;
+  /* Default state: card mounts hidden. The `[data-open]` rule below
+     plays the entry animation; closing (data-open removed) plays the
+     exit animation while the wrapping `infoMounted` flag holds the
+     element in the DOM long enough for the keyframes to finish. */
+  animation: popoverInfoCardClose 180ms var(--ease-in, cubic-bezier(0.4, 0, 1, 1)) both;
+}
+
+.popoverInfoCard[data-open] {
+  animation: popoverInfoCardOpen 200ms var(--ease-out, cubic-bezier(0, 0, 0.2, 1)) both;
+}
+
+@keyframes popoverInfoCardOpen {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes popoverInfoCardClose {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.98);
+  }
 }
 .popoverInfoCardHeader {
   display: flex;
@@ -3279,6 +3573,49 @@
 
 .popoverFields { display: flex; flex-direction: column; gap: var(--space-2); }
 
+/* ── Modify Timing — universal trigger affordance ─────────────────────────
+   Sits below the trigger's per-type config fields. Two states:
+     - inactive: a single "+ Modify Timing" ghost button (.modifyTimingAddBtn)
+     - active: a row that pairs a NumberField with two compact selects and
+       a trailing X button to clear (.modifyTimingRow)
+   The active row gets a small top margin so it visually separates from
+   whatever fields render above it. */
+.modifyTimingAddBtn {
+  align-self: flex-start;
+  margin-top: var(--space-2);
+}
+
+.modifyTimingRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  /* Row sits beneath the "Modify Timing" label inside a popoverFieldRow
+     wrapper — the wrapper supplies the column gap, so no extra
+     margin-top here. */
+}
+
+/* Number input takes a small fixed footprint at the leading edge — it
+   only ever holds a 1–2 digit amount, so giving it a narrow base width
+   keeps the digits visible without stealing room from the selects. */
+.modifyTimingNum {
+  flex: 0 0 72px;
+  min-width: 0;
+}
+
+/* Two selects share the remaining horizontal space evenly so the row
+   stretches edge-to-edge inside the Configuration section, matching
+   the full-width feel of the other config fields above it. */
+.modifyTimingSelect {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+/* Clear button is icon-only at md height — sits flush at the trailing
+   edge after the selects. */
+.modifyTimingClearBtn {
+  flex: 0 0 auto;
+}
+
 /* Label + field row for trigger config selects */
 .popoverFieldRow { display: flex; flex-direction: column; gap: var(--space-1); }
 .popoverFieldLabel {
@@ -3347,7 +3684,27 @@
   box-shadow: 0 0 0 3px var(--color-bg-focus-ring);
 }
 
-/* Value text — mirrors Alloy .control layout via shell custom props */
+/* Disabled state — used when a dependent select (e.g. "Record Field")
+   has no parent value yet. Mutes the chrome, suppresses hover, and
+   flips the cursor so the trigger reads as inert without disappearing
+   from the form. */
+.psTrigger[data-disabled],
+.psTrigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.psTrigger[data-disabled] .psValue,
+.psTrigger:disabled .psValue {
+  color: var(--color-content-tertiary);
+}
+.psTrigger[data-disabled]:hover .psChevron,
+.psTrigger:disabled:hover .psChevron {
+  color: var(--color-content-tertiary);
+}
+
+/* Value text — mirrors Alloy .control layout via shell custom props.
+   Kept for any remaining call sites; the active component now uses
+   `.psValueInput` (a real input element) so the trigger is typeable. */
 .psValue {
   flex: 1;
   min-width: 0;
@@ -3363,6 +3720,38 @@
   text-overflow: ellipsis;
 }
 .psPlaceholder { color: var(--color-content-tertiary); }
+
+/* Typeable trigger input — the combobox value field. Visually flat
+   inside the shell (no border, no background, no inner focus ring)
+   so the outer shell carries the chrome. Inherits the shell's font
+   and color scheme. */
+.psValueInput {
+  flex: 1;
+  min-width: 0;
+  height: var(--field-h, 40px);
+  padding-left: var(--ctrl-pl, var(--space-3));
+  padding-right: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-family: var(--font-sans);
+  font-size: var(--field-fs, var(--text-sm));
+  color: var(--color-content-primary);
+  /* Use a transparent caret when closed so the trigger reads as a
+     button; the caret reappears when the trigger is focused/open
+     because the focus ring on the shell signals editing mode. */
+  caret-color: var(--color-content-primary);
+  cursor: text;
+}
+
+.psValueInput::placeholder {
+  color: var(--color-content-tertiary);
+}
+
+.psValueInput:disabled {
+  cursor: not-allowed;
+  color: var(--color-content-tertiary);
+}
 
 /* Chevron — rotates on open; transform on svg so pivot is the icon center */
 .psChevron {
@@ -3416,6 +3805,50 @@
   font-weight: var(--font-weight-medium);
 }
 .psItemSelected:hover { background: var(--color-bg-tertiary); }
+
+/* Search row at the top of a searchable PopoverSelect panel — sticks to
+   the top of the scroll region so the input stays visible while the
+   filtered options scroll beneath it. */
+.psSearchRow {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--color-bg-primary);
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--color-border-opaque);
+}
+
+.psSearchInput {
+  width: 100%;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  color: var(--color-content-primary);
+  outline: none;
+  transition: border-color var(--duration-fast), box-shadow var(--duration-fast);
+}
+
+.psSearchInput::placeholder {
+  color: var(--color-content-tertiary);
+}
+
+.psSearchInput:focus-visible {
+  border-color: var(--color-border-focus);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-border-focus) 25%, transparent);
+}
+
+/* Empty state shown when the search query filters out every option. */
+.psEmpty {
+  margin: 0;
+  padding: var(--space-3);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  color: var(--color-content-tertiary);
+  text-align: center;
+}
 
 .popoverConfigPlaceholder {
   font-size: var(--text-sm);
@@ -3776,23 +4209,26 @@
   color: var(--color-content-primary);
 }
 
-/* Multi-value tag input */
+/* Multi-value tag input — column wrapper that stacks the chip row over
+   the Alloy TextField. The TextField provides its own border / focus
+   ring / typography, so the wrapper carries no chrome of its own; it
+   only handles the vertical spacing between chips and input. */
 .conditionTagInput {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  width: 100%;
+}
+
+/* Chip row above the TextField. Wraps so a long list of entered values
+   overflows gracefully across multiple lines instead of forcing a wider
+   column. Only rendered when at least one value is present (see
+   `ConditionTagInput`). */
+.conditionTagInputChips {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-1);
-  padding: var(--space-2) var(--space-3);
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border-opaque);
-  border-radius: var(--radius-md);
-  min-height: 40px;
   align-items: center;
-  transition: border-color var(--duration-fast), box-shadow var(--duration-fast);
-  cursor: text;
-}
-.conditionTagInput:focus-within {
-  border-color: var(--color-brand);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-brand) 10%, transparent);
 }
 
 .conditionValueChip {
@@ -3830,21 +4266,6 @@
   background: color-mix(in srgb, var(--color-content-primary) 8%, transparent);
   color: var(--color-content-primary);
 }
-
-.conditionTagInputField {
-  flex: 1;
-  min-width: 80px;
-  height: 24px;
-  border: none;
-  background: transparent;
-  outline: none;
-  font-family: var(--font-sans);
-  font-size: var(--text-sm);
-  color: var(--color-content-primary);
-  padding: 0 var(--space-1);
-  user-select: text;
-}
-.conditionTagInputField::placeholder { color: var(--color-content-tertiary); }
 
 /* Selected state for value-option tag chips */
 .popoverTagSelected {
@@ -4337,6 +4758,15 @@
   color: var(--color-blue-content-primary, var(--color-content-primary));
 }
 
+/* Empty-state avatar tile — same geometry as the configured branch so
+   the persona row keeps its layout, but the inner glyph reads as muted
+   chrome (the diamond placeholder over a neutral grey square) until a
+   specialist is picked. */
+.aiSpecPersonaAvatarEmpty {
+  background: var(--color-bg-secondary);
+  color: var(--color-content-tertiary);
+}
+
 .aiSpecPersonaInfo {
   flex: 1;
   min-width: 0;
@@ -4572,6 +5002,96 @@
   min-width: 0;
 }
 
+/* ─── MultiSelectSearchPicker — search bar + dropdown + list-with-trash ─── */
+/* Used by `multi_select` config fields (Tasks on Assign-task action).      */
+
+.multiSelectSearchRoot {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+.multiSelectSearchDropdown {
+  position: absolute;
+  top: 36px; /* sits flush below the SearchField (md height) */
+  left: 0;
+  right: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-below-md);
+  max-height: 220px;
+  overflow-y: auto;
+  padding: var(--space-1);
+}
+
+.multiSelectSearchOption {
+  appearance: none;
+  background: transparent;
+  border: none;
+  text-align: left;
+  /* Display flex so the leading icon aligns with the option label and
+     gets a tidy 8px gap between them. */
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  color: var(--color-content-primary);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-default);
+}
+
+/* Leading icon slot inside a dropdown option — sized to match Alloy's
+   ListItem leadingSlot (16px) and tinted secondary so it reads as
+   structural decoration, not as a primary actionable element. */
+.multiSelectSearchOptionIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  color: var(--color-content-secondary);
+}
+.multiSelectSearchOption:hover,
+.multiSelectSearchOption:focus-visible {
+  background: var(--color-bg-secondary);
+  outline: none;
+}
+
+.multiSelectSearchList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.multiSelectSearchRemove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-content-tertiary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-default), color var(--duration-fast) var(--ease-default);
+}
+.multiSelectSearchRemove:hover {
+  background: var(--color-error-bg-tertiary);
+  color: var(--color-error-content-primary);
+}
+
 /* ─── FieldTagPicker — editable chips + inline typeahead ───────────────── */
 
 .fieldTagPicker {
@@ -4611,6 +5131,36 @@
   transition: background var(--duration-fast) var(--ease-default), color var(--duration-fast) var(--ease-default);
 }
 .fieldChipRemove:hover {
+  background: var(--color-bg-secondary);
+  color: var(--color-content-primary);
+}
+
+/* Tag-variant chip wrapper — used when FieldTagPicker is configured with
+   a `tagColor` so each entry renders as an Alloy `<Tag>` plus a small
+   detached remove button to its right. The Alloy Tag carries its own
+   colour treatment, so the wrapper just provides flex layout and a
+   spacing slot for the remove icon. */
+.fieldTagWrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.fieldTagRemove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-content-tertiary);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-default), color var(--duration-fast) var(--ease-default);
+}
+.fieldTagRemove:hover {
   background: var(--color-bg-secondary);
   color: var(--color-content-primary);
 }
@@ -5295,6 +5845,30 @@
   scrollbar-color: var(--color-border-opaque) transparent;
 }
 
+/* `bare` variant — used when the picker is mounted inside a Dialog whose
+   own DialogContent already contributes the standard 16px padding. We
+   strip the picker's section paddings so the search field + rows align
+   flush with the dialog content edge, and we drop the `flex: 1` that
+   the default variant uses to fill a popover column. Without that
+   override the picker would keep claiming all available flex space and
+   the dialog would render with a hollow trailing band beneath the last
+   row even when content is short. */
+.actionSelectorRootBare {
+  flex: 0 0 auto;
+}
+.actionSelectorSearchBare {
+  padding: 0 0 var(--space-3) 0;
+}
+.actionSelectorListBare {
+  flex: 0 0 auto;
+  padding: 0;
+  /* Cap the list height inside dialogs so very long action catalogs
+     still scroll instead of pushing the dialog past the viewport — but
+     short results keep their natural height with no trailing slack. */
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
 .actionSelectorList::-webkit-scrollbar { width: 4px; }
 .actionSelectorList::-webkit-scrollbar-track { background: transparent; }
 .actionSelectorList::-webkit-scrollbar-thumb {
@@ -5726,26 +6300,30 @@
   text-align: center;
 }
 
-/* Action-node summary override — stack label and value vertically (one per
-   line, centered) and render everything in Geist Sans rather than the Mono
-   used elsewhere. Scoped so trigger / condition / ai summaries are untouched. */
+/* Action-node summary — inline flow that wraps to a max of two lines.
+   Segments (label / val / op) read as a single sentence ("Modify
+   Applicant Stage → Set to 3- Interview") and wrap naturally rather
+   than each landing on its own row. The content slot is widened so a
+   typical configured action fits in two lines without truncating mid-
+   word. Scoped so trigger / condition / ai summaries are untouched. */
 .actionNodeCard .nodeConfigSummary[data-type="action"] {
   font-family: var(--font-sans);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  text-align: center;
+  max-width: 240px;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
-/* Hide the inline-glue operator (e.g. " to ") — value reads as its own line. */
-.actionNodeCard .nodeConfigSummary[data-type="action"] .nodeConfigOp {
-  display: none;
-}
-
+.actionNodeCard .nodeConfigSummary[data-type="action"] .nodeConfigOp,
 .actionNodeCard .nodeConfigSummary[data-type="action"] .nodeConfigLabel,
 .actionNodeCard .nodeConfigSummary[data-type="action"] .nodeConfigVal {
   font-family: var(--font-sans);
-  display: block;
+  display: inline;
 }
 
 /* AI-node summary override — same two-line treatment as the action card:
@@ -5978,7 +6556,9 @@
   padding: var(--space-3);
   border: 1px solid var(--color-border-opaque);
   border-radius: var(--radius-md);
-  margin-bottom: var(--space-2);
+  /* Vertical spacing between rows is owned by `.conditionGroupRows`'s
+     `gap: var(--space-2)`. The previous `margin-bottom` here doubled
+     that and created a 16px gap; dropping it leaves a clean 8px. */
   background: var(--color-bg-primary);
 }
 
@@ -5991,13 +6571,31 @@
   gap: var(--space-2);
   flex-wrap: nowrap;
 }
+/* Stacked variant — used by multi-value verbs (`is one of`,
+   `is not one of`, `contains one of`). Verb sits on its own row and
+   the value field stretches to the panel's full width on the row
+   below, so selected chips have plenty of horizontal space to wrap
+   onto additional rows as needed. */
+.conditionRowOpValueStacked {
+  flex-direction: column;
+  align-items: stretch;
+}
+.conditionRowOpValueStacked .conditionRowOpSelect,
+.conditionRowOpValueStacked .conditionRowValue {
+  flex: 1 1 auto;
+  width: 100%;
+}
+/* Operator (verb) and value share the row 1:2. The verb is short by
+   nature ("is", "is not", "≥") so 1fr is plenty; the value field
+   takes 2fr so longer entries (lists, free text) have room to breathe.
+   Both flex children carry `min-width: 0` so they shrink with the row
+   instead of forcing horizontal overflow. */
 .conditionRowOpSelect {
-  flex: 0 0 auto;
-  width: auto;
-  min-width: 80px;
+  flex: 1 1 0;
+  min-width: 0;
 }
 .conditionRowValue {
-  flex: 1 1 0;
+  flex: 2 1 0;
   min-width: 0;
 }
 .conditionRowHead {
@@ -6067,13 +6665,71 @@
   border-radius: var(--radius-md);
 }
 
+/* Clickable group header — toggles collapse + summarises the group as
+   "[chevron] AND · {n} conditions". The chevron rotates 180° when the
+   group expands so the affordance reads consistently with the other
+   collapsible chrome on the page. */
 .conditionGroupHeader {
+  all: unset;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  padding: 2px 0;
   font-family: var(--font-sans);
   font-size: var(--text-xs);
   font-weight: var(--font-weight-semibold);
   letter-spacing: var(--tracking-wide);
-  text-transform: uppercase;
   color: var(--color-content-tertiary);
+}
+
+.conditionGroupHeader:hover {
+  color: var(--color-content-primary);
+}
+
+.conditionGroupHeader:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.conditionGroupChevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  color: var(--color-content-tertiary);
+  transition: transform var(--duration-fast) var(--ease-default);
+  /* Default (collapsed) — chevron points right via -90° rotation. */
+  transform: rotate(-90deg);
+}
+
+.conditionGroupChevronOpen {
+  /* Expanded — chevron points down (matches DropdownMenu / other open chrome). */
+  transform: rotate(0deg);
+}
+
+.conditionGroupBadge {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border-opaque);
+  color: var(--color-content-secondary);
+  font-size: 10px;
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+}
+
+.conditionGroupCount {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: var(--font-weight-regular);
+  color: var(--color-content-secondary);
 }
 
 .conditionGroupRows {
@@ -6119,7 +6775,10 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
-  padding: var(--space-2);
+  /* Reserve a 36px header gutter at the top — 20px X button + 8px top
+     inset + 8px breathing room beneath the X before the first option
+     button starts. */
+  padding: 36px var(--space-2) var(--space-2);
   background: var(--color-bg-secondary);
   border: 1px solid var(--color-border-opaque);
   border-radius: var(--radius-md);
@@ -6146,8 +6805,11 @@
 }
 .conditionAddPromptCancel {
   position: absolute;
-  top: var(--space-1);
-  right: var(--space-1);
+  /* Top-right corner of the card — sits inside the 28px header gutter
+     reserved on `.conditionAddPrompt` so the X never overlaps the AND
+     / OR option buttons below. */
+  top: var(--space-2);
+  right: var(--space-2);
   width: 20px;
   height: 20px;
   display: inline-flex;
@@ -6156,10 +6818,13 @@
   padding: 0;
   background: transparent;
   border: none;
+  border-radius: var(--radius-sm);
   color: var(--color-content-tertiary);
   cursor: pointer;
+  transition: background var(--duration-fast), color var(--duration-fast);
 }
 .conditionAddPromptCancel:hover {
+  background: var(--color-bg-tertiary);
   color: var(--color-content-primary);
 }
 
@@ -6484,15 +7149,19 @@
 .conditionNodeCard[data-active="true"] .conditionExprMuted {
   color: color-mix(in srgb, var(--Alloy-white) 70%, transparent);
 }
-/* Dark mode — secondary line uses slate-300 in both filled / not-active
-   AND empty / not-active. Match those tones on the muted segments. */
+/* Dark mode — verb / value tone uses slate-500 so the muted segments
+   stay subordinate to the brighter field labels but remain readable
+   against the dark card surface. Applies to both inactive and active
+   states (dropping the white@70 active override in dark mode) so the
+   verb/value reads in the same slate tone regardless of which card is
+   currently selected. */
 @media (prefers-color-scheme: dark) {
-  :root:not(:global(.light)) .conditionNodeCard:not([data-active="true"]) .conditionExprMuted {
-    color: var(--Alloy-slate-300);
+  :root:not(:global(.light)) .conditionNodeCard .conditionExprMuted {
+    color: var(--Alloy-slate-500);
   }
 }
-:global(.dark) .conditionNodeCard:not([data-active="true"]) .conditionExprMuted {
-  color: var(--Alloy-slate-300);
+:global(.dark) .conditionNodeCard .conditionExprMuted {
+  color: var(--Alloy-slate-500);
 }
 
 /* Bottom card — only when conditions are configured */
@@ -6665,10 +7334,35 @@
   background: rgba(252, 102, 132, 0.15);
   color: #FFA79B;
 }
-/* Default text — coral in both modes, regardless of filled state */
-.policyNodeCard:not([data-active="true"]) .policyNodeTopPrimary,
-.policyNodeCard:not([data-active="true"]) .policyNodeTopSecondary,
-.policyNodeCard:not([data-active="true"]) .policyNodeTopText {
+/* Default text — coral. Tracks the badge icon stroke colour so the
+   primary line and the leading badge read as one cohesive unit:
+     · Empty (no policies picked) → light coral `#FFA79B` (matches the
+       muted icon stroke on the rose-tinted empty badge).
+     · Filled (≥1 selection)      → deep coral `var(--step-policy-fg)`
+       (matches the saturated icon stroke on the filled badge). */
+.policyNodeCard[data-filled="false"]:not([data-active="true"]) .policyNodeTopPrimary,
+.policyNodeCard[data-filled="false"]:not([data-active="true"]) .policyNodeTopSecondary,
+.policyNodeCard[data-filled="false"]:not([data-active="true"]) .policyNodeTopText {
+  color: #FFA79B;
+}
+.policyNodeCard[data-filled="true"]:not([data-active="true"]) .policyNodeTopPrimary,
+.policyNodeCard[data-filled="true"]:not([data-active="true"]) .policyNodeTopSecondary,
+.policyNodeCard[data-filled="true"]:not([data-active="true"]) .policyNodeTopText {
+  color: var(--step-policy-fg);
+}
+/* Dark-mode filled — badge icon flips back to the lighter coral
+   (`#FFA79B`) on the deeper rose-tinted card; mirror that on the
+   text so the cohesion holds in dark mode too. */
+@media (prefers-color-scheme: dark) {
+  :root:not(:global(.light)) .policyNodeCard[data-filled="true"]:not([data-active="true"]) .policyNodeTopPrimary,
+  :root:not(:global(.light)) .policyNodeCard[data-filled="true"]:not([data-active="true"]) .policyNodeTopSecondary,
+  :root:not(:global(.light)) .policyNodeCard[data-filled="true"]:not([data-active="true"]) .policyNodeTopText {
+    color: #FFA79B;
+  }
+}
+:global(.dark) .policyNodeCard[data-filled="true"]:not([data-active="true"]) .policyNodeTopPrimary,
+:global(.dark) .policyNodeCard[data-filled="true"]:not([data-active="true"]) .policyNodeTopSecondary,
+:global(.dark) .policyNodeCard[data-filled="true"]:not([data-active="true"]) .policyNodeTopText {
   color: #FFA79B;
 }
 .policyNodeCard[data-active="true"] .policyNodeIconBox {
