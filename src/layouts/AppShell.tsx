@@ -1,6 +1,9 @@
-import { Outlet, NavLink, useLocation } from 'react-router-dom';
+import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { ScrollArea } from '@alloy/components/ScrollArea';
+import { Breadcrumb } from '@alloy/components/Breadcrumb';
+import { Button } from '@alloy/components/Button';
+import { AICoreButton } from '@alloy/components/ai/AICoreButton';
 import { ListBulletIcon } from '@alloy/components/icons/ListBulletIcon';
 import { Grid01Icon } from '@alloy/components/icons/Grid01Icon';
 import { BarChart02Icon } from '@alloy/components/icons/BarChart02Icon';
@@ -8,6 +11,7 @@ import { SettingsGearIcon } from '@alloy/components/icons/SettingsGearIcon';
 import { DotsHorizontalIcon } from '@alloy/components/icons/DotsHorizontalIcon';
 import { Menu02Icon } from '@alloy/components/icons/Menu02Icon';
 import { PrimaryNav } from '@/components/PrimaryNav';
+import { MOCK_AUTOMATIONS } from '@/pages/AutomationsPage';
 import styles from './AppShell.module.css';
 
 // ─── Secondary nav items ──────────────────────────────────────────────────────
@@ -45,14 +49,28 @@ const bottomNav = [
 
 export function AppShell() {
   const location = useLocation();
+  const navigate = useNavigate();
+
+  // Detail page mounts inside the AppShell at `/automations/:id`; we
+  // surface its breadcrumb in the top bar instead of the page body so
+  // it lives at the same level as every other page-title slot. Pull the
+  // workflow name from the same mock the detail page reads — when the
+  // real fetcher lands the breadcrumb hook can move alongside it.
+  const detailMatch = location.pathname.match(/^\/automations\/([^/]+)\/?$/);
+  const detailId    = detailMatch ? detailMatch[1] : null;
+  const detailName  = detailId
+    ? MOCK_AUTOMATIONS.find(a => a.id === detailId)?.name ?? 'Workflow'
+    : null;
 
   const pageTitle = (() => {
-    if (location.pathname.startsWith('/automations/new')) return 'New Automation';
-    if (location.pathname.match(/^\/automations\/.+/)) return 'Edit Automation';
-    if (location.pathname.startsWith('/automations')) return 'Manage';
-    if (location.pathname.startsWith('/templates')) return 'Templates';
-    if (location.pathname.startsWith('/usage')) return 'Usage';
-    if (location.pathname.startsWith('/settings')) return 'Settings';
+    if (location.pathname.startsWith('/automations/new'))     return 'New Automation';
+    // Editor lives at `/automations/:id/edit` now — the bare
+    // `/automations/:id` path renders the read-only detail page.
+    if (location.pathname.match(/^\/automations\/[^/]+\/edit/)) return 'Edit Automation';
+    if (location.pathname.startsWith('/automations'))         return 'Manage';
+    if (location.pathname.startsWith('/templates'))           return 'Templates';
+    if (location.pathname.startsWith('/usage'))               return 'Usage';
+    if (location.pathname.startsWith('/settings'))            return 'Settings';
     return 'Automation';
   })();
 
@@ -109,25 +127,45 @@ export function AppShell() {
         <div className={styles.main}>
           <header className={styles.topBar}>
             <div className={styles.topBarHeading}>
-              <h1 className={styles.pageTitle}>{pageTitle}</h1>
+              {detailName ? (
+                <Breadcrumb
+                  separator="chevron"
+                  items={[
+                    { label: 'Workflows', onClick: () => navigate('/automations') },
+                    { label: detailName },
+                  ]}
+                />
+              ) : (
+                <h1 className={styles.pageTitle}>{pageTitle}</h1>
+              )}
             </div>
             <div className={styles.topBarActions}>
-              <button
-                type="button"
-                className={styles.topBarIconBtn}
-                aria-label="More options"
-                title="More options"
-              >
-                <DotsHorizontalIcon size={14} />
-              </button>
-              <button
-                type="button"
-                className={styles.topBarIconBtn}
+              {/* Top-right cluster — mirrors the TeambridgeCode TopNav:
+                   ghost icon-buttons grouped together on the left, then
+                   a dedicated Activity icon button, then the Alloy
+                   AICoreButton (Ponder AI). All Alloy primitives so
+                   styling tracks Alloy tokens automatically. */}
+              <div className={styles.topBarBtnGroup}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  aria-label="More options"
+                  title="More options"
+                >
+                  <DotsHorizontalIcon size={14} />
+                </Button>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                iconOnly
                 aria-label="Activity"
                 title="Activity"
               >
                 <Menu02Icon size={14} />
-              </button>
+              </Button>
+              <AICoreButton aria-label="Ponder AI" size="sm" />
             </div>
           </header>
 

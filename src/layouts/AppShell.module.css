@@ -220,32 +220,14 @@
   flex-shrink: 0;
 }
 
-.topBarIconBtn {
-  all: unset;
-  box-sizing: border-box;
-  display: flex;
+/* Pill-grouped sibling buttons — mirrors the TeambridgeCode TopNav
+   left-most cluster (More options + page-action buttons sit together,
+   Activity + AI core sit on their own). Reserved for future page
+   actions that should visually group with the dots menu. */
+.topBarBtnGroup {
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  color: var(--color-content-secondary);
-  transition: background var(--duration-fast) var(--ease-default);
-}
-
-.topBarIconBtn:hover {
-  background: var(--color-bg-transparent);
-}
-
-.topBarIconBtn:focus-visible {
-  outline: 2px solid var(--color-border-focus);
-  outline-offset: 1px;
-}
-
-.topBarIconBtn svg {
-  width: 14px;
-  height: 14px;
+  gap: var(--space-1);
 }
 
 .content {

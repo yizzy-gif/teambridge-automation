@@ -1,6 +1,6 @@
-import { Fragment, useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ComponentType } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { Tabs } from '@alloy/components/Tabs';
 import { StatusTag } from '@alloy/components/StatusTag';
@@ -22,8 +22,6 @@ import { Grid01Icon } from '@alloy/components/icons/Grid01Icon';
 import { Users03Icon } from '@alloy/components/icons/Users03Icon';
 import { CheckCircleIcon } from '@alloy/components/icons/CheckCircleIcon';
 import { ListBulletIcon } from '@alloy/components/icons/ListBulletIcon';
-import { ChevronDownIcon } from '@alloy/components/icons/ChevronDownIcon';
-import { ChevronRightIcon } from '@alloy/components/icons/ChevronRightIcon';
 import { ClockIcon } from '@alloy/components/icons/ClockIcon';
 import { Mail01Icon } from '@alloy/components/icons/Mail01Icon';
 import { Bell01Icon } from '@alloy/components/icons/Bell01Icon';
@@ -33,7 +31,6 @@ import { RefreshCw04Icon } from '@alloy/components/icons/RefreshCw04Icon';
 import { BankIcon } from '@alloy/components/icons/BankIcon';
 import { PackageIcon } from '@alloy/components/icons/PackageIcon';
 import { TeambridgeAIIcon } from '@alloy/components/icons/TeambridgeAIIcon';
-import { WorkflowPreview } from '@/components/WorkflowPreview';
 import styles from './AutomationsPage.module.css';
 
 // ─── Workflow settings persistence ────────────────────────────────────────────
@@ -57,7 +54,7 @@ function loadWorkflowSettings(): WorkflowSettingsStore {
  * triggers. Drives the Active/Paused toggle on the card and the preview's
  * Resume/Pause button. Independent of run-level status below.
  */
-type AutomationStatus = 'active' | 'paused' | 'draft';
+export type AutomationStatus = 'active' | 'paused' | 'draft';
 
 /**
  * Run-level status — the outcome of the most recent execution. Four terminal
@@ -67,7 +64,7 @@ type AutomationStatus = 'active' | 'paused' | 'draft';
  *   - failed:    errored out or system-stopped due to error
  *   - exited:    soft stop — user stopped mid-run, or flow hit a dead end
  */
-type RunStatus = 'ongoing' | 'completed' | 'failed' | 'exited';
+export type RunStatus = 'ongoing' | 'completed' | 'failed' | 'exited';
 type ViewMode = 'card' | 'table';
 
 interface AutomationStats {
@@ -83,7 +80,7 @@ type ActionIconKey =
   | 'mail' | 'bell' | 'task' | 'message' | 'sync' | 'people'
   | 'finance' | 'package' | 'ai';
 
-interface Automation {
+export interface Automation {
   id: string;
   name: string;
   description: string;
@@ -122,7 +119,7 @@ const ACTION_ICON_MAP: Record<ActionIconKey, ComponentType<{ size?: number }>> =
 
 // ─── Mock data ────────────────────────────────────────────────────────────────
 
-const MOCK_AUTOMATIONS: Automation[] = [
+export const MOCK_AUTOMATIONS: Automation[] = [
   {
     id: 'wf_01HGXZ7K3QN4A2MB',
     name: 'New hire onboarding',
@@ -1019,37 +1016,12 @@ export function AutomationsPage() {
     });
   });
 
-  // ── Expanded-row state (single-expand) ───────────────────────────────────
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  const previewRegionBaseId = useId();
-
+  // ── Status toggle ────────────────────────────────────────────────────────
+  // Cards used to inline-expand a preview panel; that's been replaced with
+  // a navigation to the detail page (`/automations/:id`). All that remains
+  // here is the per-row Active/Paused toggle.
   const setStatus = useCallback((id: string, status: AutomationStatus) => {
     setAutomations(prev => prev.map(a => a.id === id ? { ...a, status } : a));
-  }, []);
-
-  const toggleExpanded = useCallback((id: string) => {
-    setExpandedId(curr => (curr === id ? null : id));
-  }, []);
-
-  // Escape collapses the open preview
-  useEffect(() => {
-    if (expandedId === null) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setExpandedId(null);
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [expandedId]);
-
-  // Pause/Resume toggle invoked from the preview
-  const toggleStatus = useCallback((id: string) => {
-    setAutomations(prev =>
-      prev.map(a =>
-        a.id === id
-          ? { ...a, status: a.status === 'paused' ? 'active' : 'paused' }
-          : a,
-      ),
-    );
   }, []);
 
   const q = search.toLowerCase();
@@ -1298,43 +1270,23 @@ export function AutomationsPage() {
       ) : view === 'card' ? (
         <div className={styles.list}>
           {filtered.map((automation) => {
-            const isDraft    = automation.status === 'draft';
-            const isOpen     = expandedId === automation.id;
-            const regionId   = `${previewRegionBaseId}-card-${automation.id}`;
-            // Clicking anywhere on the card toggles the inline expanded
-            // preview. Navigation to the builder is reserved for the
-            // "Edit workflow" button inside the expanded panel.
-            const toggleThis = () => toggleExpanded(automation.id);
-            const handleCardClick = (e: React.MouseEvent<HTMLDivElement>) => {
-              // Let nested interactive elements (switch, chevron) handle their
-              // own clicks without re-toggling.
-              if ((e.target as HTMLElement).closest('[data-card-action]')) return;
-              toggleThis();
-            };
-            const handleKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                toggleThis();
-              }
-            };
+            const isDraft = automation.status === 'draft';
+            // The whole card is now a navigation link to the read-only
+            // detail page. Interactive children (status toggle) keep
+            // their own click handlers and stop propagation so toggling
+            // doesn't navigate. The legacy expand chevron is gone.
             return (
-              <Fragment key={automation.id}>
-              <div
-                className={clsx(styles.card, isOpen && styles.cardActive)}
-                role="button"
-                tabIndex={0}
-                aria-expanded={isOpen}
-                aria-controls={regionId}
-                onClick={handleCardClick}
-                onKeyDown={handleKey}
+              <Link
+                key={automation.id}
+                to={`/automations/${automation.id}`}
+                className={styles.card}
+                aria-label={`Open ${automation.name}`}
               >
                 {automation.hasErrors && (
                   <span className={styles.cardWarningDot} aria-label="Has recent errors" />
                 )}
 
-                {/* ── Top row: status pill · spacer · last run · expand ──
-                    Draft workflows haven't run yet, so instead of a run-level
-                    badge we surface the workflow's lifecycle state as "Draft". */}
+                {/* ── Top row: status pill · spacer · last run ── */}
                 <div className={styles.cardTop}>
                   {automation.status === 'draft' ? (
                     <StatusBadge status="draft" />
@@ -1346,20 +1298,6 @@ export function AutomationsPage() {
                     <ClockIcon size={12} />
                     {automation.lastRun ?? 'Never'}
                   </span>
-                  <button
-                    type="button"
-                    data-card-action
-                    className={clsx(styles.cardChevronBtn, isOpen && styles.cardChevronBtnOpen)}
-                    onClick={e => {
-                      e.stopPropagation();
-                      toggleExpanded(automation.id);
-                    }}
-                    aria-label={isOpen ? 'Collapse preview' : 'Expand preview'}
-                    aria-expanded={isOpen}
-                    aria-controls={regionId}
-                  >
-                    <ChevronDownIcon size={14} />
-                  </button>
                 </div>
 
                 {/* ── Body: workflow name (up to 3 lines, ellipsis) ── */}
@@ -1377,7 +1315,11 @@ export function AutomationsPage() {
                       {automation.runsSuccessful}
                     </span>
                   </div>
-                  <span data-card-action onClick={e => e.stopPropagation()}>
+                  <span
+                    data-card-action
+                    onClick={e => { e.stopPropagation(); e.preventDefault(); }}
+                    onKeyDown={e => e.stopPropagation()}
+                  >
                     <Switch
                       size="sm"
                       checked={automation.status === 'active'}
@@ -1387,28 +1329,7 @@ export function AutomationsPage() {
                     />
                   </span>
                 </div>
-              </div>
-              {isOpen && (
-                <div className={styles.cardExpanded}>
-                  <WorkflowPreview
-                    layout="card"
-                    regionId={regionId}
-                    workflow={{
-                      id: automation.id,
-                      status: automation.status,
-                      description: automation.description,
-                      owner: automation.owner,
-                      createdAt: automation.createdAt,
-                      updatedAt: automation.updatedAt,
-                      reached: automation.stats.reached,
-                    }}
-                    onEdit={() => navigate(`/automations/${automation.id}`)}
-                    onViewRuns={() => navigate(`/automations/${automation.id}/runs`)}
-                    onToggleStatus={() => toggleStatus(automation.id)}
-                  />
-                </div>
-              )}
-              </Fragment>
+              </Link>
             );
           })}
         </div>
@@ -1427,103 +1348,63 @@ export function AutomationsPage() {
             </TableHeader>
             <TableBody>
               {filtered.map((automation) => {
-                const isOpen = expandedId === automation.id;
-                const regionId = `${previewRegionBaseId}-${automation.id}`;
-                const goToEditor = () => navigate(`/automations/${automation.id}`);
-
+                // Whole row navigates to the read-only detail page.
+                // The name cell remains a link wrapper (no inner button) so
+                // keyboard / right-click both work natively. The legacy
+                // chevron toggle is gone.
+                const goToDetail = () => navigate(`/automations/${automation.id}`);
                 return (
-                  <Fragment key={automation.id}>
-                    <TableRow
-                      aria-expanded={isOpen}
-                      aria-controls={regionId}
-                      onClick={() => toggleExpanded(automation.id)}
-                      style={{ cursor: 'pointer' }}
-                    >
-                      <TableCell>
-                        <div className={styles.nameCell}>
-                          <button
-                            type="button"
-                            className={styles.expandToggle}
-                            aria-label={isOpen ? 'Collapse preview' : 'Expand preview'}
-                            aria-expanded={isOpen}
-                            aria-controls={regionId}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              toggleExpanded(automation.id);
-                            }}
-                          >
-                            {isOpen ? (
-                              <ChevronDownIcon size={14} />
-                            ) : (
-                              <ChevronRightIcon size={14} />
-                            )}
-                          </button>
-                          <CellStack
-                            primary={
-                              <button
-                                type="button"
-                                className={styles.nameBtn}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  goToEditor();
-                                }}
-                              >
-                                {automation.name}
-                              </button>
-                            }
-                          />
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        {automation.status === 'draft' ? (
-                          <CellStatusTag status={STATUS_TAG_STATUS.draft}>
-                            {STATUS_LABEL.draft}
-                          </CellStatusTag>
-                        ) : automation.lastRunStatus ? (
-                          <CellStatusTag status={RUN_STATUS_TAG_STATUS[automation.lastRunStatus]}>
-                            {RUN_STATUS_LABEL[automation.lastRunStatus]}
-                          </CellStatusTag>
-                        ) : (
-                          <CellText variant="secondary">—</CellText>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <CellTag color={CATEGORY_COLOR[automation.category]} variant="subtle">
-                          {automation.category}
-                        </CellTag>
-                      </TableCell>
-                      <TableCell>
-                        <CellText variant="secondary">{automation.trigger}</CellText>
-                      </TableCell>
-                      <TableCell>
-                        <CellText>{automation.runsTotal}</CellText>
-                      </TableCell>
-                      <TableCell>
-                        <CellText variant="secondary">
-                          {automation.lastRun ?? '—'}
-                        </CellText>
-                      </TableCell>
-                    </TableRow>
-
-                    {isOpen && (
-                      <WorkflowPreview
-                        regionId={regionId}
-                        totalColumns={6}
-                        workflow={{
-                          id: automation.id,
-                          status: automation.status,
-                          description: automation.description,
-                          owner: automation.owner,
-                          createdAt: automation.createdAt,
-                          updatedAt: automation.updatedAt,
-                          reached: automation.stats.reached,
-                        }}
-                        onEdit={goToEditor}
-                        onViewRuns={() => navigate(`/automations/${automation.id}/runs`)}
-                        onToggleStatus={() => toggleStatus(automation.id)}
+                  <TableRow
+                    key={automation.id}
+                    onClick={goToDetail}
+                    onKeyDown={(e: React.KeyboardEvent<HTMLTableRowElement>) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        goToDetail();
+                      }
+                    }}
+                    tabIndex={0}
+                    role="link"
+                    aria-label={`Open ${automation.name}`}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    <TableCell>
+                      <CellStack
+                        primary={
+                          <span className={styles.nameLink}>{automation.name}</span>
+                        }
                       />
-                    )}
-                  </Fragment>
+                    </TableCell>
+                    <TableCell>
+                      {automation.status === 'draft' ? (
+                        <CellStatusTag status={STATUS_TAG_STATUS.draft}>
+                          {STATUS_LABEL.draft}
+                        </CellStatusTag>
+                      ) : automation.lastRunStatus ? (
+                        <CellStatusTag status={RUN_STATUS_TAG_STATUS[automation.lastRunStatus]}>
+                          {RUN_STATUS_LABEL[automation.lastRunStatus]}
+                        </CellStatusTag>
+                      ) : (
+                        <CellText variant="secondary">—</CellText>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <CellTag color={CATEGORY_COLOR[automation.category]} variant="subtle">
+                        {automation.category}
+                      </CellTag>
+                    </TableCell>
+                    <TableCell>
+                      <CellText variant="secondary">{automation.trigger}</CellText>
+                    </TableCell>
+                    <TableCell>
+                      <CellText>{automation.runsTotal}</CellText>
+                    </TableCell>
+                    <TableCell>
+                      <CellText variant="secondary">
+                        {automation.lastRun ?? '—'}
+                      </CellText>
+                    </TableCell>
+                  </TableRow>
                 );
               })}
             </TableBody>

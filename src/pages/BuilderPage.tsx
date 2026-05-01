@@ -57,6 +57,7 @@ import { AIThread, AIAssistantMessage, AIUserMessage, AILabel, AITimestamp } fro
 import { AIActivityTrail, AIActivityStep } from '@alloy/components/ai/AIActivityTrail';
 import { AIMessageActions } from '@alloy/components/ai/AIMessageActions';
 import { Copy01Icon } from '@alloy/components/icons/Copy01Icon';
+import { CheckSquareIcon } from '@alloy/components/icons/CheckSquareIcon';
 import { ThumbsUpIcon } from '@alloy/components/icons/ThumbsUpIcon';
 import { ThumbsDownIcon } from '@alloy/components/icons/ThumbsDownIcon';
 // `RefreshCw04Icon` is already imported below — see the icon block.
@@ -1939,7 +1940,7 @@ function MultiSelectSearchPicker({
               onMouseDown={e => { e.preventDefault(); addValue(opt); }}
             >
               <span className={styles.multiSelectSearchOptionIcon} aria-hidden>
-                {leadingIcon ?? <Copy01Icon size={14} />}
+                {leadingIcon ?? <CheckSquareIcon size={14} />}
               </span>
               {opt}
             </button>
@@ -1953,7 +1954,7 @@ function MultiSelectSearchPicker({
               key={v}
               size="sm"
               label={v}
-              leadingSlot={leadingIcon ?? <Copy01Icon size={14} />}
+              leadingSlot={leadingIcon ?? <CheckSquareIcon size={14} />}
               trailingSlot={
                 <button
                   type="button"
@@ -4007,7 +4008,7 @@ function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpda
           {!(isAiSpecialist && aiSpecTab === 'test') && (
             <Button
               variant="primary"
-              size="sm"
+              size="xs"
               onClick={() => { onSave?.(); onClose(); }}
             >
               Save

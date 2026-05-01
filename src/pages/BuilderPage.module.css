@@ -483,6 +483,12 @@
   gap: var(--space-3);
   flex: 1 1 0;
   min-height: 0;
+  /* Alloy ComposerActions ships a tiny 8–10px attach glyph by default,
+     which reads as undersized inside our 28px button. Bump the icon
+     up to 14px so it visually matches the voice mic icon next to it
+     and lines up with the size of every other 14px icon in the
+     surrounding chrome. */
+  --composer-btn-icon-attach: 14px;
 }
 
 /* Shell: layout-only wrapper — chrome (border/bg/shadow/radius) removed so
@@ -5071,6 +5077,16 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
+}
+
+/* Strip the Alloy ListItem's default horizontal padding so the row's
+   leading icon and trash trailing button hug the panel's content
+   edges. The vertical padding stays in place. Targets ListItem's
+   module-scoped root via attribute selector since CSS Modules name-
+   mangle the class. */
+.multiSelectSearchList > [class*="_root_"] {
+  padding-left: 0;
+  padding-right: 0;
 }
 
 .multiSelectSearchRemove {

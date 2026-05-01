@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router-
 import { ToastProvider } from '@alloy/components/Toast';
 import { AppShell } from './layouts/AppShell';
 import { AutomationsPage } from './pages/AutomationsPage';
+import { AutomationDetailPage } from './pages/AutomationDetailPage';
 import { BuilderPage } from './pages/BuilderPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { TemplatesPage } from './pages/TemplatesPage';
@@ -15,22 +16,34 @@ function BuilderRoute() {
   return <BuilderPage key={id ?? 'new'} />;
 }
 
+/** Detail page mirrors the same remount-on-id pattern so per-id data hooks
+ *  re-initialise cleanly when navigating between workflows. */
+function AutomationDetailRoute() {
+  const { id } = useParams();
+  return <AutomationDetailPage key={id ?? 'unknown'} />;
+}
+
 export function App() {
   return (
     <BrowserRouter basename={import.meta.env.BASE_URL}>
       <ToastProvider>
       <Routes>
-        {/* ── Full-screen builder — no app shell ── */}
-        <Route path="/automations/new" element={<BuilderRoute />} />
-        <Route path="/automations/:id" element={<BuilderRoute />} />
+        {/* ── Full-screen builder — no app shell ──
+            New canonical route: `/automations/:id/edit`. Triggered from
+            the read-only detail page's Edit-workflow CTA. The `/new`
+            route stays at its old shape so empty-state CTAs don't
+            need updates. */}
+        <Route path="/automations/new"      element={<BuilderRoute />} />
+        <Route path="/automations/:id/edit" element={<BuilderRoute />} />
 
         {/* ── Shell-wrapped pages ── */}
         <Route element={<AppShell />}>
           <Route index element={<Navigate to="/automations" replace />} />
-          <Route path="/automations" element={<AutomationsPage />} />
-          <Route path="/templates" element={<TemplatesPage />} />
-          <Route path="/usage" element={<UsagePage />} />
-          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/automations"     element={<AutomationsPage />} />
+          <Route path="/automations/:id" element={<AutomationDetailRoute />} />
+          <Route path="/templates"       element={<TemplatesPage />} />
+          <Route path="/usage"           element={<UsagePage />} />
+          <Route path="/settings"        element={<SettingsPage />} />
         </Route>
       </Routes>
       </ToastProvider>

@@ -6,6 +6,11 @@ import { ValueChangeLabel } from '@alloy/components/ValueChangeLabel';
 import { BarChart02Icon } from '@alloy/components/icons/BarChart02Icon';
 import { CheckCircleIcon } from '@alloy/components/icons/CheckCircleIcon';
 import { Users03Icon } from '@alloy/components/icons/Users03Icon';
+import { ZapIcon } from '@alloy/components/icons/ZapIcon';
+import { Mail01Icon } from '@alloy/components/icons/Mail01Icon';
+import { MessageDotsSquareIcon } from '@alloy/components/icons/MessageDotsSquareIcon';
+import { Edit03Icon } from '@alloy/components/icons/Edit03Icon';
+import { ChevronDownIcon } from '@alloy/components/icons/ChevronDownIcon';
 import { RunsRangeChart } from '@/components/RunsRangeChart';
 import type { RunsRangePoint } from '@/components/RunsRangeChart';
 import {
@@ -30,6 +35,152 @@ function fmtNum(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000)     return `${(n / 1_000).toFixed(1)}k`;
   return String(Math.round(n));
+}
+
+/** Compact relative timestamp ("2m ago", "3h ago", "Apr 12") used inside
+ *  the runs list trailing slot. Falls back to absolute date once a row is
+ *  older than ~6 days so it never reads as "168h ago". */
+function fmtRunRelative(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const diffMs = Date.now() - d.getTime();
+  if (diffMs < 0) return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const min = Math.floor(diffMs / 60_000);
+  if (min < 1)   return 'just now';
+  if (min < 60)  return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24)   return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  if (day < 7)   return `${day}d ago`;
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+/** Sentence-case status string suitable for the ListItem description line. */
+const RUN_STATUS_DESCRIPTION: Record<RunStatus, string> = {
+  completed: 'Completed',
+  failed:    'Failed',
+  ongoing:   'Ongoing',
+  exited:    'Exited early',
+};
+
+/** Synthesised event detail surfaced in the expanded body of a run card.
+ *  Maps each mock workflow to a plausible action + recipient + payload
+ *  so the expanded view reads like a real audit-log entry. */
+type RunEventKind = 'email' | 'sms' | 'edit' | 'in_app';
+interface RunEventTemplate {
+  kind:        RunEventKind;
+  /** Suffix appended after the workflow name in the title row, e.g.
+   *  `New hire onboarding` + ` sent email(s)` */
+  titleSuffix: string;
+  /** Recipient — email address, name, or audience. */
+  recipient:   string;
+  /** Body / payload — email body, SMS message, or edit description. */
+  body:        string;
+}
+const RUN_EVENT_TEMPLATES: Record<string, RunEventTemplate> = {
+  wf_01HGXZ7K3QN4A2MB: {
+    kind:        'email',
+    titleSuffix: 'sent email(s)',
+    recipient:   'jordan.lee@company.com',
+    body:        'Email: Welcome to the team! Here are the steps to complete your onboarding before your first day.',
+  },
+  wf_01HGY2F9PW4VRJ8N: {
+    kind:        'sms',
+    titleSuffix: 'sent SMS message(s)',
+    recipient:   'Maya Lin',
+    body:        'Reminder: Your weekly timesheet is due today. Please log in to review and approve your hours.',
+  },
+  wf_01HGYH6CXD3TZ5QK: {
+    kind:        'in_app',
+    titleSuffix: 'sent in-app message(s)',
+    recipient:   'Matched coverage pool',
+    body:        'A shift you may be eligible to claim has just been released. Tap to view the details.',
+  },
+  wf_01HGZM4P8BKFYTR7: {
+    kind:        'edit',
+    titleSuffix: 'made 1 edits in Shifts',
+    recipient:   'Overtime threshold',
+    body:        'Hours updated from 38 to 42.5',
+  },
+  wf_01HH01VQY7JN4E5M: {
+    kind:        'email',
+    titleSuffix: 'sent email(s)',
+    recipient:   'priya.shah@company.com',
+    body:        'Email: Your contract end date is approaching. Review the offboarding checklist and confirm next steps.',
+  },
+};
+
+const RUN_EVENT_ICON: Record<RunEventKind, typeof Mail01Icon> = {
+  email:  Mail01Icon,
+  sms:    MessageDotsSquareIcon,
+  in_app: MessageDotsSquareIcon,
+  edit:   Edit03Icon,
+};
+
+const RUN_EVENT_RECIPIENT_LABEL: Record<RunEventKind, string> = {
+  email:  'Sent an email to',
+  sms:    'Sent an SMS to',
+  in_app: 'Sent an in-app message to',
+  edit:   'Edited',
+};
+
+interface RunFeedItemProps {
+  run:          UsageRun;
+  workflowName: string;
+  template:     RunEventTemplate | undefined;
+}
+
+/** Single expandable row in the Recent runs feed. Collapsed state shows
+ *  the workflow label + action suffix (e.g. `… sent email(s)`) with a
+ *  chevron toggle on the right; expanded state surfaces the recipient
+ *  and payload for the underlying event so the feed reads like an audit
+ *  log. */
+function RunFeedItem({ run, workflowName, template }: RunFeedItemProps) {
+  const [open, setOpen] = useState(false);
+  const Icon = template ? RUN_EVENT_ICON[template.kind] : ZapIcon;
+  const titleSuffix = template?.titleSuffix ?? RUN_STATUS_DESCRIPTION[run.status];
+  return (
+    <div className={styles.runFeedItem} data-open={open || undefined}>
+      <button
+        type="button"
+        className={styles.runFeedItemRow}
+        onClick={() => setOpen(v => !v)}
+        aria-expanded={open}
+      >
+        <span className={styles.runsFeedAvatar} aria-hidden>
+          <Icon size={14} />
+        </span>
+        <span className={styles.runFeedItemContent}>
+          <span className={styles.runFeedItemTitle}>
+            <span className={styles.runFeedItemWorkflow}>{workflowName}</span>{' '}
+            <span className={styles.runFeedItemSuffix}>{titleSuffix}</span>
+          </span>
+          <span className={styles.runFeedItemTimestamp}>{fmtRunRelative(run.timestamp)}</span>
+        </span>
+        <span
+          className={styles.runFeedItemChevron}
+          data-open={open || undefined}
+          aria-hidden
+        >
+          <ChevronDownIcon size={14} />
+        </span>
+      </button>
+      {open && template && (
+        <div className={styles.runFeedItemBody}>
+          <div className={styles.runFeedItemDetail}>
+            <span className={styles.runFeedItemDetailMarker} aria-hidden />
+            <div className={styles.runFeedItemDetailContent}>
+              <p className={styles.runFeedItemDetailRecipient}>
+                {RUN_EVENT_RECIPIENT_LABEL[template.kind]}{' '}
+                <strong>{template.recipient}</strong>
+              </p>
+              <p className={styles.runFeedItemDetailBody}>{template.body}</p>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ── Change badge ─────────────────────────────────────────────────────────────
@@ -165,6 +316,16 @@ export function UsagePage() {
       ? 'Runs triggered per month'
       : 'Runs triggered per day';
 
+  // Recent runs feed for the right sidebar — newest first, capped at 50
+  // so the column stays readable. Honours the same filter row as the
+  // stats / chart above so flipping a filter rescopes the feed too.
+  const recentRuns = useMemo<UsageRun[]>(
+    () => [...currentRuns]
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      .slice(0, 50),
+    [currentRuns],
+  );
+
   return (
     <div className={styles.page}>
       <UsageGradientDefs />
@@ -208,46 +369,89 @@ export function UsagePage() {
         </SegmentedControl>
       </div>
 
-      {/* ── Stat cards ────────────────────────────────────────────────────── */}
-      <div className={styles.stats}>
-        <DataCard
-          className={styles.gradientBadge}
-          color="matcha"
-          icon={<BarChart02Icon size={24} />}
-          label="Total runs"
-          value={fmtNum(totalRuns)}
-          tag={<Change current={totalRuns} prior={priorTotalRuns} />}
-        />
-        <DataCard
-          className={styles.gradientBadge}
-          color="matcha"
-          icon={<CheckCircleIcon size={24} />}
-          label="Success rate"
-          value={`${Math.round(successRate)}%`}
-          tag={<Change current={successRate} prior={priorSuccessRate} />}
-        />
-        <DataCard
-          className={styles.gradientBadge}
-          color="matcha"
-          icon={<Users03Icon size={24} />}
-          label="People reached"
-          value={fmtNum(peopleReached)}
-          tag={<Change current={peopleReached} prior={priorPeopleReached} />}
-        />
-      </div>
+      {/* ── 2-column body — stats + chart on the left, runs feed on the
+            right. The right column is sticky-scrolling on wide screens
+            so the feed stays in view while the user scans the chart;
+            on narrow viewports the layout collapses to a single
+            column with the feed below the chart. ─────────────────── */}
+      <div className={styles.body}>
+        <div className={styles.bodyMain}>
+          {/* ── Stat cards ────────────────────────────────────────────── */}
+          <div className={styles.stats}>
+            <DataCard
+              className={styles.gradientBadge}
+              color="matcha"
+              icon={<BarChart02Icon size={24} />}
+              label="Total runs"
+              value={fmtNum(totalRuns)}
+              tag={<Change current={totalRuns} prior={priorTotalRuns} />}
+            />
+            <DataCard
+              className={styles.gradientBadge}
+              color="matcha"
+              icon={<CheckCircleIcon size={24} />}
+              label="Success rate"
+              value={`${Math.round(successRate)}%`}
+              tag={<Change current={successRate} prior={priorSuccessRate} />}
+            />
+            <DataCard
+              className={styles.gradientBadge}
+              color="matcha"
+              icon={<Users03Icon size={24} />}
+              label="People reached"
+              value={fmtNum(peopleReached)}
+              tag={<Change current={peopleReached} prior={priorPeopleReached} />}
+            />
+          </div>
 
-      {/* ── Runs over time ────────────────────────────────────────────────── */}
-      <section className={styles.chartCard}>
-        <div>
-          <p className={styles.chartTitle}>Runs over time</p>
-          <p className={styles.chartSubtitle}>{chartSubtitle}</p>
+          {/* ── Runs over time ────────────────────────────────────────── */}
+          <section className={styles.chartCard}>
+            <div>
+              <p className={styles.chartTitle}>Runs over time</p>
+              <p className={styles.chartSubtitle}>{chartSubtitle}</p>
+            </div>
+            {activeBuckets < (timeRange === 'all' ? 1 : 3) ? (
+              <div className={styles.empty}>Not enough activity yet to show trends</div>
+            ) : (
+              <RunsRangeChart data={chartData} />
+            )}
+          </section>
         </div>
-        {activeBuckets < (timeRange === 'all' ? 1 : 3) ? (
-          <div className={styles.empty}>Not enough activity yet to show trends</div>
-        ) : (
-          <RunsRangeChart data={chartData} />
-        )}
-      </section>
+
+        {/* ── Recent runs feed (right column) ────────────────────────────
+              Alloy ListItem rows — workflow name as primary label,
+              status as the description line, and a relative timestamp
+              in the trailing slot. Honours the page's filter / time-
+              range scope so the feed stays in sync with the metrics on
+              the left. */}
+        <aside className={styles.runsFeed} aria-label="Recent automation runs">
+          <header className={styles.runsFeedHeader}>
+            <p className={styles.runsFeedTitle}>Recent runs</p>
+            <p className={styles.runsFeedSubtitle}>
+              {recentRuns.length === 0
+                ? 'No runs in this window'
+                : `Showing ${recentRuns.length} of ${currentRuns.length}`}
+            </p>
+          </header>
+          <div className={styles.runsFeedList}>
+            {recentRuns.length === 0 ? (
+              <p className={styles.runsFeedEmpty}>
+                Adjust filters or pick a wider time range to see runs.
+              </p>
+            ) : recentRuns.map(run => {
+              const wf = workflowById(run.workflowId);
+              return (
+                <RunFeedItem
+                  key={run.id}
+                  run={run}
+                  workflowName={wf?.name ?? 'Unknown workflow'}
+                  template={RUN_EVENT_TEMPLATES[run.workflowId]}
+                />
+              );
+            })}
+          </div>
+        </aside>
+      </div>
 
     </div>
   );

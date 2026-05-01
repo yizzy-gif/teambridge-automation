@@ -89,3 +89,238 @@
   color: var(--color-content-tertiary);
 }
 
+/* ─── Body — two-column grid, runs feed on the right ─────────────────────── */
+.body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: var(--space-6);
+  /* `align-items: stretch` (grid's default) makes both columns share the
+     same row height — the runs-feed aside on the right fills the same
+     vertical space as the chart/cards column on the left, instead of
+     hugging its own content with a gap below. */
+  align-items: stretch;
+}
+
+.bodyMain {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-width: 0;
+}
+
+@media (max-width: 960px) {
+  .body {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ─── Recent runs feed (right column) ────────────────────────────────────── */
+.runsFeed {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-primary);
+  /* Stretch with the grid row so the frame fills its column top-to-
+     bottom rather than hugging its own content. The aside still
+     scrolls internally via `.runsFeedList { overflow-y: auto }` so a
+     long list doesn't blow the column out vertically. */
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.runsFeedHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.runsFeedTitle {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-content-primary);
+}
+
+.runsFeedSubtitle {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  color: var(--color-content-tertiary);
+}
+
+.runsFeedList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  margin: 0 calc(var(--space-4) * -1);   /* let rows reach the card edges */
+  padding: 0 var(--space-4);
+}
+
+.runsFeedEmpty {
+  margin: var(--space-3) 0 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  color: var(--color-content-tertiary);
+}
+
+/* Matcha → green gradient badge — 32×32 square with a 6px corner radius,
+   mirroring the gradient treatment of the stat-card icons above. */
+.runsFeedAvatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  background: linear-gradient(
+    to bottom right,
+    rgba(176, 220, 53, 0.20),  /* matcha-400 */
+    rgba(79, 189, 90, 0.20)    /* green-400 */
+  );
+  color: transparent;
+  flex-shrink: 0;
+}
+.runsFeedAvatar svg path,
+.runsFeedAvatar svg circle,
+.runsFeedAvatar svg rect {
+  stroke: url(#usage-matcha-stroke);
+}
+
+.runsFeedTime {
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  color: var(--color-content-tertiary);
+  white-space: nowrap;
+}
+
+/* ─── Run feed item — expandable card ────────────────────────────────────
+   Each row in the Recent runs feed is a borderless card that toggles an
+   expanded body with audit-log style event details. The whole row is
+   the click target; chevron rotates on open. */
+.runFeedItem {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--color-border-opaque);
+}
+.runFeedItem:last-child {
+  border-bottom: none;
+}
+
+.runFeedItemRow {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: 12px;
+  appearance: none;
+  background: transparent;
+  border: none;
+  text-align: left;
+  width: 100%;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  color: var(--color-content-primary);
+  transition: background var(--duration-fast) var(--ease-default);
+}
+.runFeedItemRow:hover {
+  background: var(--color-bg-secondary);
+}
+
+.runFeedItemContent {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.runFeedItemTitle {
+  font-size: var(--text-sm);
+  line-height: var(--line-height-snug);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-content-primary);
+  word-break: break-word;
+}
+.runFeedItemWorkflow {
+  font-weight: var(--font-weight-semibold);
+}
+.runFeedItemSuffix {
+  font-weight: var(--font-weight-regular);
+  color: var(--color-content-secondary);
+}
+
+.runFeedItemTimestamp {
+  font-size: var(--text-xs);
+  color: var(--color-content-tertiary);
+  margin-top: 2px;
+}
+
+.runFeedItemChevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  color: var(--color-content-tertiary);
+  flex-shrink: 0;
+  transition: transform var(--duration-fast) var(--ease-default);
+}
+.runFeedItemChevron[data-open] {
+  transform: rotate(180deg);
+}
+
+.runFeedItemBody {
+  padding: 0 12px 12px calc(12px + 32px + var(--space-3));   /* align with title text past 32px avatar */
+}
+
+.runFeedItemDetail {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  /* Bare layout — no chrome. Surrounding row already provides the
+     visual frame; the detail just sits beneath the title block. */
+}
+
+.runFeedItemDetailMarker {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-top: 8px;
+  border-radius: var(--radius-full);
+  background: var(--color-content-tertiary);
+  flex-shrink: 0;
+}
+
+.runFeedItemDetailContent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+/* Recipient line uses Alloy's label-xs: Geist Sans / medium / 12px. */
+.runFeedItemDetailRecipient {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-snug);
+  color: var(--color-content-primary);
+}
+
+/* Body uses paragraph-xs: regular weight, 12px, relaxed line-height. */
+.runFeedItemDetailBody {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-regular);
+  line-height: var(--line-height-relaxed);
+  color: var(--color-content-secondary);
+  white-space: pre-wrap;
+}
+
