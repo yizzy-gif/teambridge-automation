@@ -52,7 +52,7 @@ interface Folder {
 // ── Sample data ──────────────────────────────────────────────────────────────
 // Replace with real API data when backend lands.
 
-const POLICY_LIBRARY: Folder[] = [
+export const POLICY_LIBRARY: Folder[] = [
   {
     id: 'folder_time_attendance',
     label: 'Time & Attendance',

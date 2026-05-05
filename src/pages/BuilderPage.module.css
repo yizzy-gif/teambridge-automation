@@ -277,26 +277,38 @@
   pointer-events: auto;
 }
 
-/* Panel collapse toggle pill — hidden under the fixed-ratio two-column
-   layout (the column divider replaces it). */
+/* Drag-to-resize handle pinned to the panel's right edge. 6px-wide hit
+   strip straddling the column divider; an inner 1px hairline tracks the
+   border-focus tone on hover so the affordance reads as a draggable
+   seam. Sits above the divider (`z-index: 3`) so the col-resize cursor
+   fires even when the pointer is directly on the 1px column divider. */
 .leftPanelHandle {
-  display: none;
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 3;
+  background: transparent;
 }
 
 .leftPanelHandle::after {
   content: '';
-  display: block;
-  width: 6px;
-  height: 40px;
-  border-radius: var(--radius-full);
-  background: var(--color-bg-primary);
-  border: 1px solid var(--color-border-opaque);
-  transition: border-color var(--duration-fast);
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 1px;
+  height: 100%;
+  background: transparent;
+  transition: background var(--duration-fast);
   pointer-events: none;
 }
 
-.leftPanelHandle:hover::after {
-  border-color: var(--color-border-focus);
+.leftPanelHandle:hover::after,
+.leftPanelHandle:active::after {
+  background: var(--color-border-focus);
 }
 
 .leftPanel[data-collapsed="true"] .leftPanelHandle {
@@ -2631,6 +2643,7 @@
   transition: opacity var(--duration-fast) var(--ease-default);
 }
 
+
 /* Condition nodes render label + operator + value on a single row and need
    more breathing room than the default 200px node width. The 30px negative
    inline margin centers the 260px card over the 200px .nodeWrapper so the
@@ -2640,13 +2653,13 @@
   margin-inline: -30px;
 }
 
-/* Float the dots menu outside the card's right edge and reveal it only on
-   hover / focus-within — mirrors the trigger & delay pill behavior. */
+/* Pin the dots menu to the top-right corner of the card on hover / focus. */
 .flowNodeOuterCondition .nodeDotsDropdown {
   position: absolute;
-  top: 8px;
-  left: calc(100% + 8px);
-  right: auto;
+  top: var(--space-2);
+  right: var(--space-2);
+  left: auto;
+  transform: none;
   opacity: 0;
   transition: opacity var(--duration-fast) var(--ease-default);
 }
@@ -3432,6 +3445,13 @@
   gap: var(--space-2);
 }
 
+/* Inline variant — used inside `.conditionBranchBody` to put a second
+   section label (e.g. "MATCHING THRESHOLD") directly above its row
+   without an extra preceding divider, since the branch body already
+   provides the visual grouping. */
+.popoverSectionLabelInline {
+  margin-top: var(--space-3);
+}
 .popoverSectionLabel {
   font-family:    var(--font-sans);
   font-size:      var(--text-xs);
@@ -4327,6 +4347,52 @@
   background: color-mix(in srgb, var(--color-content-primary) 80%, transparent);
 }
 
+/* Edge midpoint delete button — same circular footprint as the legacy
+   `+` button but renders a horizontal minus glyph and uses the warning
+   palette on hover so the destructive action reads clearly. Hidden by
+   default and revealed when the user hovers anywhere in the wider
+   `.edgeMidpointArea` hit-zone (so the button still appears even when
+   they're not directly over its 20px circle). Counter-scales the canvas
+   zoom via `--inv-zoom` so it stays a constant on-screen size. */
+.edgeMidDeleteBtn {
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-inverse-primary);
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--color-content-inverse-primary);
+  opacity: 0;
+  flex-shrink: 0;
+  transition:
+    opacity var(--duration-fast) var(--ease-default),
+    background var(--duration-fast) var(--ease-default),
+    color var(--duration-fast) var(--ease-default),
+    transform var(--duration-fast) var(--ease-default);
+  box-shadow: var(--shadow-below-low);
+  transform: scale(var(--inv-zoom, 1));
+  transform-origin: center center;
+  position: relative;
+}
+.edgeMidpointArea:hover .edgeMidDeleteBtn {
+  opacity: 1;
+}
+.edgeMidDeleteBtn:hover {
+  background: var(--color-warning-fill);
+  color: var(--color-warning-content);
+  transform: scale(calc(1.1 * var(--inv-zoom, 1)));
+}
+.edgeMidDeleteGlyph {
+  display: block;
+  width: 8px;
+  height: 1.5px;
+  background: currentColor;
+  border-radius: 1px;
+}
+
 /* ─── Floating AI input (below selected node, in canvas space) ────────────── */
 
 .nodeAiFloat {
@@ -4373,8 +4439,8 @@
   background-clip: content-box;
   border: none;
   border-radius: 50%;
-  left: 50%;
-  margin-left: -16px;
+  top: 50%;
+  margin-top: -16px;
   z-index: 10;
   cursor: crosshair;
   opacity: 0;
@@ -4412,39 +4478,112 @@
   transform: translate(-50%, -50%);
 }
 
-/* Connected handle — hide the vertical bar so the glyph reads as "−".
-   Swap the cursor to pointer (disconnection is a click, not a drag) and
-   tint the fill with Alloy's warning token on hover to signal destruction. */
-.anchor[data-connected="true"]::after {
+/* Connected anchors never surface a disconnect affordance — the canonical
+   disconnect is the hover-revealed minus button at the edge midpoint, and
+   showing a second glyph on the node handle reads as a duplicate /
+   confusing UI. Keep these elements in the DOM (opacity preserves their
+   layout rect for `handleTidyUp` to measure anchor positions) and hide
+   them visually + disable pointer interaction in every state — group
+   hover, node-wrapper hover, and drag-target. Selectors must explicitly
+   re-state every reveal scenario because the later `.nodeWrapper:hover
+   .anchor { opacity: 1 }` rule would otherwise win on cascade. The "+" /
+   drag-to-connect affordance still appears on non-connected anchors,
+   just suppressed once an edge attaches. */
+.anchor[data-connected="true"],
+.groupContainer:hover .anchor[data-connected="true"],
+.nodeWrapper:hover .anchor[data-connected="true"],
+.nodeWrapper[data-drag-target] .anchor[data-connected="true"] {
   opacity: 0;
-}
-.anchor[data-connected="true"] {
-  cursor: pointer;
-}
-.anchor[data-connected="true"]:hover {
-  background: var(--color-warning-fill);
-  color: var(--color-warning-content);
-  /* Skip the hover scale-up — the minus glyph already feels emphatic enough
-     with the warning fill, additional growth reads as too heavy. */
-  transform: scale(var(--inv-zoom, 1));
+  pointer-events: none;
 }
 
-/* Offset anchors so there's a 20px visible gap between the node's edge and
-   the anchor button's nearer edge. Anchor is 20px tall, so -40px places the
-   anchor's near edge 20px past the node (40 = 20px gap + full anchor height). */
-/* Offsets compensate for the 6px of transparent hit-area padding so the
-   visible 20×20 dot still sits 20px away from the node edge. */
-.anchorTop {
-  top: -46px;
+/* Input (left) anchors only surface a "+" affordance when nothing is
+   connected to them yet, signalling "drop a path here". Once an edge
+   attaches the connected-state rule above hides the anchor entirely so
+   the node handle stays clean (the canonical disconnect lives at the
+   edge midpoint). The default `.nodeWrapper:hover .anchor { opacity: 1 }`
+   reveal still applies to disconnected left anchors — no override
+   needed here. */
+
+/* Anchors sit centred on the node's edge — total anchor width is 32px
+   (20px visible + 6px hit-area padding on each side), so -16px places the
+   anchor's centre exactly on the edge. Connector endpoints (which use the
+   anchor centre) therefore start at the node edge with no visual gap. */
+.anchorLeft {
+  left: -16px;
 }
 
-.anchorBottom {
-  bottom: -46px;
+.anchorRight {
+  right: -16px;
 }
 
-/* Show anchors on node hover, selection, or when it's the drag-over target */
+/* Condition + policy cards overhang the 200px .nodeWrapper by 30px on each
+   side (260px visible card via margin-inline: -30px). Push the anchors out
+   an extra 30px so they centre on the visible card edge instead of the
+   wrapper edge. */
+.nodeWrapper:has(.flowNodeOuterCondition) .anchorLeft,
+.nodeWrapper:has(.flowNodeOuterPolicy) .anchorLeft {
+  left: -46px;
+}
+
+.nodeWrapper:has(.flowNodeOuterCondition) .anchorRight,
+.nodeWrapper:has(.flowNodeOuterPolicy) .anchorRight {
+  right: -46px;
+}
+
+/* Action node now uses the same rectangular card layout as condition /
+   policy (260px overhanging the 200px wrapper by 30px), so its anchors
+   sit on the visible card edge — `-46px` mirrors the condition/policy
+   variant 16px above. */
+.nodeWrapper:has(.flowNodeOuterAction) .anchorLeft {
+  left: -46px;
+}
+
+.nodeWrapper:has(.flowNodeOuterAction) .anchorRight {
+  right: -46px;
+}
+
+/* Delay + trigger nodes are auto-width pills centred inside the 200px
+   wrapper, so a fixed offset can't track the pill edge. Switch the wrapper
+   to flex so the anchors flow as static items flanking the pill, with a
+   negative margin pulling each anchor centre onto the pill edge. */
+.nodeWrapper:has(.flowNodeOuterDelay),
+.nodeWrapper:has(.flowNodeOuterTrigger) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.nodeWrapper:has(.flowNodeOuterDelay) .anchor,
+.nodeWrapper:has(.flowNodeOuterTrigger) .anchor {
+  position: static;
+  top: auto;
+  left: auto;
+  right: auto;
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.nodeWrapper:has(.flowNodeOuterDelay) .anchorLeft,
+.nodeWrapper:has(.flowNodeOuterTrigger) .anchorLeft {
+  margin-right: -16px;
+}
+
+.nodeWrapper:has(.flowNodeOuterDelay) .anchorRight,
+.nodeWrapper:has(.flowNodeOuterTrigger) .anchorRight {
+  margin-left: -16px;
+}
+
+.flowNodeOuterDelay,
+.flowNodeOuterTrigger {
+  width: max-content;
+}
+
+/* Show anchors only when the mouse is hovering the node, or when it's
+   the active drag-target (the rubber-band line is snapping to it).
+   Selection alone no longer reveals the anchors — they stay hidden until
+   the user actually hovers the card. */
 .nodeWrapper:hover .anchor,
-.nodeWrapper[data-selected] .anchor,
 .nodeWrapper[data-drag-target] .anchor {
   opacity: 1;
 }
@@ -4453,9 +4592,8 @@
   transform: scale(calc(1.15 * var(--inv-zoom, 1)));
 }
 
-/* Same visibility rules for output port handles (separate class — see .outputPortHandle) */
+/* Same hover-only visibility for output port handles. */
 .nodeWrapper:hover .outputPortHandle,
-.nodeWrapper[data-selected] .outputPortHandle,
 .nodeWrapper[data-drag-target] .outputPortHandle {
   opacity: 1;
 }
@@ -4955,10 +5093,53 @@
   flex-shrink: 0;
 }
 
+/* Collapse chevron — rotates 180deg when its card is expanded so it
+   reads as a "chevron-down → chevron-up" toggle. Defaults to the
+   collapsed (down) orientation. `order: 1` pushes it past the dots /
+   trash siblings so the toggle always sits flush against the card's
+   right edge regardless of how many action buttons precede it. */
+.aiSpecDataCardChevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  color: var(--color-content-tertiary);
+  transition: transform var(--duration-fast) var(--ease-default);
+  transform: rotate(-90deg);
+  order: 1;
+}
+.aiSpecDataCardChevronOpen {
+  transform: rotate(0deg);
+}
+
+/* When a card is collapsed, hide the bottom border so it reads as a
+   compact pill rather than a card with an empty body underneath. */
+.aiSpecDataCard[data-collapsed="true"] .aiSpecDataCardHeader {
+  border-bottom: none;
+}
+.aiSpecDataCardHeader {
+  cursor: pointer;
+}
+
 
 .aiSpecDataCardBody {
   display: flex;
   flex-direction: column;
+}
+
+/* Timeout card — short helper underneath the duration field that
+   spells out the "nudge once, then end" behaviour. Renders as a quiet
+   tertiary line so it reads as guidance rather than a configurable
+   field. */
+.aiSpecTimeoutHint {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-regular);
+  line-height: var(--line-height-normal);
+  color: var(--color-content-tertiary);
 }
 
 .aiSpecDataFieldRow {
@@ -6049,31 +6230,6 @@
   gap: var(--space-4); /* 16px between the pill and the dots button */
 }
 
-/* Ghost spacer mirroring the dots button (32px) — keeps the pill itself
-   horizontally centered on the wrapper so the top/bottom anchors line up
-   with the pill center, not the pill+dots group center. */
-.flowNodeOuterDelay::before {
-  content: '';
-  width: 32px;
-  height: 32px;
-  flex-shrink: 0;
-}
-
-/* Inline the dots menu next to the pill (override the card's absolute positioning). */
-.flowNodeOuterDelay .nodeDotsDropdown {
-  position: static;
-  top: auto;
-  right: auto;
-  transform: none;
-  opacity: 0;
-  transition: opacity var(--duration-fast) var(--ease-default);
-}
-
-/* Reveal the dots button on node hover (or while its own menu is open). */
-.flowNodeOuterDelay:hover .nodeDotsDropdown,
-.flowNodeOuterDelay:focus-within .nodeDotsDropdown {
-  opacity: 1;
-}
 
 /* Base pill — empty/default state (muted pale orange) */
 .delayPill {
@@ -6131,6 +6287,13 @@
   border-color: var(--color-orange-border-secondary);
 }
 
+/* Hover when filled but not focused — step the orange tones up one level
+   so configured delay pills also surface a hover state. */
+.flowNodeOuter:hover .delayPillFilled:not(.delayPillFocused) {
+  background: var(--color-orange-border-tertiary);
+  border-color: var(--color-orange-border-secondary);
+}
+
 /* ─── Trigger node — pill variant (four states, green Alloy tokens) ──────── */
 
 /* Layout mirrors the delay pill: keep the 200px nodeWrapper footprint so
@@ -6143,26 +6306,6 @@
   gap: var(--space-4);
 }
 
-.flowNodeOuterTrigger::before {
-  content: '';
-  width: 32px;
-  height: 32px;
-  flex-shrink: 0;
-}
-
-.flowNodeOuterTrigger .nodeDotsDropdown {
-  position: static;
-  top: auto;
-  right: auto;
-  transform: none;
-  opacity: 0;
-  transition: opacity var(--duration-fast) var(--ease-default);
-}
-
-.flowNodeOuterTrigger:hover .nodeDotsDropdown,
-.flowNodeOuterTrigger:focus-within .nodeDotsDropdown {
-  opacity: 1;
-}
 
 /* State 1 — DEFAULT EMPTY: green-100 fill, green-150 border, green-300 content */
 .triggerPill {
@@ -6188,6 +6331,22 @@
     border-color var(--duration-fast) var(--ease-default),
     color var(--duration-fast) var(--ease-default),
     box-shadow var(--duration-fast) var(--ease-default);
+}
+
+/* Inline "Modify Timing" caption — appended after the trigger label
+   when the right-panel timing offset is configured. Reads as a quiet
+   secondary chip (regular weight, slightly transparent green) so the
+   trigger name stays the primary line. */
+.triggerPillTiming {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: 0.02em;
+  text-transform: none;
 }
 
 /* State 2 — DEFAULT FILLED: same shell, darker content for readable label */
@@ -6221,125 +6380,159 @@
   border-color: var(--color-green-border-secondary);
 }
 
-/* ─── Action node — pill-on-top + white card below (blue Alloy tokens) ─── */
+/* Hover when filled but not focused — step the green tones up one level
+   so the user gets a clear hover affordance on configured trigger pills
+   (previously only the empty state had a hover treatment). */
+.flowNodeOuter:hover .triggerPillFilled:not(.triggerPillFocused) {
+  background: var(--color-green-border-tertiary);
+  border-color: var(--color-green-border-secondary);
+}
 
-/* Vertically center the dots button with the 60px circular icon, and offset
-   it 16px from the circle's right edge. 32×32 button → top 14px centers on
-   the circle's y=30 axis; left = 50% + half-circle (30px) + 16px gap. */
+/* ─── Action node — mirrors condition card layout (blue Alloy tokens) ─── */
+
+/* Match condition / policy card width so the configured action label has
+   room to breathe; the 30px negative inline margin centres the 260px card
+   over the 200px .nodeWrapper. */
+.flowNodeOuterAction {
+  width: 260px;
+  margin-inline: -30px;
+}
+
+/* Pin the dots menu to the top-right corner of the card on hover / focus,
+   matching the condition card's affordance. */
 .flowNodeOuterAction .nodeDotsDropdown {
-  top: 14px;
-  left: calc(50% + 46px);
-  right: auto;
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  left: auto;
+  transform: none;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-default);
+}
+.flowNodeOuterAction:hover .nodeDotsDropdown,
+.flowNodeOuterAction:focus-within .nodeDotsDropdown {
+  opacity: 1;
 }
 
-/* Action node card — chromeless wrapper; the 48px circular icon carries all
-   the visual weight. Labels sit to the right of the icon. */
+/* Action card chrome — same shape, border, surface, and hover/active glow
+   as `.conditionNodeCard` so action steps read as the same family. */
+/* Action node card carries the blue-scale identity end-to-end: the
+   resting/empty state uses the pale blue surface + tertiary blue stroke,
+   and the configured (filled) state lifts to the primary surface but
+   keeps the same blue stroke so the card still reads as part of the
+   blue palette. Dark-mode counterparts use the navy-tinted blue-900
+   surface + blue-700 stroke. */
+/* Resting state — pale-blue surface with the same tertiary blue stroke
+   as the trigger pill (just on the blue side of the palette). No drop
+   shadow at rest; the glow only shows on hover / active so the card
+   reads quietly until the user interacts with it. */
 .actionNodeCard {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 0;
-  background: transparent;
-  border: none;
-  border-radius: 0;
-  transition: none;
-  text-align: center;
-}
-
-/* Focused state — drop-shadow glow under the icon circle (applied via icon box
-   below so it hugs the circle shape). */
-.actionNodeCardFocused {
-  /* no-op at card level; focus visuals live on .actionNodeIconBox */
-}
-
-/* 48×48 circular icon container — semantic blue tokens auto-swap per mode.
-   Empty default: pale blue surface w/ blue-150 ring, muted blue icon.
-   Filled default: same surface, stronger blue icon.
-   Focused (either): vibrant blue fill + blue-600 ring (+ filled = white icon). */
-.actionNodeIconBox {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 60px;
-  height: 60px;
-  border-radius: 50%;
   background: var(--color-blue-bg-tertiary);
   border: 1px solid var(--color-blue-border-tertiary);
-  color: var(--color-blue-content-tertiary);
-  flex-shrink: 0;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: none;
   transition:
     background var(--duration-fast) var(--ease-default),
     border-color var(--duration-fast) var(--ease-default),
     color var(--duration-fast) var(--ease-default),
     box-shadow var(--duration-fast) var(--ease-default);
+  text-align: left;
+}
+.actionNodeCard[data-filled="true"] {
+  background: var(--color-blue-bg-tertiary);
+  border-color: var(--color-blue-border-tertiary);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not(:global(.light)) .actionNodeCard[data-filled="false"],
+  :root:not(:global(.light)) .actionNodeCard[data-filled="true"] {
+    background: var(--Alloy-blue-900);
+    border-color: var(--Alloy-blue-700);
+  }
+}
+:global(.dark) .actionNodeCard[data-filled="false"],
+:global(.dark) .actionNodeCard[data-filled="true"] {
+  background: var(--Alloy-blue-900);
+  border-color: var(--Alloy-blue-700);
 }
 
-/* Configured state: icon uses the stronger primary-blue border/content so the
-   selected action reads clearly against the pale surface. */
-.actionNodeIconBoxFilled {
-  color: var(--color-blue-border-primary);
+/* Hover — same blue glow halo the trigger pill uses on its focused
+   state, applied here on hover so the card lifts as soon as the cursor
+   enters it. */
+.flowNodeOuter:hover .actionNodeCard:not([data-active="true"]) {
+  box-shadow: 0 0 7px 0 var(--color-blue-bg-secondary);
 }
 
-/* Focused (selected) — vibrant blue fill + darker ring + glow. Empty state
-   uses a pale blue-300 icon so it reads against the vibrant fill; filled
-   state uses white (higher contrast for configured actions). */
-.actionNodeCardFocused .actionNodeIconBox {
-  background: var(--color-blue-bg-secondary);
+/* Active (selected / focused) state — vibrant blue-500 fill with the
+   primary blue stroke, mirroring the trigger pill's focused palette
+   (just on the blue scale). The blue glow halo confirms the selection. */
+.actionNodeCard[data-active="true"] {
   border-color: var(--color-blue-border-primary);
-  color: var(--Alloy-blue-300);
-  box-shadow:
-    0 0 7px 0 color-mix(in srgb, var(--color-blue-bg-secondary) 40%, transparent);
+  box-shadow: 0 0 7px 0 var(--color-blue-bg-secondary);
 }
 
-.actionNodeCardFocused .actionNodeIconBoxFilled {
+/* 32×32 leading icon badge — same geometry as the condition card's
+   icon-box, but in the blue scale so the action role stays distinguishable
+   from neutral-slate condition badges. */
+.actionNodeIconBox {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  background: var(--color-blue-bg-tertiary);
+  color: var(--color-blue-content-tertiary);
+  flex-shrink: 0;
+  transition:
+    background var(--duration-fast) var(--ease-default),
+    color var(--duration-fast) var(--ease-default);
+}
+
+/* Empty + not active hover — bump the badge one shade so the affordance
+   surfaces on hover in light mode. */
+.actionNodeCard[data-filled="false"][data-active="false"]:hover .actionNodeIconBox {
+  background: var(--Alloy-blue-200);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not(:global(.light)) .actionNodeCard[data-filled="false"][data-active="false"]:hover .actionNodeIconBox {
+    background: var(--Alloy-blue-700);
+  }
+}
+:global(.dark) .actionNodeCard[data-filled="false"][data-active="false"]:hover .actionNodeIconBox {
+  background: var(--Alloy-blue-700);
+}
+
+/* Filled — Alloy-blue-700 fill with white icon. Mirrors the condition
+   card's slate-500 / white treatment but stays in the blue scale, so the
+   configured action icon reads as the same muted, sophisticated badge
+   the condition card uses instead of a saturated blue-500 chip. */
+.actionNodeCard[data-filled="true"] .actionNodeIconBox,
+.actionNodeIconBoxFilled {
+  background: var(--Alloy-blue-700);
   color: var(--Alloy-white);
 }
 
-/* Hover — subtle lift when empty + not focused. Mirrors the trigger/delay
-   pill hover pattern (bg shifts up one token, border to next-stronger) but
-   stays in the blue family. Scoped to the non-focused card so the active
-   state's vibrant fill isn't overridden. */
-.flowNodeOuter:hover .actionNodeCard:not(.actionNodeCardFocused) .actionNodeIconBox:not(.actionNodeIconBoxFilled) {
-  background: var(--color-blue-border-tertiary);
-  border-color: var(--color-blue-border-secondary);
+/* Dark mode filled — soften to blue-100 bg with blue-700 icon (mirrors
+   the condition card's slate-100 / slate-500 dark-mode flip) so the
+   badge reads as a pale chip on the dark canvas surface. */
+@media (prefers-color-scheme: dark) {
+  :root:not(:global(.light)) .actionNodeCard[data-filled="true"] .actionNodeIconBox {
+    background: var(--Alloy-blue-100);
+    color: var(--Alloy-blue-700);
+  }
+}
+:global(.dark) .actionNodeCard[data-filled="true"] .actionNodeIconBox {
+  background: var(--Alloy-blue-100);
+  color: var(--Alloy-blue-700);
 }
 
-.actionNodeContent {
-  width: 100%;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-1);
-  text-align: center;
-}
-
-/* Action-node summary — inline flow that wraps to a max of two lines.
-   Segments (label / val / op) read as a single sentence ("Modify
-   Applicant Stage → Set to 3- Interview") and wrap naturally rather
-   than each landing on its own row. The content slot is widened so a
-   typical configured action fits in two lines without truncating mid-
-   word. Scoped so trigger / condition / ai summaries are untouched. */
-.actionNodeCard .nodeConfigSummary[data-type="action"] {
-  font-family: var(--font-sans);
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  overflow: hidden;
-  text-align: center;
-  max-width: 240px;
-  word-break: break-word;
-  overflow-wrap: anywhere;
-}
-
-.actionNodeCard .nodeConfigSummary[data-type="action"] .nodeConfigOp,
-.actionNodeCard .nodeConfigSummary[data-type="action"] .nodeConfigLabel,
-.actionNodeCard .nodeConfigSummary[data-type="action"] .nodeConfigVal {
-  font-family: var(--font-sans);
-  display: inline;
+/* Active (selected) — one shade lighter than filled (mirrors condition's
+   `content-inverse-tertiary` / slate-400 approach) so the icon stays
+   readable on top of the slightly darker active card. */
+.actionNodeCard[data-active="true"] .actionNodeIconBox {
+  background: var(--Alloy-blue-500);
+  color: var(--Alloy-white);
 }
 
 /* AI-node summary override — same two-line treatment as the action card:
@@ -6369,165 +6562,131 @@
   letter-spacing: var(--tracking-wide);
 }
 
-/* Placeholder ("Select action…") — muted blue label, matches empty icon tone */
-.actionNodePlaceholder {
-  font-family: var(--font-sans);
-  font-size: var(--text-sm);
-  font-weight: var(--font-weight-medium);
-  letter-spacing: var(--tracking-wide);
-  color: var(--color-blue-content-tertiary);
-  line-height: var(--line-height-tight);
-}
-
 /* ─── AI node — circular icon + label, AI gradient palette ─────────────────── */
 
-/* Align the dots button with the icon circle in the outer wrapper */
+/* Narrower-than-default wrapper so the AI card reads as a compact pill
+   rather than the 200px default width — the centred sparkle + short
+   persona name don't need the full default width to breathe. */
+/* Compact wrapper so the AI card reads as a small pill — the centred
+   sparkle + short persona name don't need the default 200px width.
+   `margin-inline: auto` centres the 128px card inside the shared
+   200px `.nodeWrapper` so the anchors (overridden below) line up
+   symmetrically on the card's left/right edges. */
 .flowNodeOuterAi {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-.flowNodeOuterAi .nodeDotsDropdown {
-  top: 14px;
-  left: calc(50% + 46px);
-  right: auto;
+  width: 128px;
+  margin-inline: auto;
 }
 
-/* Chromeless card — the gradient-filled circle carries all visual weight */
+/* Anchors land on the visible card edges instead of the wrapper edges.
+   With a 128px card centred in a 200px wrapper, each side has 36px of
+   empty space; `±20px` (= 36 − anchor half-width 16) puts the 32px
+   anchor's centre flush with the card edge. */
+.nodeWrapper:has(.flowNodeOuterAi) .anchorLeft {
+  left: 20px;
+}
+.nodeWrapper:has(.flowNodeOuterAi) .anchorRight {
+  right: 20px;
+}
+
+/* Dots button sits flush with the card's top-right corner. */
+.flowNodeOuterAi .nodeDotsDropdown {
+  top: var(--space-1);
+  right: var(--space-1);
+  left: auto;
+}
+
+/* AI Specialist node card — square gradient card with a centered
+   translucent sparkle circle and stacked white text. Matches the Figma
+   design (purple→blue gradient bg, white-translucent halo around the AI
+   sparkle, "AI Specialist" eyebrow + persona name beneath). Width 100%
+   so the card fills `.flowNodeOuterAi` and the wrapper-edge anchors
+   land flush against the card's left/right edges instead of floating in
+   the empty wrapper margin. */
 .aiNodeCard {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 0;
-  background: transparent;
+  position: relative;
+  isolation: isolate;
+  width: 100%;
+  background: var(--gradient-ai);
   border: none;
-  border-radius: 0;
-  transition: none;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: none;
+  transition: box-shadow var(--duration-fast) var(--ease-default);
   text-align: center;
 }
 
-/* 60×60 circle — default state uses the AI gradient tinted with the surface
-   veil (mode-aware via --color-bg-primary), reads as a pale wash in light
-   and a dim wash in dark. Focused state lifts the veil for a vibrant fill. */
-.aiNodeIconBox {
-  position: relative;
-  isolation: isolate;
+/* Hover / active glow — same `0 0 7px 0` geometry as the trigger pill so
+   the AI step picks up its focus affordance with the same blur radius as
+   sibling nodes. Uses the AI's purple accent. */
+.flowNodeOuter:hover .aiNodeCard,
+.aiNodeCard[data-active="true"] {
+  box-shadow: 0 0 7px 0 var(--color-purple-bg-secondary);
+}
+
+/* Centered card body — stacks the sparkle circle above the text block.
+   Tight padding + small gap keeps the card compact (no excess whitespace
+   above/below the content). */
+.aiNodeCardBody {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 12px;
+}
+
+/* Translucent sparkle halo — `rgba(246, 247, 249, 0.2)` matches the
+   Figma fill (#F6F7F9 @ 0.2). Sized to read as a halo around the 20px
+   sparkle without dominating the compact card. */
+.aiNodeSparkleCircle {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: rgba(246, 247, 249, 0.2);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 60px;
-  height: 60px;
-  border-radius: 50%;
-  /* Three-layer background: pale veil inside (padding-box) keeps the hue
-     muted, while a 30%-opacity AI gradient shows through the transparent 1px
-     border ring (border-box) to form a soft gradient outline. */
-  background:
-    linear-gradient(
-      color-mix(in srgb, var(--color-bg-primary) 82%, transparent),
-      color-mix(in srgb, var(--color-bg-primary) 82%, transparent)
-    ) padding-box,
-    var(--gradient-ai) padding-box,
-    linear-gradient(
-      135deg,
-      rgba(140, 79, 226, 0.3) 0%,
-      rgba(68, 108, 255, 0.3) 55%,
-      rgba(56, 192, 240, 0.3) 100%
-    ) border-box;
-  border: 1px solid transparent;
-  color: var(--Alloy-purple-500);
+  color: var(--Alloy-white);
   flex-shrink: 0;
-  transition:
-    background var(--duration-fast) var(--ease-default),
-    color var(--duration-fast) var(--ease-default),
-    box-shadow var(--duration-fast) var(--ease-default);
 }
 
-/* Hover overlay — sits above the resting bg with the same geometry but using
-   the more-saturated hover gradient (thinner veil + brighter border ring).
-   Transitioning this pseudo's opacity gives a smooth fade between the two
-   multi-layer gradient states, which background alone can't interpolate. */
-.aiNodeIconBox::before {
-  content: '';
-  position: absolute;
-  inset: -1px;                 /* cover the 1px border area too */
-  border-radius: inherit;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity var(--duration-fast) var(--ease-default);
-  background:
-    linear-gradient(
-      color-mix(in srgb, var(--color-bg-primary) 60%, transparent),
-      color-mix(in srgb, var(--color-bg-primary) 60%, transparent)
-    ) padding-box,
-    var(--gradient-ai) padding-box,
-    linear-gradient(
-      135deg,
-      rgba(140, 79, 226, 0.6) 0%,
-      rgba(68, 108, 255, 0.6) 55%,
-      rgba(56, 192, 240, 0.6) 100%
-    ) border-box;
-  border: 1px solid transparent;
-  z-index: 0;
+/* Stacked text block — eyebrow ("AI Specialist") above the persona name. */
+.aiNodeText {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  max-width: 100%;
 }
 
-/* Ensure the icon glyph renders above the hover overlay. */
-.aiNodeIconBox > svg {
-  position: relative;
-  z-index: 1;
+.aiNodeEyebrow {
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: var(--tracking-wide);
+  color: rgba(255, 255, 255, 0.85);
+  line-height: var(--line-height-tight);
 }
 
-/* Configured (filled) default — same surface, stronger icon tint */
-.aiNodeIconBoxFilled {
-  color: var(--Alloy-purple-600);
-}
-
-/* Persona avatar variant — when a specialist persona is picked, the
-   iconBox swaps the gradient AI diamond for the persona's PersonaAvatar
-   SVG (rendered at 32px so it sits centred inside the 60px iconBox with
-   ~14px of breathing room around it). Drop the gradient veil + border
-   ring so the avatar's own palette reads cleanly. */
-.aiNodeIconBoxAvatar {
-  background: var(--color-bg-primary);
-  border-color: var(--color-border-opaque);
-  overflow: hidden;
-}
-.aiNodeIconBoxAvatar::before {
-  content: none;
-}
-
-/* Focused (selected): drop the veil to reveal the gradient + glow.
-   Stroke goes pure white so the icon reads crisply on the saturated fill. */
-.aiNodeCardFocused .aiNodeIconBox {
-  background: var(--gradient-ai);
-  border-color: transparent;
+.aiNodeName {
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  font-weight: var(--font-weight-semibold);
   color: var(--Alloy-white);
-  box-shadow: 0 0 7px 0 var(--color-purple-bg-secondary);
-}
-.aiNodeCardFocused .aiNodeIconBoxFilled {
-  color: var(--Alloy-white);
-}
-
-/* Hover — fade in the ::before overlay (thinner veil + brighter border ring)
-   so the node smoothly transitions between the resting and hover multi-layer
-   gradient states. Scoped to not-focused / not-filled to match the
-   trigger/delay/action hover pattern. */
-.flowNodeOuter:hover .aiNodeCard:not(.aiNodeCardFocused) .aiNodeIconBox:not(.aiNodeIconBoxFilled)::before {
-  opacity: 1;
-}
-/* Hover — brighten the icon glyph to pure white for stronger contrast on
-   the gradient-revealed surface. */
-.flowNodeOuter:hover .aiNodeCard:not(.aiNodeCardFocused) .aiNodeIconBox {
-  color: var(--Alloy-white);
+  line-height: var(--line-height-tight);
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
-/* Placeholder text — muted, gradient-text for focused state */
+/* Empty-state placeholder — softer white tone so it reads as a hint
+   rather than a configured persona name. */
 .aiNodePlaceholder {
   font-family: var(--font-sans);
   font-size: var(--text-sm);
   font-weight: var(--font-weight-medium);
   letter-spacing: var(--tracking-wide);
-  color: var(--Alloy-purple-500);
+  color: rgba(255, 255, 255, 0.7);
   line-height: var(--line-height-tight);
 }
 
@@ -6754,6 +6913,120 @@
   gap: var(--space-2);
 }
 
+/* IF / ELSE IF / ELSE branch label — sits above each AND-group header so
+   the conditional flow reads as a series of branches at a higher level
+   than the AND-group's internal logic. The keyword + chevron pair lives
+   on the left, the remove (X) button is pinned to the right via
+   space-between. */
+.conditionBranchLabel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  margin-bottom: var(--space-1);
+}
+
+.conditionBranchLabel:first-child {
+  margin-top: 0;
+}
+
+/* Toggle button = chevron + keyword. Click anywhere on the row to
+   collapse / expand the branch body. Borderless ghost button so it reads
+   as a label, not a chip. */
+.conditionBranchToggleBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: var(--color-content-primary);
+}
+.conditionBranchToggleBtn:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
+}
+
+.conditionBranchChevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-content-secondary);
+  transform: rotate(-90deg);
+  transition: transform var(--duration-fast) var(--ease-default);
+}
+
+.conditionBranchChevronOpen {
+  transform: rotate(0deg);
+}
+
+.conditionBranchKeyword {
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--color-content-primary);
+}
+
+.conditionBranchHint {
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-regular);
+  color: var(--color-content-tertiary);
+}
+
+/* Nested AND/OR grouping inside an IF / ELSE IF branch — visually indented
+   from the branch keyword so the hierarchy reads correctly. */
+.conditionBranchBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-left: var(--space-3);
+  margin-left: var(--space-1);
+  border-left: 2px solid var(--color-border-opaque);
+}
+
+/* Standalone "+ Add ELSE IF" CTA — sits between the last conditional branch
+   and the ELSE catch-all row, so the new-branch affordance reads inline
+   with the branch list. Slightly heavier styling than the nested per-group
+   "Add condition" button to match its top-level role. */
+.addElseIfBtn {
+  margin-top: var(--space-2);
+  align-self: flex-start;
+}
+
+/* Branch-removal X button — pinned to the right edge of the ELSE IF
+   header row (via space-between on .conditionBranchLabel) and always
+   visible so the affordance is reachable without hovering. */
+.conditionBranchRemoveBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-content-tertiary);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--duration-fast) var(--ease-default),
+              color      var(--duration-fast) var(--ease-default);
+}
+.conditionBranchRemoveBtn:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-content-primary);
+}
+.conditionBranchRemoveBtn:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+}
+
 /* "OR" divider between groups — centered pill on a horizontal baseline. */
 .conditionOrDivider {
   display: flex;
@@ -6851,7 +7124,7 @@
    nodeConfigSummary elements for text — only the CARD chrome changes. */
 .conditionNodeCard {
   background: var(--color-bg-tertiary);
-  border: 1px solid var(--color-slate-border-tertiary);
+  border: 1px solid var(--color-border-opaque);
   border-radius: 8px;
   overflow: hidden;
   box-shadow: none;
@@ -6932,24 +7205,9 @@
   background: var(--Alloy-slate-800);
 }
 
-/* Dark-mode empty hover — lift to slate-700 bg + slate-150 border, leading
-   badge steps up to slate-600; text/icon colour stays slate-300. */
-@media (prefers-color-scheme: dark) {
-  :root:not(:global(.light)) .flowNodeOuter:hover .conditionNodeCard[data-filled="false"]:not([data-active="true"]) {
-    background: var(--Alloy-slate-700);
-    border-color: var(--Alloy-slate-150);
-  }
-  :root:not(:global(.light)) .flowNodeOuter:hover .conditionNodeCard[data-filled="false"]:not([data-active="true"]) .conditionNodeIconBox {
-    background: var(--Alloy-slate-600);
-  }
-}
-:global(.dark) .flowNodeOuter:hover .conditionNodeCard[data-filled="false"]:not([data-active="true"]) {
-  background: var(--Alloy-slate-700);
-  border-color: var(--Alloy-slate-150);
-}
-:global(.dark) .flowNodeOuter:hover .conditionNodeCard[data-filled="false"]:not([data-active="true"]) .conditionNodeIconBox {
-  background: var(--Alloy-slate-600);
-}
+/* Dark-mode empty hover — match the active state: no bg / border / badge
+   swap. The shared `.flowNodeOuter:hover .conditionNodeCard:not([data-active])`
+   rule above adds the subtle glow which is the only hover affordance. */
 
 /* Dark-mode empty active — palette per Figma spec:
    card bg slate-200, border slate-150, leading badge slate-150,
@@ -6982,30 +7240,37 @@
 :global(.dark) .conditionNodeCard[data-filled="false"][data-active="true"] .conditionNodeTopPrimary {
   color: var(--Alloy-slate-300);
 }
+/* Active condition card — keep the surrounding glow but no background or
+   border colour swap. The card surface stays in the resting palette so the
+   inner branch rows / IF · ELSE labels read in their normal tones when
+   the node is selected. */
 .conditionNodeCard[data-active="true"] {
-  background: var(--color-slate-bg-secondary);
-  border-color: var(--color-slate-bg-primary);
-  box-shadow: 0 0 7px color-mix(in srgb, var(--color-slate-bg-primary) 50%, transparent);
+  box-shadow: 0 0 7px 0 var(--color-slate-bg-primary);
 }
 /* Dark mode active — glow uses slate-150 so it reads as a bright halo
    against the deep slate canvas surface. */
 @media (prefers-color-scheme: dark) {
   :root:not(:global(.light)) .conditionNodeCard[data-active="true"] {
-    box-shadow: 0 0 7px color-mix(in srgb, var(--Alloy-slate-150) 50%, transparent);
+    box-shadow: 0 0 7px 0 var(--Alloy-slate-150);
   }
 }
 :global(.dark) .conditionNodeCard[data-active="true"] {
-  box-shadow: 0 0 7px color-mix(in srgb, var(--Alloy-slate-150) 50%, transparent);
+  box-shadow: 0 0 7px 0 var(--Alloy-slate-150);
 }
 
-/* Hover — subtle lift when not active. Mirrors the trigger/delay hover
-   pattern: bg shifts up one slate token and the border steps to the next
-   stronger token — smooth transition via the .conditionNodeCard rule above.
-   Scoped to :not([data-active=true]) so the active slate-500 fill isn't
-   overridden. */
+/* Hover — match the active state treatment: no bg / border swap, just
+   the same outer glow. Keeps the condition card chrome quiet regardless
+   of whether the user is hovering or has the node selected. */
 .flowNodeOuter:hover .conditionNodeCard:not([data-active="true"]) {
-  background: var(--color-slate-border-tertiary);
-  border-color: var(--color-slate-border-secondary);
+  box-shadow: 0 0 7px 0 var(--color-slate-bg-primary);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not(:global(.light)) .flowNodeOuter:hover .conditionNodeCard:not([data-active="true"]) {
+    box-shadow: 0 0 7px 0 var(--Alloy-slate-150);
+  }
+}
+:global(.dark) .flowNodeOuter:hover .conditionNodeCard:not([data-active="true"]) {
+  box-shadow: 0 0 7px 0 var(--Alloy-slate-150);
 }
 .conditionNodeTopRow {
   display: flex;
@@ -7160,10 +7425,11 @@
   font-weight: var(--font-weight-regular);
   color: var(--Alloy-slate-300);
 }
-/* Active state — labels switch to white; muted parts pale to white@70 so
-   they stay subordinate without disappearing on the saturated fill. */
+/* Active state — switch the verb / muted tone to content-tertiary so it
+   stays readable against the card surface without the legacy white@70
+   wash that disappeared once the active fill swap was removed. */
 .conditionNodeCard[data-active="true"] .conditionExprMuted {
-  color: color-mix(in srgb, var(--Alloy-white) 70%, transparent);
+  color: var(--color-content-tertiary);
 }
 /* Dark mode — verb / value tone uses slate-500 so the muted segments
    stay subordinate to the brighter field labels but remain readable
@@ -7178,6 +7444,337 @@
 }
 :global(.dark) .conditionNodeCard .conditionExprMuted {
   color: var(--Alloy-slate-500);
+}
+
+/* ─── Multi-branch condition card — per-IF-branch sub-rows + ELSE ───────────
+   Renders when `data-branches="true"` (set when at least one condition has
+   been configured). Each row stacks vertically inside the card and carries
+   its own right-edge anchor so an outgoing edge can be drawn from the
+   specific branch. The outer node-edge anchor is suppressed by JSX in this
+   state so anchors don't double up. */
+
+/* Card header — single leading filter icon above the row list. Replaces
+   the per-row icon-box so the condition reads as one container rather
+   than a stack of independent cards. The icon renders as a bare glyph
+   (no badge fill / box) at the slate-800 stroke colour. */
+.conditionNodeHeader {
+  display: flex;
+  align-items: center;
+  padding: 8px 8px 0 8px;
+}
+/* Boost specificity past `.conditionNodeCard[data-filled="true"]
+   .conditionNodeIconBox` (the rule that paints the per-row badge in
+   slate-500 / white) so the header icon stays bare. Mirrored for
+   `.policyNodeIconBox` so the policy card's leading triangle renders
+   as a bare slate-800 glyph in the same way. */
+.conditionNodeCard .conditionNodeHeader .conditionNodeIconBox,
+.conditionNodeCard[data-filled="true"] .conditionNodeHeader .conditionNodeIconBox,
+.conditionNodeCard[data-active="true"] .conditionNodeHeader .conditionNodeIconBox,
+.policyNodeCard .conditionNodeHeader .policyNodeIconBox,
+.policyNodeCard[data-filled="true"] .conditionNodeHeader .policyNodeIconBox,
+.policyNodeCard[data-active="true"] .conditionNodeHeader .policyNodeIconBox {
+  width: auto;
+  height: auto;
+  /* `!important` — the base `.policyNodeIconBox` rules tie on specificity
+     once `:not([data-active=true])` is factored in, and they appear later
+     in the file, so the cascade picks them. The header icon strips its
+     badge box (no bg/border/shadow) on both node types; per-type colour
+     is set in the rules below (slate for condition, rose/pink for
+     policy) so each node carries its own semantic accent. */
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+
+/* Condition header icon — neutral slate scale, reads as a quiet glyph
+   on the condition card's white/slate-900 surface. */
+.conditionNodeCard .conditionNodeHeader .conditionNodeIconBox,
+.conditionNodeCard[data-filled="true"] .conditionNodeHeader .conditionNodeIconBox,
+.conditionNodeCard[data-active="true"] .conditionNodeHeader .conditionNodeIconBox {
+  color: var(--color-content-tertiary) !important;
+}
+
+/* Action iconBox inside the card header — strip the 32×32 blue badge
+   styling so it renders as a bare blue glyph in the header strip,
+   matching how the condition / policy / AI cards render their header
+   icons. The colour stays in the blue scale (Alloy-blue-700) so the
+   action node keeps its blue accent. `!important` defeats the base
+   filled / active rules above which would otherwise repaint the badge. */
+.actionNodeCard .conditionNodeHeader .actionNodeIconBox,
+.actionNodeCard[data-filled="true"] .conditionNodeHeader .actionNodeIconBox,
+.actionNodeCard[data-active="true"] .conditionNodeHeader .actionNodeIconBox {
+  width: auto !important;
+  height: auto !important;
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  color: var(--Alloy-blue-700) !important;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not(:global(.light)) .actionNodeCard .conditionNodeHeader .actionNodeIconBox,
+  :root:not(:global(.light)) .actionNodeCard[data-filled="true"] .conditionNodeHeader .actionNodeIconBox,
+  :root:not(:global(.light)) .actionNodeCard[data-active="true"] .conditionNodeHeader .actionNodeIconBox {
+    color: var(--Alloy-blue-200) !important;
+  }
+}
+:global(.dark) .actionNodeCard .conditionNodeHeader .actionNodeIconBox,
+:global(.dark) .actionNodeCard[data-filled="true"] .conditionNodeHeader .actionNodeIconBox,
+:global(.dark) .actionNodeCard[data-active="true"] .conditionNodeHeader .actionNodeIconBox {
+  color: var(--Alloy-blue-200) !important;
+}
+
+/* Policy header icon — picks up the policy gradient's warm hue via the
+   pink content tone (closest semantic match for "rose" in Alloy). */
+.policyNodeCard .conditionNodeHeader .policyNodeIconBox,
+.policyNodeCard[data-filled="true"] .conditionNodeHeader .policyNodeIconBox,
+.policyNodeCard[data-active="true"] .conditionNodeHeader .policyNodeIconBox {
+  color: var(--color-pink-content-primary) !important;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not(:global(.light)) .conditionNodeCard .conditionNodeHeader .conditionNodeIconBox,
+  :root:not(:global(.light)) .conditionNodeCard[data-filled="true"] .conditionNodeHeader .conditionNodeIconBox,
+  :root:not(:global(.light)) .conditionNodeCard[data-active="true"] .conditionNodeHeader .conditionNodeIconBox,
+  :root:not(:global(.light)) .policyNodeCard .conditionNodeHeader .policyNodeIconBox,
+  :root:not(:global(.light)) .policyNodeCard[data-filled="true"] .conditionNodeHeader .policyNodeIconBox,
+  :root:not(:global(.light)) .policyNodeCard[data-active="true"] .conditionNodeHeader .policyNodeIconBox {
+    background: transparent;
+    color: var(--Alloy-slate-200);
+  }
+}
+:global(.dark) .conditionNodeCard .conditionNodeHeader .conditionNodeIconBox,
+:global(.dark) .conditionNodeCard[data-filled="true"] .conditionNodeHeader .conditionNodeIconBox,
+:global(.dark) .conditionNodeCard[data-active="true"] .conditionNodeHeader .conditionNodeIconBox,
+:global(.dark) .policyNodeCard .conditionNodeHeader .policyNodeIconBox,
+:global(.dark) .policyNodeCard[data-filled="true"] .conditionNodeHeader .policyNodeIconBox,
+:global(.dark) .policyNodeCard[data-active="true"] .conditionNodeHeader .policyNodeIconBox {
+  background: transparent;
+  color: var(--Alloy-slate-200);
+}
+.conditionBranchRowList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+}
+
+/* IF / ELSE keyword renders inline at the start of each branch row's
+   first line (instead of as a separate label above the card). The
+   `.conditionBranchKeyword` typography rule defined earlier handles
+   the bold/uppercase look; this rule just adjusts inline spacing. */
+.conditionBranchRowInner .conditionBranchKeyword {
+  flex-shrink: 0;
+  /* Top-align with the first text line so the keyword reads as part of
+     the same row as the condition expression even when the expression
+     wraps to multiple lines. */
+  align-self: flex-start;
+  margin-top: 1px;
+}
+.conditionBranchRow {
+  position: relative;
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: 6px;
+  transition:
+    background var(--duration-fast) var(--ease-default),
+    border-color var(--duration-fast) var(--ease-default);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not(:global(.light)) .conditionBranchRow {
+    background: var(--Alloy-slate-900);
+    border-color: var(--Alloy-slate-600);
+  }
+}
+:global(.dark) .conditionBranchRow {
+  background: var(--Alloy-slate-900);
+  border-color: var(--Alloy-slate-600);
+}
+.conditionBranchRowInner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  /* No `min-height` — the row hugs its content vertically. Short labels
+     like "Else" produce a compact row; long wrapping expressions grow as
+     needed. Width still stretches to the card edges via the row's flex
+     parent. */
+}
+.conditionBranchExpr {
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-primary);
+  line-height: var(--line-height-tight);
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.conditionBranchExprLine {
+  display: inline;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.conditionBranchExprLabel {
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-primary);
+}
+/* Placeholder state — applied when a condition row has no field selected
+   yet. Renders the "Add condition" prompt in the disabled content tone so
+   it reads as a hint rather than configured data. */
+.conditionBranchExprPlaceholder {
+  color: var(--color-content-disabled);
+  font-weight: var(--font-weight-regular);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not(:global(.light)) .conditionBranchExprLabel {
+    color: var(--Alloy-slate-200);
+  }
+}
+:global(.dark) .conditionBranchExprLabel {
+  color: var(--Alloy-slate-200);
+}
+/* Inline configured value within a condition expression — reads as plain
+   copy ("Bill Rate is 25") at the same medium weight as the surrounding
+   label so the configured line flows like one cohesive snippet rather
+   than bolding the trailing value. Applies across condition / policy /
+   action / AI cards that share this branch-row structure. */
+.conditionBranchExprValue {
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-primary);
+}
+
+/* Threshold chip — only used by the policy node, where the threshold
+   reads as a stand-alone status pill at the trailing right of the row.
+   The `.conditionBranchExpr` sibling carries `flex: 1` which pushes this
+   chip flush against the row's right edge; `flex-shrink: 0` and
+   `white-space: nowrap` keep the tag intact when the expression wraps. */
+.conditionBranchExprThresholdTag {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  align-self: center;
+  padding: 2px var(--space-2);
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.2;
+  color: var(--color-content-primary);
+  white-space: nowrap;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not(:global(.light)) .conditionBranchExprValue {
+    color: var(--Alloy-slate-200);
+  }
+}
+:global(.dark) .conditionBranchExprValue {
+  color: var(--Alloy-slate-200);
+}
+
+/* AND / OR pills inline at the end of each condition line — uses the
+   Alloy Tag component (size=sm, variant=subtle, color=neutral) for its
+   base appearance; this rule shrinks the badge below the smallest Tag
+   preset so it reads as a quiet inline keyword rather than a full chip,
+   and handles inline spacing relative to the surrounding expression. */
+.conditionBranchPill {
+  margin-left: 6px;
+  vertical-align: middle;
+  height: 16px;
+  padding: 0 4px;
+  font-size: 10px;
+  line-height: 1;
+  letter-spacing: 0.04em;
+}
+/* OR separators between groups break onto their own line so the OR pill
+   visually divides the stacked condition rows instead of trailing the
+   previous condition inline. */
+.conditionBranchOrBreak {
+  display: block;
+  margin-top: 2px;
+  margin-left: -6px; /* negate the inline left margin baked into the pill */
+}
+
+/* Per-branch right-edge anchor — same `.anchor` base but pinned to the row
+   edge instead of the wrapper edge. Always visible on hover/select of the
+   parent node so the user can drag from any branch directly. */
+/* Higher-specificity selector — overrides the
+   `.nodeWrapper:has(.flowNodeOuterCondition) .anchorRight { right: -46px }`
+   rule above which would otherwise float the anchor 30px past the visible
+   condition card edge (the legacy single-anchor position). Per-branch
+   anchors instead sit on each row's own right border. */
+.nodeWrapper:has(.flowNodeOuterCondition) .anchorRight.conditionBranchAnchor,
+.nodeWrapper:has(.flowNodeOuterPolicy) .anchorRight.conditionBranchAnchor {
+  top: 50%;
+  /* Anchor centre sits 6px past the row's right border so it lines up with
+     the visible card's outer edge (rows have 6px of card padding on each
+     side). Putting the centre outside the card means the outgoing edge
+     starts past the card's white background — so the path is fully
+     visible without needing the SVG layer to sit above the cards (which
+     was breaking node hover detection). Anchor footprint = 32px (20 dot
+     + 12 hit-area), half-width = 16px → right offset = 16 + 6 = 22px. */
+  right: -22px;
+  margin-top: -16px;
+}
+
+/* Per-branch LEFT anchor — mirrors the right-side variant. Pins the anchor
+   centre to the row's left border so an incoming edge terminates on the
+   row card itself instead of the outer condition wrapper. */
+.nodeWrapper:has(.flowNodeOuterCondition) .anchorLeft.conditionBranchAnchor,
+.nodeWrapper:has(.flowNodeOuterPolicy) .anchorLeft.conditionBranchAnchor {
+  top: 50%;
+  left: -16px;
+  margin-top: -16px;
+}
+
+/* ELSE row — visually quieter than the IF rows. Smaller leading icon-box
+   tone matches the empty-state badge so the catch-all reads as a fallback
+   rather than another active condition. */
+.conditionElseRow .conditionBranchExprLabel {
+  color: var(--color-content-tertiary);
+  font-weight: var(--font-weight-semibold);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not(:global(.light)) .conditionElseRow .conditionBranchExprLabel {
+    color: var(--Alloy-slate-300);
+  }
+}
+:global(.dark) .conditionElseRow .conditionBranchExprLabel {
+  color: var(--Alloy-slate-300);
+}
+
+/* When the card switches into branches mode, drop the legacy single-row
+   padding so the row list controls spacing. */
+.conditionNodeCard[data-branches="true"] .conditionNodeTopRow {
+  display: none;
+}
+
+/* Per-branch anchors sit OUTSIDE each row's right edge — turn off the card's
+   overflow clipping in branches mode so the anchors aren't masked by the
+   card's rounded border. The legacy single-row layout still uses
+   `overflow: hidden` (defined on `.conditionNodeCard`) so it's untouched.
+   Mirrored on the policy card now that it uses the same multi-branch
+   row list. */
+.conditionNodeCard[data-branches="true"],
+.policyNodeCard[data-branches="true"] {
+  overflow: visible;
+}
+.policyNodeCard[data-branches="true"] .policyNodeTopRow {
+  display: none;
+}
+
+/* Show per-branch anchors only when the parent node is hovered or is the
+   active drag-target — same hover-only rule used by the wrapper-level
+   anchors above. Selection alone no longer reveals them. */
+.nodeWrapper:hover .conditionBranchAnchor,
+.nodeWrapper[data-drag-target] .conditionBranchAnchor {
+  opacity: 1;
 }
 
 /* Bottom card — only when conditions are configured */
@@ -7209,13 +7806,12 @@
   margin-inline: -30px;
   overflow: visible;
 }
-/* Move the dots menu to the canvas just past the card's right edge so it
-   doesn't overlap the gradient card artwork — mirrors condition node. */
+/* Pin the dots menu to the top-right corner of the policy card. */
 .flowNodeOuterPolicy .nodeDotsDropdown {
-  top: 50%;
-  right: auto;
-  left: calc(100% + 8px);
-  transform: translateY(-50%);
+  top: var(--space-2);
+  right: var(--space-2);
+  left: auto;
+  transform: none;
 }
 
 /* ─── Policy node (mirrors AI node three-state pattern with policy gradient) ─

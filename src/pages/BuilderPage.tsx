@@ -18,7 +18,6 @@ import tooltipStyles from '@alloy/components/Tooltip/Tooltip.module.css';
 import { Tabs } from '@alloy/components/Tabs';
 import { FilterPill, FilterPillGroup } from '@alloy/components/FilterPill';
 import { Target04Icon } from '@alloy/components/icons/Target04Icon';
-import { GitBranch01Icon } from '@alloy/components/icons/GitBranch01Icon';
 import { ArrowCircleBrokenRightIcon } from '@alloy/components/icons/ArrowCircleBrokenRightIcon';
 import { Link01Icon } from '@alloy/components/icons/Link01Icon';
 import { LinkBroken01Icon } from '@alloy/components/icons/LinkBroken01Icon';
@@ -76,6 +75,7 @@ import { VolumeMaxIcon } from '@alloy/components/icons/VolumeMaxIcon';
 import { SearchSmIcon } from '@alloy/components/icons/SearchSmIcon';
 import { PlayIcon } from '@alloy/components/icons/PlayIcon';
 import { FilterLinesIcon } from '@alloy/components/icons/FilterLinesIcon';
+import { GitBranch01Icon } from '@alloy/components/icons/GitBranch01Icon';
 import { CircularArrowIcon } from '@alloy/components/icons/CircularArrowIcon';
 import { TriangleUpIcon } from '@alloy/components/icons/TriangleUpIcon';
 import { AreaButton } from '@alloy/components/AreaButton';
@@ -85,7 +85,7 @@ import { GLOBAL_TOOLS, STEP_TOOLS } from '@/features/ai/tools';
 import { buildGlobalSystemPrompt, buildStepSystemPrompt } from '@/features/ai/systemPrompts';
 import { AI_PERSONAS, getPersonaById, type AiPersona } from '@/features/ai/personas';
 import { PersonaAvatar } from '@/features/ai/PersonaAvatar';
-import { PolicyMatchingModal } from '@/components/PolicyMatchingModal';
+import { PolicyMatchingModal, POLICY_LIBRARY } from '@/components/PolicyMatchingModal';
 
 // ─── Workflow settings persistence ─────────────────────────────────────────────
 
@@ -187,6 +187,54 @@ function parsePolicySelection(cfg: Record<string, string> | undefined): PolicySe
   };
 }
 
+/** A single Policy IF branch — mirrors the condition branch model. Holds
+ *  one selection set + threshold, rendered as one row on the canvas card
+ *  with its own per-row right anchor. */
+interface PolicyBranch {
+  id: string;
+  folders: string[];
+  policies: string[];
+  subPolicies: string[];
+  thresholdValue: string;
+  thresholdMode: PolicyThresholdMode;
+}
+
+let _nextPolicyBranchId = 0;
+function makePolicyBranchId(): string {
+  return `pb${++_nextPolicyBranchId}_${Math.random().toString(36).slice(2, 6)}`;
+}
+
+function makeEmptyPolicyBranch(): PolicyBranch {
+  return {
+    id: makePolicyBranchId(),
+    folders: [],
+    policies: [],
+    subPolicies: [],
+    thresholdValue: '50',
+    thresholdMode: 'score',
+  };
+}
+
+/** Resolve the effective branch list for a policy node. Falls back to a
+ *  single synthesized branch built from the legacy `configValues` keys so
+ *  pre-existing policy nodes continue to render without migration. Empty
+ *  legacy state → empty list (canvas will seed an empty IF row). */
+function derivePolicyBranches(step: GraphNode): PolicyBranch[] {
+  if (step.policyBranches) return step.policyBranches;
+  const sel = parsePolicySelection(step.configValues);
+  const thr = parsePolicyThreshold(step.configValues);
+  const total = sel.folders.length + sel.policies.length + sel.subPolicies.length;
+  if (total === 0) return [];
+  return [{
+    id: 'pb1',
+    folders: sel.folders,
+    policies: sel.policies,
+    subPolicies: sel.subPolicies,
+    thresholdValue: String(thr.value),
+    thresholdMode: thr.mode,
+  }];
+}
+
 function parsePolicyThreshold(cfg: Record<string, string> | undefined): PolicyThresholdSnapshot {
   const rawVal = cfg?.thresholdValue ?? '';
   const value = parseInt(rawVal, 10);
@@ -202,6 +250,35 @@ function formatPolicySummary(sel: PolicySelectionSnapshot): string {
   const pLabel = `${sel.policies.length} polic${sel.policies.length === 1 ? 'y' : 'ies'}`;
   const sLabel = `${sel.subPolicies.length} sub-polic${sel.subPolicies.length === 1 ? 'y' : 'ies'}`;
   return `${fLabel}, ${pLabel}, ${sLabel} selected.`;
+}
+
+/** Short canvas-card summary for a Policy node — surfaces the actual
+ *  selected policy / folder / sub-policy *labels* so a glance at the
+ *  card tells the user what the node is matching. Falls back to the
+ *  count-based summary when no labels resolve (e.g. legacy ids no
+ *  longer in POLICY_LIBRARY). Up to 2 names render verbatim; any
+ *  remainder collapses into a "+N more" tail. Priority order:
+ *  policies > folders > sub-policies — top-level items read as the
+ *  most informative summary. */
+function formatPolicyShortSummary(sel: PolicySelectionSnapshot): string {
+  const labelById = new Map<string, string>();
+  for (const f of POLICY_LIBRARY) {
+    labelById.set(f.id, f.label);
+    for (const p of f.policies) {
+      labelById.set(p.id, p.label);
+      for (const s of p.subPolicies) labelById.set(s.id, s.label);
+    }
+  }
+  const labels = [
+    ...sel.policies.map(id => labelById.get(id)),
+    ...sel.folders.map(id => labelById.get(id)),
+    ...sel.subPolicies.map(id => labelById.get(id)),
+  ].filter((x): x is string => typeof x === 'string' && x.length > 0);
+
+  if (labels.length === 0) return formatPolicySummary(sel);
+  const head = labels.slice(0, 2);
+  const remainder = labels.length - head.length;
+  return remainder > 0 ? `${head.join(', ')} +${remainder} more` : head.join(', ');
 }
 
 function formatThresholdLabel(thr: PolicyThresholdSnapshot): string {
@@ -230,7 +307,7 @@ function formatDelaySummary(cfg: Record<string, string> | undefined): string | n
 /** Workflow lifecycle status. Mirrors the union used in AutomationsPage's
  *  mock data (active | paused | draft) plus the legacy `inactive` and
  *  `archived` states the builder reads from older drafts. */
-type AutomationStatus = 'draft' | 'active' | 'paused' | 'inactive' | 'archived';
+type AutomationStatus = 'draft' | 'live' | 'archived';
 
 /** A single condition entry inside a condition node (new multi-condition model). */
 interface ConditionEntry {
@@ -246,6 +323,16 @@ interface ConditionEntry {
 interface ConditionGroup {
   id: string;
   conditions: ConditionEntry[];
+}
+
+/** A conditional branch — IF / ELSE IF clause. Each branch holds its own
+ *  AND/OR grouping (a list of ConditionGroup, AND inside / OR between).
+ *  The first branch is rendered as `IF`, subsequent ones as `ELSE IF`, and
+ *  a trailing `ELSE` row is shown after the last branch as the catch-all
+ *  fallback path. */
+interface ConditionBranch {
+  id: string;
+  groups: ConditionGroup[];
 }
 
 interface GraphNode {
@@ -265,9 +352,23 @@ interface GraphNode {
   conditions?: ConditionEntry[];
   /** Legacy flat-list logic operator. */
   conditionLogic?: 'AND' | 'OR';
-  /** New group-based model: within-group = AND, between-groups = OR.
-   *  Example `(A && B) || C` → `[{ conditions: [A, B] }, { conditions: [C] }]`. */
+  /** Group-based model: within-group = AND, between-groups = OR.
+   *  Example `(A && B) || C` → `[{ conditions: [A, B] }, { conditions: [C] }]`.
+   *  Used as the canonical OR/AND structure inside a single branch when the
+   *  newer `conditionBranches` field is absent. */
   conditionGroups?: ConditionGroup[];
+  /** Newest branch-based model: each entry is an IF / ELSE IF clause with
+   *  its own nested AND/OR grouping. Takes precedence over
+   *  `conditionGroups` when present. */
+  conditionBranches?: ConditionBranch[];
+
+  /** Policy node — multi-branch model mirroring `conditionBranches`.
+   *  Each entry is one IF clause holding its own selection + threshold;
+   *  the canvas card renders an additional catch-all ELSE row beneath
+   *  the configured branches. Absent → derived from the legacy single-
+   *  selection fields in `configValues` (selectedFolders / selectedPolicies
+   *  / selectedSubPolicies / thresholdValue / thresholdMode). */
+  policyBranches?: PolicyBranch[];
 
   /** ── Info metadata — surfaced in the right-panel "Info" section ──
    *  `nodeId` is the stable short human-readable ID (e.g. "node_a1b2c3")
@@ -286,6 +387,12 @@ interface GraphEdge {
   id: string;
   from: string;
   to: string;
+  /** Optional source-anchor id on a multi-anchor source node. For condition
+   *  nodes, this is the branch id (`branch.id` or `'else'`) that the edge
+   *  originates from — drives per-branch routing on the canvas so each IF /
+   *  ELSE row's outgoing line starts at its own anchor. Absent on edges from
+   *  single-anchor source nodes (action / ai / delay / trigger / policy). */
+  fromBranchId?: string;
 }
 
 // ─── Edge helpers ────────────────────────────────────────────────────────────
@@ -303,15 +410,16 @@ function appendEdgeIfMissing(
   from: string,
   to: string,
   newId: string,
+  fromBranchId?: string,
 ): GraphEdge[] | null {
-  if (prev.some(e => e.from === from && e.to === to)) return null;
-  return [...prev, { id: newId, from, to }];
+  if (prev.some(e => e.from === from && e.to === to && (e.fromBranchId ?? null) === (fromBranchId ?? null))) return null;
+  return [...prev, { id: newId, from, to, ...(fromBranchId ? { fromBranchId } : {}) }];
 }
 
 // Alias kept so FlowNode component compiles without changes
 type FlowStep = GraphNode;
 
-const MAX_CONDITIONS = 5;
+const MAX_CONDITIONS = 20;
 
 /** Return the group model for a step — falls back to the legacy flat list
  *  when `conditionGroups` is absent. Pure AND → one group; pure OR → one
@@ -330,6 +438,21 @@ function countConditions(groups: ConditionGroup[]): number {
   return groups.reduce((n, g) => n + g.conditions.length, 0);
 }
 
+/** Return the branch model for a step. Falls back to `conditionGroups` —
+ *  treating its full flat list as a single IF branch — when the newer
+ *  `conditionBranches` field is absent. */
+function deriveConditionBranches(step: GraphNode): ConditionBranch[] {
+  if (step.conditionBranches) return step.conditionBranches;
+  const groups = deriveConditionGroups(step);
+  if (groups.length === 0) return [];
+  return [{ id: 'b1', groups }];
+}
+
+/** Total condition count across every branch. */
+function countConditionsInBranches(branches: ConditionBranch[]): number {
+  return branches.reduce((n, b) => n + countConditions(b.groups), 0);
+}
+
 /** Collapse groups to the legacy flat list + logic operator (for migration
  *  back-compat). Mixed shapes that can't be cleanly represented default to
  *  AND and concatenate — a lossy projection, but the canonical source of
@@ -346,6 +469,11 @@ function flattenConditionGroups(groups: ConditionGroup[]): { conditions: Conditi
 let _nextGroupId = 0;
 function makeGroupId(): string {
   return `g${++_nextGroupId}_${Math.random().toString(36).slice(2, 6)}`;
+}
+
+let _nextBranchId = 0;
+function makeBranchId(): string {
+  return `b${++_nextBranchId}_${Math.random().toString(36).slice(2, 6)}`;
 }
 
 function makeEmptyCondition(): ConditionEntry {
@@ -1626,23 +1754,38 @@ function canAddNodeAfter(
 
 const NODE_W        = 200;
 const NODE_H        = 130;   // approximate rendered card height (actual ~132px)
-const H_SPACING     = 300;   // centre-to-centre column pitch
-const V_SPACING     = 210;   // legacy fallback row pitch — only used by callers that
-                             // don't go through computeLayout (e.g. nudge/manual moves)
+const H_SPACING     = 300;   // legacy fallback column pitch — used by manual moves /
+                             // nudge that don't go through computeLayout
+const V_SPACING     = 210;   // centre-to-centre row pitch (sibling slot height in
+                             // horizontal flow)
 const NODE_GAP      = 80;    // consistent visible gap on every parent→child path
-                             // (driven by layout — replaces V_SPACING for tidy-up)
-/** Per-type rendered heights — used by `computeLayout` so every connection
- *  ends up with the same `NODE_GAP` between the parent's bottom edge and
- *  the child's top edge. Values trace each card's tallest rendered form
- *  (configured state with a 2-line snippet) so unconfigured / shorter
- *  variants land slightly above their slot's bottom but never overlap. */
+                             // (driven by layout — applied between parent.right and child.left)
+/** Per-type rendered widths — used by `computeLayout` so every connection
+ *  ends up with the same `NODE_GAP` between the parent's right edge and
+ *  the child's left edge. All cards share NODE_W as their layout footprint;
+ *  pills (trigger/delay) sit centred inside the same slot so connectors stay
+ *  aligned. */
+const NODE_WIDTHS: Record<StepType, number> = {
+  trigger:   NODE_W,
+  policy:    NODE_W,
+  condition: NODE_W,
+  action:    NODE_W,
+  ai:        NODE_W,
+  delay:     NODE_W,
+};
+
+/** Per-type rendered heights — used by `computeLayout` so every node's
+ *  vertical centre sits exactly on its row's `centreY`, regardless of
+ *  whether it's a tall card or a short pill. Anchors live at each card's
+ *  vertical centre, so aligning visual centres keeps single-child connectors
+ *  perfectly horizontal. */
 const NODE_HEIGHTS: Record<StepType, number> = {
-  trigger:   52,   // pill
-  policy:    76,   // rect card with icon
-  condition: 92,   // rect card — multi-line conditions extend a few px more
-  action:    144,  // 60 circle + 2 lines of label beneath
-  ai:        144,  // same chrome as action
-  delay:     44,   // pill
+  trigger:   52,
+  delay:     44,
+  policy:    76,
+  condition: 92,
+  action:    144,
+  ai:        144,
 };
 const CANVAS_TOP    = 16;    // initial top padding
 const LEFT_PANEL_W  = 360;   // left panel width — pan offset so content starts in visible area
@@ -1658,16 +1801,30 @@ function computeLayout(
   nodes: GraphNode[],
   edges: GraphEdge[],
   /**
-   * Optional override for a node's column slot width. When provided for an id,
-   * `getW` uses this value as the node's own-width instead of the default
-   * H_SPACING.
+   * Optional override for a node's row slot height. When provided for an id,
+   * `getH` uses this value as the node's own-height instead of the default
+   * V_SPACING.
    */
-  nodeSlotWidthOverrides?: Map<string, number>,
+  nodeSlotHeightOverrides?: Map<string, number>,
+  /**
+   * Optional override for a node's actual rendered height — used to compute
+   * the y offset so each node's visual centre lands on its row's `centreY`.
+   * Falls back to NODE_HEIGHTS[type] when not provided.
+   */
+  nodeHeightOverrides?: Map<string, number>,
+  /**
+   * Optional per-node anchor-x offsets (left + right) measured from the
+   * wrapper's top-left. When provided, `xOf` is computed from anchor edges
+   * rather than the 200px wrapper edge so adjacent nodes always sit
+   * `NODE_GAP` apart between anchor-right(parent) and anchor-left(child) —
+   * regardless of overhang (condition/policy +30px) or pill auto-widths.
+   */
+  nodeAnchorOffsets?: Map<string, { left: number; right: number }>,
 ): Map<string, { x: number; y: number }> {
   if (nodes.length === 0) return new Map();
 
-  const nodeSlotW = (id: string): number =>
-    nodeSlotWidthOverrides?.get(id) ?? H_SPACING;
+  const nodeSlotH = (id: string): number =>
+    nodeSlotHeightOverrides?.get(id) ?? V_SPACING;
 
   // Build adjacency lists
   const out = new Map<string, string[]>();
@@ -1697,33 +1854,37 @@ function computeLayout(
     (out.get(id) ?? []).forEach(c => queue.push(c));
   }
 
-  // Subtree width (used to centre parents above their children)
-  const subtreeW = new Map<string, number>();
-  const getW = (id: string, seen = new Set<string>()): number => {
-    if (subtreeW.has(id)) return subtreeW.get(id)!;
-    if (seen.has(id)) return nodeSlotW(id); // cycle guard
+  // Subtree height (used to centre parents next to their children along Y)
+  const subtreeH = new Map<string, number>();
+  const getH = (id: string, seen = new Set<string>()): number => {
+    if (subtreeH.has(id)) return subtreeH.get(id)!;
+    if (seen.has(id)) return nodeSlotH(id); // cycle guard
     seen.add(id);
     const children = out.get(id) ?? [];
     const total = children.length === 0
-      ? nodeSlotW(id)
-      : children.reduce((s, c) => s + getW(c, new Set(seen)), 0);
-    const w = Math.max(nodeSlotW(id), total);
-    subtreeW.set(id, w);
-    return w;
+      ? nodeSlotH(id)
+      : children.reduce((s, c) => s + getH(c, new Set(seen)), 0);
+    const h = Math.max(nodeSlotH(id), total);
+    subtreeH.set(id, h);
+    return h;
   };
-  roots.forEach(r => getW(r.id));
+  roots.forEach(r => getH(r.id));
 
-  // Compute y per node using actual per-type heights so every parent→child
-  // connector spans the same visible `NODE_GAP`. Walk in topological depth
-  // order so each node sees its parents resolved. Merge nodes (multiple
-  // parents) align to the *deepest* parent's bottom — same convergence
-  // semantics as the prior depth-based formula, but expressed in pixels.
+  // Compute x per node using per-type widths so every parent→child connector
+  // spans the same visible `NODE_GAP`. Walk in topological depth order so
+  // each node sees its parents resolved. Merge nodes (multiple parents)
+  // align past the *furthest-right* parent's right edge — same convergence
+  // semantics as before, just on the X axis instead of Y.
   const nodeMap = new Map(nodes.map(n => [n.id, n] as const));
-  const heightOf = (id: string): number => {
+  const widthOf = (id: string): number => {
     const n = nodeMap.get(id);
-    return n ? NODE_HEIGHTS[n.type] : NODE_H;
+    return n ? NODE_WIDTHS[n.type] : NODE_W;
   };
-  const yOf = new Map<string, number>();
+  const anchorLeftOf = (id: string): number =>
+    nodeAnchorOffsets?.get(id)?.left ?? 0;
+  const anchorRightOf = (id: string): number =>
+    nodeAnchorOffsets?.get(id)?.right ?? widthOf(id);
+  const xOf = new Map<string, number>();
   const orderedByDepth = nodes
     .map(n => n.id)
     .filter(id => depth.has(id))
@@ -1731,41 +1892,62 @@ function computeLayout(
   for (const id of orderedByDepth) {
     const parents = inc.get(id) ?? [];
     if (parents.length === 0) {
-      yOf.set(id, CANVAS_TOP);
+      xOf.set(id, 0);
     } else {
-      const maxParentBottom = Math.max(
-        ...parents.map(p => (yOf.get(p) ?? CANVAS_TOP) + heightOf(p)),
+      // Place the child so its anchor-left sits exactly NODE_GAP px to the
+      // right of every parent's anchor-right. With multiple parents, snap
+      // to the right-most parent so connectors stay non-crossing.
+      const maxParentAnchorRight = Math.max(
+        ...parents.map(p => (xOf.get(p) ?? 0) + anchorRightOf(p)),
       );
-      yOf.set(id, maxParentBottom + NODE_GAP);
+      xOf.set(id, maxParentAnchorRight + NODE_GAP - anchorLeftOf(id));
     }
   }
 
   // Place nodes using DFS — merge nodes keep their first-assigned position.
-  // X is computed from the subtree-centred recursion below; y comes from
+  // Y is computed from the subtree-centred recursion below; x comes from
   // the per-type accumulator above.
   const positions = new Map<string, { x: number; y: number }>();
   const placed    = new Set<string>();
 
-  const place = (id: string, centreX: number) => {
+  const heightOf = (id: string): number => {
+    const override = nodeHeightOverrides?.get(id);
+    if (override != null) return override;
+    const n = nodeMap.get(id);
+    return n ? NODE_HEIGHTS[n.type] : NODE_H;
+  };
+
+  const place = (id: string, centreY: number) => {
     if (placed.has(id)) return;
     placed.add(id);
-    const y = yOf.get(id) ?? CANVAS_TOP;
-    positions.set(id, { x: centreX - NODE_W / 2, y });
+    const x = xOf.get(id) ?? 0;
+    positions.set(id, { x, y: centreY - heightOf(id) / 2 });
     const children = out.get(id) ?? [];
-    const totalW = children.reduce((s, c) => s + (subtreeW.get(c) ?? H_SPACING), 0);
-    let childX = centreX - totalW / 2;
-    for (const c of children) {
-      const w = subtreeW.get(c) ?? H_SPACING;
-      place(c, childX + w / 2);
-      childX += w;
+    if (children.length === 1) {
+      // Single child — keep on the parent's row so the chain reads as one
+      // straight, vertically-centred horizontal line.
+      place(children[0], centreY);
+    } else if (children.length > 1) {
+      // Multiple children — give every sibling the same slot height (= the
+      // tallest child's subtree) so the gaps between adjacent siblings are
+      // identical and the group sits symmetrically around the parent's row.
+      const slotH = Math.max(
+        ...children.map(c => subtreeH.get(c) ?? V_SPACING),
+      );
+      const totalH = slotH * children.length;
+      let childY = centreY - totalH / 2;
+      for (const c of children) {
+        place(c, childY + slotH / 2);
+        childY += slotH;
+      }
     }
   };
 
-  let rootCentreX = 0;
+  let rootCentreY = CANVAS_TOP;
   for (const root of roots) {
-    const w = subtreeW.get(root.id) ?? H_SPACING;
-    place(root.id, rootCentreX + w / 2);
-    rootCentreX += w + H_SPACING;
+    const h = subtreeH.get(root.id) ?? V_SPACING;
+    place(root.id, rootCentreY + h / 2);
+    rootCentreY += h + V_SPACING;
   }
 
   return positions;
@@ -2715,6 +2897,22 @@ function AiSpecialistCards({
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
   const addBtnRef = useRef<HTMLButtonElement>(null);
 
+  // Per-card collapsed state — keyed by a stable card key. Default is
+  // "everything collapsed" so the panel opens with a compact summary;
+  // clicking a card header expands its body. The Triggering record card
+  // uses the literal key 'trigger'; optional cards use their AiAddCardOption.
+  const [collapsedCards, setCollapsedCards] = useState<Set<string>>(
+    () => new Set(['trigger', ...AI_ADD_CARD_OPTIONS]),
+  );
+  const isCardCollapsed = (key: string) => collapsedCards.has(key);
+  const toggleCardCollapsed = (key: string) => {
+    setCollapsedCards(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
+
   const toggleChannel = (ch: string) => {
     const next = channels.includes(ch)
       ? channels.filter(c => c !== ch)
@@ -2756,8 +2954,14 @@ function AiSpecialistCards({
     <div className={styles.aiSpecCards}>
 
       {/* ── Triggering record card — always shown ── */}
-      <div className={styles.aiSpecDataCard}>
-        <div className={styles.aiSpecDataCardHeader}>
+      <div className={styles.aiSpecDataCard} data-collapsed={isCardCollapsed('trigger') ? 'true' : 'false'}>
+        <div
+          className={styles.aiSpecDataCardHeader}
+          onClick={() => toggleCardCollapsed('trigger')}
+          role="button"
+          tabIndex={0}
+          aria-expanded={!isCardCollapsed('trigger')}
+        >
           <div className={styles.aiSpecDataCardHeaderIcon}>
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
               <circle cx="7" cy="4.5" r="2.5" stroke="currentColor" strokeWidth="1.2" />
@@ -2771,7 +2975,10 @@ function AiSpecialistCards({
             <div className={styles.aiSpecDataCardTitle}>Triggering record</div>
             <div className={styles.aiSpecDataCardSubtitle}>{recordNoun} ({fieldCount} fields)</div>
           </div>
-          <div className={styles.aiSpecDataCardActions}>
+          <div className={styles.aiSpecDataCardActions} onClick={e => e.stopPropagation()}>
+            <span className={clsx(styles.aiSpecDataCardChevron, !isCardCollapsed('trigger') && styles.aiSpecDataCardChevronOpen)} aria-hidden>
+              <ChevronDownIcon size={14} />
+            </span>
             <Button variant="ghost" size="xs" iconOnly aria-label="Options">
               <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" aria-hidden>
                 <circle cx="3.5" cy="7" r="1.1" />
@@ -2781,6 +2988,7 @@ function AiSpecialistCards({
             </Button>
           </div>
         </div>
+        {!isCardCollapsed('trigger') && (
         <div className={styles.aiSpecDataCardBody}>
           <div className={styles.aiSpecDataFieldRow}>
             <span className={styles.aiSpecDataFieldLabel}>User</span>
@@ -2806,13 +3014,20 @@ function AiSpecialistCards({
             </div>
           </div>
         </div>
+        )}
       </div>
 
       {/* ── Optional active cards ── */}
       {activeCards.map(cardType => {
         if (cardType === 'Engage') return (
-          <div key="Engage" className={styles.aiSpecDataCard}>
-            <div className={styles.aiSpecDataCardHeader}>
+          <div key="Engage" className={styles.aiSpecDataCard} data-collapsed={isCardCollapsed('Engage') ? 'true' : 'false'}>
+            <div
+              className={styles.aiSpecDataCardHeader}
+              onClick={() => toggleCardCollapsed('Engage')}
+              role="button"
+              tabIndex={0}
+              aria-expanded={!isCardCollapsed('Engage')}
+            >
               <div className={styles.aiSpecDataCardHeaderIcon}>
                 {AI_CARD_ICON['Engage']}
               </div>
@@ -2820,7 +3035,10 @@ function AiSpecialistCards({
                 <div className={styles.aiSpecDataCardTitle}>Engage</div>
                 <div className={styles.aiSpecDataCardSubtitle}>Communication</div>
               </div>
-              <div className={styles.aiSpecDataCardActions}>
+              <div className={styles.aiSpecDataCardActions} onClick={e => e.stopPropagation()}>
+                <span className={clsx(styles.aiSpecDataCardChevron, !isCardCollapsed('Engage') && styles.aiSpecDataCardChevronOpen)} aria-hidden>
+                  <ChevronDownIcon size={14} />
+                </span>
                 <Button variant="ghost" size="xs" iconOnly aria-label="Options">
                   <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" aria-hidden>
                     <circle cx="3.5" cy="7" r="1.1" />
@@ -2833,6 +3051,7 @@ function AiSpecialistCards({
                 </Button>
               </div>
             </div>
+            {!isCardCollapsed('Engage') && (
             <div className={styles.aiSpecDataCardBody}>
               <div className={styles.aiSpecDataFieldRow}>
                 <span className={styles.aiSpecDataFieldLabel}>Message</span>
@@ -2870,13 +3089,20 @@ function AiSpecialistCards({
                 />
               </div>
             </div>
+            )}
           </div>
         );
 
-        // Empty placeholder card for other types
+        // Empty placeholder card for other types — header only, no body.
         return (
-          <div key={cardType} className={styles.aiSpecDataCard}>
-            <div className={styles.aiSpecDataCardHeader}>
+          <div key={cardType} className={styles.aiSpecDataCard} data-collapsed="true">
+            <div
+              className={styles.aiSpecDataCardHeader}
+              onClick={() => toggleCardCollapsed(cardType)}
+              role="button"
+              tabIndex={0}
+              aria-expanded={!isCardCollapsed(cardType)}
+            >
               <div className={styles.aiSpecDataCardHeaderIcon}>
                 {AI_CARD_ICON[cardType]}
               </div>
@@ -2884,7 +3110,10 @@ function AiSpecialistCards({
                 <div className={styles.aiSpecDataCardTitle}>{cardType}</div>
                 <div className={styles.aiSpecDataCardSubtitle}>Not configured</div>
               </div>
-              <div className={styles.aiSpecDataCardActions}>
+              <div className={styles.aiSpecDataCardActions} onClick={e => e.stopPropagation()}>
+                <span className={clsx(styles.aiSpecDataCardChevron, !isCardCollapsed(cardType) && styles.aiSpecDataCardChevronOpen)} aria-hidden>
+                  <ChevronDownIcon size={14} />
+                </span>
                 <Button variant="ghost" size="xs" iconOnly aria-label="Options">
                   <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" aria-hidden>
                     <circle cx="3.5" cy="7" r="1.1" />
@@ -2932,6 +3161,89 @@ function AiSpecialistCards({
         document.body,
       )}
 
+    </div>
+  );
+}
+
+/** Timeout config card — rendered inside the AI Specialist's
+ *  Configuration section, separate from the "Agent has access to"
+ *  cluster. Single duration setting drives the "nudge once, then end
+ *  the chat" timeout behaviour. */
+function AiSpecialistTimeoutCard({
+  step,
+  onUpdateConfigField,
+}: {
+  step: FlowStep;
+  onUpdateConfigField: (key: string, value: string) => void;
+}) {
+  const vals          = step.configValues ?? {};
+  const timeoutAmount = vals.ai_timeout_amount ?? '5';
+  const timeoutUnit   = vals.ai_timeout_unit   ?? 'Minutes';
+  const [collapsed, setCollapsed] = useState(true);
+  return (
+    <div className={styles.aiSpecCards}>
+      <div className={styles.aiSpecDataCard} data-collapsed={collapsed ? 'true' : 'false'}>
+        <div
+          className={styles.aiSpecDataCardHeader}
+          onClick={() => setCollapsed(c => !c)}
+          role="button"
+          tabIndex={0}
+          aria-expanded={!collapsed}
+        >
+          <div className={styles.aiSpecDataCardHeaderIcon}>
+            <ClockIcon size={14} />
+          </div>
+          <div className={styles.aiSpecDataCardHeaderText}>
+            <div className={styles.aiSpecDataCardTitle}>Timeout</div>
+            <div className={styles.aiSpecDataCardSubtitle}>
+              Nudges once, then ends the chat after {timeoutAmount} {String(timeoutUnit).toLowerCase()}
+            </div>
+          </div>
+          <div className={styles.aiSpecDataCardActions} onClick={e => e.stopPropagation()}>
+            <span className={clsx(styles.aiSpecDataCardChevron, !collapsed && styles.aiSpecDataCardChevronOpen)} aria-hidden>
+              <ChevronDownIcon size={14} />
+            </span>
+            <Button variant="ghost" size="xs" iconOnly aria-label="Options">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" aria-hidden>
+                <circle cx="3.5" cy="7" r="1.1" />
+                <circle cx="7"   cy="7" r="1.1" />
+                <circle cx="10.5" cy="7" r="1.1" />
+              </svg>
+            </Button>
+          </div>
+        </div>
+        {!collapsed && (
+          <div className={styles.aiSpecDataCardBody}>
+            <div className={styles.aiSpecDataFieldRow}>
+              <span className={styles.aiSpecDataFieldLabel}>End after</span>
+              <div className={styles.conditionWithinNext}>
+                <NumberField
+                  size="sm"
+                  value={timeoutAmount}
+                  onChange={e => onUpdateConfigField('ai_timeout_amount', e.target.value)}
+                  min={1}
+                  aria-label="Timeout amount"
+                  className={styles.conditionWithinNextNum}
+                />
+                <SelectField
+                  size="sm"
+                  options={[
+                    { value: 'Minutes', label: 'Minutes' },
+                    { value: 'Hours',   label: 'Hours'   },
+                  ]}
+                  value={timeoutUnit}
+                  onChange={v => onUpdateConfigField('ai_timeout_unit', v)}
+                  className={styles.conditionWithinNextUnit}
+                />
+              </div>
+            </div>
+            <p className={styles.aiSpecTimeoutHint}>
+              If the user doesn't respond, the specialist sends one nudge
+              and then ends the conversation when the timer expires.
+            </p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -3064,7 +3376,10 @@ interface AiSpecialistTestProps {
 function AiSpecialistTest({ specialistName, specialistRole, specialistVoice, personaId, triggerLabel }: AiSpecialistTestProps) {
   const record = getTriggerRecordType(triggerLabel);
 
-  const [selectedRecord, setSelectedRecord] = useState<string>('');
+  // Default to the first sample record so the user can hit "Start Test"
+  // immediately without having to make a selection. They can still pick
+  // a different record from the dropdown before starting.
+  const [selectedRecord, setSelectedRecord] = useState<string>(() => record.samples[0] ?? '');
   const [started, setStarted] = useState<boolean>(false);
   const [messages, setMessages] = useState<TestChatMessage[]>([]);
   const [inputText, setInputText] = useState<string>('');
@@ -3530,10 +3845,16 @@ interface NodePopoverProps {
   onUpdateConditions?: (conditions: ConditionEntry[], logic: 'AND' | 'OR') => void;
   /** Group-based condition updater — replaces the node's `conditionGroups`. */
   onUpdateConditionGroups?: (groups: ConditionGroup[]) => void;
+  /** Branch-based condition updater — replaces the node's `conditionBranches`. */
+  onUpdateConditionBranches?: (branches: ConditionBranch[]) => void;
+  /** Branch-based policy updater — replaces the node's `policyBranches`. */
+  onUpdatePolicyBranches?: (branches: PolicyBranch[]) => void;
   /** Forwarded to the bottom AI input; submits a prompt into the shared thread. */
   onNodeAiSubmit?: (message: string, nodeType: StepType) => void;
   /** The selected label of the workflow's trigger step, used by the AI Specialist Test tab. */
   triggerLabel?: string;
+  /** Dropdown menu groups for the header "···" actions (duplicate, delete, etc.). */
+  dotsMenuGroups?: DropdownMenuGroup[];
 }
 
 // ─── ConditionGroupsEditor ───────────────────────────────────────────────────
@@ -3681,20 +4002,14 @@ function ConditionRow({ entry, showRemove, onRemove, onPatch, index }: Condition
 
 interface ConditionGroupsEditorProps {
   step: FlowStep;
-  onUpdateConditionGroups?: (groups: ConditionGroup[]) => void;
+  onUpdateConditionBranches?: (branches: ConditionBranch[]) => void;
 }
 
-function ConditionGroupsEditor({ step, onUpdateConditionGroups }: ConditionGroupsEditorProps) {
-  const groups = useMemo(() => deriveConditionGroups(step), [step]);
-  const total = countConditions(groups);
-  // Local-only "Add condition" prompt state (AND vs OR). Non-null = showing
-  // the inline picker; null = idle. Only relevant when there's already at
-  // least one condition on the node.
-  const [addPromptOpen, setAddPromptOpen] = useState(false);
+function ConditionGroupsEditor({ step, onUpdateConditionBranches }: ConditionGroupsEditorProps) {
+  const branches = useMemo(() => deriveConditionBranches(step), [step]);
+  const total = countConditionsInBranches(branches);
 
   // Per-group collapsed state — keyed by group.id. Set membership = collapsed.
-  // Defaults to expanded so a freshly-added group still shows its rows; the
-  // user collapses by clicking the group header.
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const toggleCollapsed = (id: string) => {
     setCollapsedGroups(prev => {
@@ -3704,171 +4019,456 @@ function ConditionGroupsEditor({ step, onUpdateConditionGroups }: ConditionGroup
     });
   };
 
-  const commit = (next: ConditionGroup[]) => onUpdateConditionGroups?.(next);
-
-  const patchCondition = (gIdx: number, cIdx: number, patch: Partial<ConditionEntry>) => {
-    commit(groups.map((g, gi) =>
-      gi === gIdx
-        ? { ...g, conditions: g.conditions.map((c, ci) => ci === cIdx ? { ...c, ...patch } : c) }
-        : g
-    ));
+  // Per-branch collapsed state — keyed by branch.id. When collapsed, the
+  // entire AND/OR body of an IF / ELSE IF branch is hidden, leaving just
+  // the keyword + chevron + remove (for ELSE IF) row visible.
+  const [collapsedBranches, setCollapsedBranches] = useState<Set<string>>(new Set());
+  const toggleBranchCollapsed = (id: string) => {
+    setCollapsedBranches(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
   };
 
-  const removeCondition = (gIdx: number, cIdx: number) => {
-    const next = groups
-      .map((g, gi) => gi === gIdx
-        ? { ...g, conditions: g.conditions.filter((_, ci) => ci !== cIdx) }
-        : g)
-      // Drop any group left with zero conditions.
-      .filter(g => g.conditions.length > 0);
+  const commit = (next: ConditionBranch[]) => onUpdateConditionBranches?.(next);
+
+  /** Patch one branch by index, leaving the rest intact. */
+  const patchBranch = (bIdx: number, mutate: (b: ConditionBranch) => ConditionBranch) =>
+    commit(branches.map((b, i) => i === bIdx ? mutate(b) : b));
+
+  const patchCondition = (bIdx: number, gIdx: number, cIdx: number, patch: Partial<ConditionEntry>) => {
+    patchBranch(bIdx, b => ({
+      ...b,
+      groups: b.groups.map((g, gi) => gi === gIdx
+        ? { ...g, conditions: g.conditions.map((c, ci) => ci === cIdx ? { ...c, ...patch } : c) }
+        : g),
+    }));
+  };
+
+  const removeCondition = (bIdx: number, gIdx: number, cIdx: number) => {
+    const next = branches
+      .map((b, bi) => bi === bIdx
+        ? {
+            ...b,
+            groups: b.groups
+              .map((g, gi) => gi === gIdx
+                ? { ...g, conditions: g.conditions.filter((_, ci) => ci !== cIdx) }
+                : g)
+              // Drop any group left with zero conditions.
+              .filter(g => g.conditions.length > 0),
+          }
+        : b)
+      // Drop any branch left with zero groups.
+      .filter(b => b.groups.length > 0);
     commit(next);
   };
 
-  /** Add an empty condition to the last group (AND path). */
-  const addToLastGroup = () => {
+  /** Append an empty AND condition to a specific group inside a branch. */
+  const addAndToGroup = (bIdx: number, gIdx: number) => {
     if (total >= MAX_CONDITIONS) return;
-    if (groups.length === 0) {
-      commit([{ id: makeGroupId(), conditions: [makeEmptyCondition()] }]);
-      return;
-    }
-    const last = groups[groups.length - 1];
+    patchBranch(bIdx, b => ({
+      ...b,
+      groups: b.groups.map((g, gi) => gi === gIdx
+        ? { ...g, conditions: [...g.conditions, makeEmptyCondition()] }
+        : g),
+    }));
+  };
+
+  /** Append a new OR group (single-condition) to a branch. */
+  const addOrGroupToBranch = (bIdx: number) => {
+    if (total >= MAX_CONDITIONS) return;
+    patchBranch(bIdx, b => ({
+      ...b,
+      groups: [...b.groups, { id: makeGroupId(), conditions: [makeEmptyCondition()] }],
+    }));
+  };
+
+  /** Append a new ELSE IF branch (always opens with one empty condition). */
+  const addElseIfBranch = () => {
+    if (total >= MAX_CONDITIONS) return;
     commit([
-      ...groups.slice(0, -1),
-      { ...last, conditions: [...last.conditions, makeEmptyCondition()] },
+      ...branches,
+      { id: makeBranchId(), groups: [{ id: makeGroupId(), conditions: [makeEmptyCondition()] }] },
     ]);
   };
 
-  /** Add an empty condition as a brand-new group (OR path). */
-  const addAsNewGroup = () => {
-    if (total >= MAX_CONDITIONS) return;
-    commit([...groups, { id: makeGroupId(), conditions: [makeEmptyCondition()] }]);
+  /** Drop a branch entirely. Every IF branch is removable. */
+  const removeBranch = (bIdx: number) => {
+    commit(branches.filter((_, i) => i !== bIdx));
   };
 
-  /** First-condition add — no prompt, always just creates the first group. */
-  const addFirst = () => addToLastGroup();
+  /** Seed the very first IF branch when the node has no conditions yet. */
+  const addFirstBranch = () => {
+    if (total >= MAX_CONDITIONS) return;
+    commit([
+      { id: makeBranchId(), groups: [{ id: makeGroupId(), conditions: [makeEmptyCondition()] }] },
+    ]);
+  };
 
   return (
     <>
       <div className={styles.popoverDivider} />
       <div className={styles.popoverSection}>
         <p className={styles.popoverSectionLabel}>Conditions</p>
-        {groups.length === 0 && (
+        {branches.length === 0 && (
           <p className={styles.popoverConfigPlaceholder}>
             No conditions yet. Add one to check a field.
           </p>
         )}
 
-        {groups.map((group, gIdx) => {
-          const isCollapsed = collapsedGroups.has(group.id);
-          const conditionCount = group.conditions.length;
+        {branches.map((branch, bIdx) => {
+          const branchLabel = 'IF';
           return (
-          <Fragment key={group.id}>
-            <div className={styles.conditionGroup} data-collapsed={isCollapsed ? 'true' : 'false'}>
-              {/* Group header — chevron toggles collapse, AND badge +
-                  "{n} conditions" summarise the group when collapsed,
-                  and surface the same metadata when expanded so users
-                  can scan the structure either way. */}
+          <Fragment key={branch.id}>
+            {/* IF branch label — outer layer above the AND/OR grouping
+                that lives inside this branch. Click the keyword row to
+                collapse the branch body; every IF branch is removable
+                via the X button on the right edge. */}
+            <div className={styles.conditionBranchLabel}>
               <button
                 type="button"
-                className={styles.conditionGroupHeader}
-                onClick={() => toggleCollapsed(group.id)}
-                aria-expanded={!isCollapsed}
-                aria-label={isCollapsed ? 'Expand group' : 'Collapse group'}
+                className={styles.conditionBranchToggleBtn}
+                onClick={() => toggleBranchCollapsed(branch.id)}
+                aria-expanded={!collapsedBranches.has(branch.id)}
+                aria-label={collapsedBranches.has(branch.id) ? `Expand ${branchLabel} branch` : `Collapse ${branchLabel} branch`}
               >
-                <span className={clsx(styles.conditionGroupChevron, !isCollapsed && styles.conditionGroupChevronOpen)} aria-hidden>
+                <span className={clsx(styles.conditionBranchChevron, !collapsedBranches.has(branch.id) && styles.conditionBranchChevronOpen)} aria-hidden>
                   <ChevronDownIcon size={12} />
                 </span>
-                <span className={styles.conditionGroupBadge}>AND</span>
-                <span className={styles.conditionGroupCount}>
-                  {conditionCount} {conditionCount === 1 ? 'condition' : 'conditions'}
-                </span>
+                <span className={styles.conditionBranchKeyword}>{branchLabel}</span>
               </button>
-              {!isCollapsed && (
-                <>
-                  <div className={styles.conditionGroupRows}>
-                    {group.conditions.map((c, cIdx) => (
-                      <ConditionRow
-                        key={cIdx}
-                        entry={c}
-                        index={cIdx}
-                        showRemove={total > 1}
-                        onRemove={() => removeCondition(gIdx, cIdx)}
-                        onPatch={(patch) => patchCondition(gIdx, cIdx, patch)}
-                      />
-                    ))}
+              <button
+                type="button"
+                className={styles.conditionBranchRemoveBtn}
+                onClick={() => removeBranch(bIdx)}
+                aria-label={`Remove ${branchLabel} branch`}
+              >
+                <XIcon size={12} />
+              </button>
+            </div>
+            {!collapsedBranches.has(branch.id) && (
+            <div className={styles.conditionBranchBody}>
+              {branch.groups.map((group, gIdx) => {
+                const isCollapsed = collapsedGroups.has(group.id);
+                const conditionCount = group.conditions.length;
+                return (
+                <Fragment key={group.id}>
+                  <div className={styles.conditionGroup} data-collapsed={isCollapsed ? 'true' : 'false'}>
+                    <button
+                      type="button"
+                      className={styles.conditionGroupHeader}
+                      onClick={() => toggleCollapsed(group.id)}
+                      aria-expanded={!isCollapsed}
+                      aria-label={isCollapsed ? 'Expand group' : 'Collapse group'}
+                    >
+                      <span className={clsx(styles.conditionGroupChevron, !isCollapsed && styles.conditionGroupChevronOpen)} aria-hidden>
+                        <ChevronDownIcon size={12} />
+                      </span>
+                      <span className={styles.conditionGroupBadge}>AND</span>
+                      <span className={styles.conditionGroupCount}>
+                        {conditionCount} {conditionCount === 1 ? 'condition' : 'conditions'}
+                      </span>
+                    </button>
+                    {!isCollapsed && (
+                      <>
+                        <div className={styles.conditionGroupRows}>
+                          {group.conditions.map((c, cIdx) => (
+                            <ConditionRow
+                              key={cIdx}
+                              entry={c}
+                              index={cIdx}
+                              showRemove={total > 1}
+                              onRemove={() => removeCondition(bIdx, gIdx, cIdx)}
+                              onPatch={(patch) => patchCondition(bIdx, gIdx, cIdx, patch)}
+                            />
+                          ))}
+                        </div>
+                        {/* Per-group AND add — appends another condition to
+                            the same group, AND-ed with the existing rows. */}
+                        <button
+                          type="button"
+                          className={styles.addConditionBtn}
+                          onClick={() => addAndToGroup(bIdx, gIdx)}
+                        >
+                          <PlusIcon size={10} />
+                          Add condition
+                        </button>
+                      </>
+                    )}
                   </div>
-                  {/* Per-group add (AND — same group). Always rendered so
-                      users can keep growing a group without hunting for
-                      a CTA. The global cross-group cap still gates the
-                      bottom "+ Add condition" prompt below. */}
-                  <button
-                    type="button"
-                    className={styles.addConditionBtn}
-                    onClick={() => {
-                      commit(groups.map((g, gi) => gi === gIdx
-                        ? { ...g, conditions: [...g.conditions, makeEmptyCondition()] }
-                        : g));
-                    }}
-                  >
-                    <PlusIcon size={10} />
-                    Add condition
-                  </button>
-                </>
+                  {gIdx < branch.groups.length - 1 && (
+                    <div className={styles.conditionOrDivider} aria-hidden>
+                      <span className={styles.conditionOrBadge}>OR</span>
+                    </div>
+                  )}
+                </Fragment>
+                );
+              })}
+              {/* Per-branch OR add — appends a new AND-group inside this
+                  branch (OR-ed with the existing groups). */}
+              {total < MAX_CONDITIONS && (
+                <button
+                  type="button"
+                  className={styles.addConditionBtn}
+                  onClick={() => addOrGroupToBranch(bIdx)}
+                >
+                  <PlusIcon size={10} />
+                  Add OR group
+                </button>
               )}
             </div>
-            {gIdx < groups.length - 1 && (
-              <div className={styles.conditionOrDivider} aria-hidden>
-                <span className={styles.conditionOrBadge}>OR</span>
-              </div>
             )}
           </Fragment>
           );
         })}
 
-        {/* Global add. With 0 conditions: add the first. Otherwise prompt
-            the user to choose AND (same group) or OR (new group). */}
-        {total < MAX_CONDITIONS && !addPromptOpen && (
+        {/* "+ Add IF" — placed between the last branch and the ELSE row
+            so the affordance reads as "insert another IF clause before
+            the catch-all". */}
+        {branches.length > 0 && total < MAX_CONDITIONS && (
+          <button
+            type="button"
+            className={clsx(styles.addConditionBtn, styles.addElseIfBtn)}
+            onClick={addElseIfBranch}
+          >
+            <PlusIcon size={10} />
+            Add IF
+          </button>
+        )}
+
+        {/* ELSE branch — catch-all label after the last IF/ELSE IF. */}
+        {branches.length > 0 && (
+          <div className={styles.conditionBranchLabel} aria-hidden>
+            <span className={styles.conditionBranchKeyword}>ELSE</span>
+            <span className={styles.conditionBranchHint}>matches everything else</span>
+          </div>
+        )}
+
+        {/* Empty-state: seed the first IF branch. */}
+        {branches.length === 0 && total < MAX_CONDITIONS && (
           <button
             type="button"
             className={styles.addConditionBtn}
-            onClick={() => (total === 0 ? addFirst() : setAddPromptOpen(true))}
+            onClick={addFirstBranch}
           >
             <PlusIcon size={10} />
             Add condition
           </button>
-        )}
-        {addPromptOpen && (
-          <div className={styles.conditionAddPrompt} role="group" aria-label="Add condition — choose logic">
-            <button
-              type="button"
-              className={styles.conditionAddPromptOption}
-              onClick={() => { addToLastGroup(); setAddPromptOpen(false); }}
-            >
-              AND — add to same group
-            </button>
-            <button
-              type="button"
-              className={styles.conditionAddPromptOption}
-              onClick={() => { addAsNewGroup(); setAddPromptOpen(false); }}
-            >
-              OR — add as new group
-            </button>
-            <button
-              type="button"
-              className={styles.conditionAddPromptCancel}
-              onClick={() => setAddPromptOpen(false)}
-              aria-label="Cancel"
-            >
-              <XIcon size={12} />
-            </button>
-          </div>
         )}
       </div>
     </>
   );
 }
 
-function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpdateConfigField, onClose, onSave, onUpdateConditions, onUpdateConditionGroups, onNodeAiSubmit, triggerLabel }: NodePopoverProps) {
+/* ─── PolicyBranchesEditor ────────────────────────────────────────────────────
+   Mirror of `ConditionGroupsEditor` for policy nodes — each IF branch holds
+   its own policy selection + matching threshold, and the editor surfaces
+   add / remove affordances + a catch-all ELSE label, identical to the
+   condition right-panel chrome. */
+
+interface PolicyBranchesEditorProps {
+  step: GraphNode;
+  onUpdatePolicyBranches?: (branches: PolicyBranch[]) => void;
+  policyModalOpen: boolean;
+  setPolicyModalOpen: (v: boolean) => void;
+}
+
+function PolicyBranchesEditor({
+  step,
+  onUpdatePolicyBranches,
+  policyModalOpen,
+  setPolicyModalOpen,
+}: PolicyBranchesEditorProps) {
+  const branches = useMemo(() => {
+    const derived = derivePolicyBranches(step);
+    return derived.length > 0 ? derived : [makeEmptyPolicyBranch()];
+  }, [step]);
+
+  const [editingBranchIdx, setEditingBranchIdx] = useState<number | null>(null);
+
+  // Per-branch collapsed state — keyed by branch.id, mirroring
+  // ConditionGroupsEditor's `collapsedBranches` so each IF clause can be
+  // collapsed via the chevron toggle in the keyword row.
+  const [collapsedBranches, setCollapsedBranches] = useState<Set<string>>(new Set());
+  const toggleBranchCollapsed = (id: string) => {
+    setCollapsedBranches(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const commit = (next: PolicyBranch[]) => onUpdatePolicyBranches?.(next);
+
+  const patchBranch = (bIdx: number, patch: Partial<PolicyBranch>) =>
+    commit(branches.map((b, i) => i === bIdx ? { ...b, ...patch } : b));
+
+  const removeBranch = (bIdx: number) => {
+    if (branches.length <= 1) {
+      commit([makeEmptyPolicyBranch()]);
+      return;
+    }
+    commit(branches.filter((_, i) => i !== bIdx));
+  };
+
+  const addBranch = () => {
+    commit([...branches, makeEmptyPolicyBranch()]);
+  };
+
+  const openConfigure = (bIdx: number) => {
+    setEditingBranchIdx(bIdx);
+    setPolicyModalOpen(true);
+  };
+
+  const editingBranch = editingBranchIdx !== null ? branches[editingBranchIdx] : null;
+
+  return (
+    <>
+      <div className={styles.popoverDivider} />
+      <div className={styles.popoverSection}>
+        <p className={styles.popoverSectionLabel}>Policies</p>
+        {branches.map((branch, bIdx) => {
+          const sel: PolicySelectionSnapshot = {
+            folders: branch.folders,
+            policies: branch.policies,
+            subPolicies: branch.subPolicies,
+          };
+          const anySelected = sel.folders.length + sel.policies.length + sel.subPolicies.length > 0;
+          const summaryText = anySelected
+            ? `All selected — ${formatPolicySummary(sel)}`
+            : 'All policies selected';
+          const thr: PolicyThresholdSnapshot = {
+            value: parseInt(branch.thresholdValue, 10) || 0,
+            mode: branch.thresholdMode,
+          };
+          const isCollapsed = collapsedBranches.has(branch.id);
+          return (
+            <Fragment key={branch.id}>
+              {/* IF branch header — chevron toggle + IF keyword + remove
+                  X. Mirrors `ConditionGroupsEditor`'s branch label so the
+                  policy panel reads with the same chrome. */}
+              <div className={styles.conditionBranchLabel}>
+                <button
+                  type="button"
+                  className={styles.conditionBranchToggleBtn}
+                  onClick={() => toggleBranchCollapsed(branch.id)}
+                  aria-expanded={!isCollapsed}
+                  aria-label={isCollapsed ? 'Expand IF branch' : 'Collapse IF branch'}
+                >
+                  <span className={clsx(styles.conditionBranchChevron, !isCollapsed && styles.conditionBranchChevronOpen)} aria-hidden>
+                    <ChevronDownIcon size={12} />
+                  </span>
+                  <span className={styles.conditionBranchKeyword}>IF</span>
+                </button>
+                <button
+                  type="button"
+                  className={styles.conditionBranchRemoveBtn}
+                  onClick={() => removeBranch(bIdx)}
+                  aria-label="Remove IF branch"
+                >
+                  <XIcon size={12} />
+                </button>
+              </div>
+              {!isCollapsed && (
+                <div className={styles.conditionBranchBody}>
+                  <p className={styles.popoverSectionLabel}>SELECTED POLICIES</p>
+                  <div className={styles.policySummaryRow}>
+                    <span
+                      className={clsx(
+                        styles.policySummaryText,
+                        !anySelected && styles.policySummaryTextEmpty,
+                      )}
+                    >
+                      {summaryText}
+                    </span>
+                    <Button variant="secondary" size="sm" onClick={() => openConfigure(bIdx)}>
+                      Configure
+                    </Button>
+                  </div>
+                  <p className={clsx(styles.popoverSectionLabel, styles.popoverSectionLabelInline)}>MATCHING THRESHOLD</p>
+                  <div className={styles.policyThresholdRow}>
+                    <label className={styles.policyThresholdLabel} htmlFor={`policy-threshold-${step.id}-${branch.id}`}>
+                      Run when above threshold
+                    </label>
+                    <div className={styles.policyThresholdInputWrap}>
+                      <NumberField
+                        id={`policy-threshold-${step.id}-${branch.id}`}
+                        size="md"
+                        min={0}
+                        placeholder="0"
+                        value={String(thr.value)}
+                        onChange={e => {
+                          const cleaned = e.target.value.replace(/[^0-9]/g, '');
+                          patchBranch(bIdx, { thresholdValue: cleaned });
+                        }}
+                        aria-label="Matching threshold"
+                        className={styles.policyThresholdInput}
+                      />
+                      <span className={styles.policyThresholdUnit} aria-hidden>
+                        {thr.mode === 'percentage' ? '%' : '/100'}
+                      </span>
+                    </div>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => {
+                        const nextMode: PolicyThresholdMode =
+                          thr.mode === 'percentage' ? 'score' : 'percentage';
+                        patchBranch(bIdx, { thresholdMode: nextMode });
+                      }}
+                    >
+                      {thr.mode === 'percentage' ? 'Use score' : 'Use %'}
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </Fragment>
+          );
+        })}
+
+        {/* "+ Add IF" — placed between the last branch and the ELSE row. */}
+        <button
+          type="button"
+          className={clsx(styles.addConditionBtn, styles.addElseIfBtn)}
+          onClick={addBranch}
+        >
+          <PlusIcon size={10} />
+          Add IF
+        </button>
+
+        {/* ELSE catch-all label — matches the condition right panel. */}
+        <div className={styles.conditionBranchLabel} aria-hidden>
+          <span className={styles.conditionBranchKeyword}>ELSE</span>
+          <span className={styles.conditionBranchHint}>matches everything else</span>
+        </div>
+      </div>
+
+      <PolicyMatchingModal
+        open={policyModalOpen}
+        initialSelection={editingBranch ? {
+          folders: editingBranch.folders,
+          policies: editingBranch.policies,
+          subPolicies: editingBranch.subPolicies,
+        } : { folders: [], policies: [], subPolicies: [] }}
+        onCancel={() => { setPolicyModalOpen(false); setEditingBranchIdx(null); }}
+        onSave={next => {
+          if (editingBranchIdx !== null) {
+            patchBranch(editingBranchIdx, {
+              folders: next.folders,
+              policies: next.policies,
+              subPolicies: next.subPolicies,
+            });
+          }
+          setPolicyModalOpen(false);
+          setEditingBranchIdx(null);
+        }}
+      />
+    </>
+  );
+}
+
+function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpdateConfigField, onClose, onSave, onUpdateConditions, onUpdateConditionGroups, onUpdateConditionBranches, onUpdatePolicyBranches, onNodeAiSubmit, triggerLabel, dotsMenuGroups }: NodePopoverProps) {
   const cfg = STEP_CONFIG[step.type];
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
@@ -4028,6 +4628,23 @@ function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpda
           >
             <InfoCircleIcon size={16} />
           </Button>
+          {dotsMenuGroups && dotsMenuGroups.length > 0 && (
+            <DropdownMenu
+              trigger={
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  iconOnly
+                  aria-label="Node actions"
+                >
+                  <DotsHorizontalIcon />
+                </Button>
+              }
+              groups={dotsMenuGroups}
+              placement="bottom-end"
+              width="max-content"
+            />
+          )}
           <Button
             variant="ghost"
             size="xs"
@@ -4222,86 +4839,14 @@ function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpda
       {/* ══════════════════════════════════════════════════════════════════
           POLICY NODE — Selected policies + Matching threshold
           ══════════════════════════════════════════════════════════════════ */}
-      {step.type === 'policy' && (() => {
-        const selection = parsePolicySelection(step.configValues);
-        const threshold = parsePolicyThreshold(step.configValues);
-        const anySelected =
-          selection.folders.length + selection.policies.length + selection.subPolicies.length > 0;
-        const summaryText = anySelected
-          ? `All selected — ${formatPolicySummary(selection)}`
-          : 'No policies selected';
-        return (
-          <>
-            <div className={styles.popoverSection}>
-              <p className={styles.popoverSectionLabel}>SELECTED POLICIES</p>
-              <div className={styles.policySummaryRow}>
-                <span
-                  className={clsx(
-                    styles.policySummaryText,
-                    !anySelected && styles.policySummaryTextEmpty,
-                  )}
-                >
-                  {summaryText}
-                </span>
-                <Button variant="secondary" size="sm" onClick={() => setPolicyModalOpen(true)}>
-                  Configure
-                </Button>
-              </div>
-            </div>
-
-            <div className={styles.popoverDivider} />
-            <div className={styles.popoverSection}>
-              <p className={styles.popoverSectionLabel}>MATCHING THRESHOLD</p>
-              <div className={styles.policyThresholdRow}>
-                <label className={styles.policyThresholdLabel} htmlFor={`policy-threshold-${step.id}`}>
-                  Run when above threshold
-                </label>
-                <div className={styles.policyThresholdInputWrap}>
-                  <NumberField
-                    id={`policy-threshold-${step.id}`}
-                    size="md"
-                    min={0}
-                    placeholder="0"
-                    value={String(threshold.value)}
-                    onChange={e => {
-                      const cleaned = e.target.value.replace(/[^0-9]/g, '');
-                      onUpdateConfigField('thresholdValue', cleaned);
-                    }}
-                    aria-label="Matching threshold"
-                    className={styles.policyThresholdInput}
-                  />
-                  <span className={styles.policyThresholdUnit} aria-hidden>
-                    {threshold.mode === 'percentage' ? '%' : '/100'}
-                  </span>
-                </div>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => {
-                    const next: PolicyThresholdMode =
-                      threshold.mode === 'percentage' ? 'score' : 'percentage';
-                    onUpdateConfigField('thresholdMode', next);
-                  }}
-                >
-                  {threshold.mode === 'percentage' ? 'Use score' : 'Use %'}
-                </Button>
-              </div>
-            </div>
-
-            <PolicyMatchingModal
-              open={policyModalOpen}
-              initialSelection={selection}
-              onCancel={() => setPolicyModalOpen(false)}
-              onSave={next => {
-                onUpdateConfigField('selectedFolders',     JSON.stringify(next.folders));
-                onUpdateConfigField('selectedPolicies',    JSON.stringify(next.policies));
-                onUpdateConfigField('selectedSubPolicies', JSON.stringify(next.subPolicies));
-                setPolicyModalOpen(false);
-              }}
-            />
-          </>
-        );
-      })()}
+      {step.type === 'policy' && (
+        <PolicyBranchesEditor
+          step={step}
+          onUpdatePolicyBranches={onUpdatePolicyBranches}
+          policyModalOpen={policyModalOpen}
+          setPolicyModalOpen={setPolicyModalOpen}
+        />
+      )}
 
       {/* ══════════════════════════════════════════════════════════════════
           DELAY NODE — Duration configuration (amount + unit + custom unit)
@@ -4358,7 +4903,7 @@ function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpda
       {step.type === 'condition' && (
         <ConditionGroupsEditor
           step={step}
-          onUpdateConditionGroups={onUpdateConditionGroups}
+          onUpdateConditionBranches={onUpdateConditionBranches}
         />
       )}
 
@@ -4437,7 +4982,11 @@ function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpda
           {!(step.type === 'ai' && step.selectedValue !== 'AI Specialist') && <>
           <div className={styles.popoverDivider} />
           <div className={styles.popoverSection}>
-            <p className={styles.popoverSectionLabel}>Configuration</p>
+            <p className={styles.popoverSectionLabel}>
+              {step.type === 'ai' && step.selectedValue === 'AI Specialist'
+                ? 'Agent has access to'
+                : 'Configuration'}
+            </p>
 
             {/* ── Trigger config fields ─────────────────────────────────── */}
             {step.type === 'trigger' && (() => {
@@ -4446,9 +4995,7 @@ function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpda
               const vals    = step.configValues ?? {};
               return (
                 <>
-                  {fields.length === 0 ? (
-                    <p className={styles.popoverConfigPlaceholder}>No additional configuration for this trigger.</p>
-                  ) : (
+                  {fields.length === 0 ? null : (
                     <div className={styles.popoverFields}>
                       {fields.map(field => {
                     if (field.hideWhenDependsOnIs && field.dependsOn) {
@@ -4634,6 +5181,20 @@ function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpda
                 : <p className={styles.popoverConfigPlaceholder}>No additional configuration for this AI step.</p>
             )}
           </div>
+
+          {/* ── AI specialist Configuration section — separate from the
+              "Agent has access to" group above. Hosts settings that
+              govern the conversation itself rather than the data /
+              channels the agent can use (currently just Timeout). ── */}
+          {step.type === 'ai' && step.selectedValue === 'AI Specialist' && (
+            <>
+              <div className={styles.popoverDivider} />
+              <div className={styles.popoverSection}>
+                <p className={styles.popoverSectionLabel}>Configuration</p>
+                <AiSpecialistTimeoutCard step={step} onUpdateConfigField={onUpdateConfigField} />
+              </div>
+            </>
+          )}
           </>}{/* end conditional Configuration block */}
         </>
       )}
@@ -4711,18 +5272,14 @@ function NodePopoverAiDrawer({ step, onSubmit }: NodePopoverAiDrawerProps) {
 type SaveState = 'idle' | 'saving' | 'saved';
 
 const STATUS_TAG_MAP: Record<AutomationStatus, StatusTagStatus> = {
-  active:   'success',
-  paused:   'neutral',
   draft:    'neutral',
-  inactive: 'warning',
-  archived: 'neutral',
+  live:     'success',
+  archived: 'warning',
 };
 
 const STATUS_LABEL: Record<AutomationStatus, string> = {
-  active:   'Active',
-  paused:   'Paused',
   draft:    'Draft',
-  inactive: 'Inactive',
+  live:     'Live',
   archived: 'Archived',
 };
 
@@ -5811,12 +6368,13 @@ function UserChangeGroup({ entries }: UserChangeGroupProps) {
 
   if (subgroups.length === 0) return null;
 
-  // Total change count drives the outer summary suffix. The verb itself
-  // comes from the most recently-emitted change so the header reads as a
-  // live "what just happened" summary rather than an arbitrary pick.
+  // Total change count drives the outer summary. The verb comes from the
+  // most recently-emitted change so the header reads as a live "what
+  // just happened" summary rather than an arbitrary pick. Reads as
+  // "1 node added" / "4 nodes modified".
   const total = entries.length;
-  const lastType = entries[entries.length - 1]?.nodeChange?.changeType ?? 'Changes';
-  const summaryText = `${lastType} · ${total} ${total === 1 ? 'change' : 'changes'}`;
+  const lastType = entries[entries.length - 1]?.nodeChange?.changeType ?? 'changed';
+  const summaryText = `${total} ${total === 1 ? 'node' : 'nodes'} ${lastType.toLowerCase()}`;
 
   // Side comes from the first entry's payload; all entries in a group share
   // the same side because we only group consecutive same-side mutations.
@@ -6037,18 +6595,25 @@ interface LeftPanelProps {
    *  the far left of the LeftPanel header (before the Teambridge AI
    *  wordmark) instead of in the right-column TopBar. */
   onBack: () => void;
+  /** Current panel width in px — owned by `BuilderPage` so the body grid
+   *  column can track it (drag-resize would otherwise only affect this
+   *  panel's inline width while the surrounding grid cell stayed locked
+   *  at its original 360px). */
+  panelWidth: number;
+  onPanelWidthChange: (w: number) => void;
 }
 
 function LeftPanel({
   onLibNodeDragStart, onLibNodeDragEnd, onLibNodeSelect,
   aiPrompt, onAiPromptChange, aiTyping, entries, onAiSend,
   onCollapse, onBack,
+  panelWidth, onPanelWidthChange,
 }: LeftPanelProps) {
-  // Collapsed is hoisted to BuilderPage — when collapsed, the parent
-  // unmounts this whole panel and surfaces a re-open button in the right
-  // column. So the only state owned here is the in-panel resize width.
-  const [panelWidth, setPanelWidth] = useState(360);
-  const panelWidthRef = useRef(360);
+  // Collapsed is hoisted to BuilderPage — and now so is `panelWidth` so
+  // the parent's body grid can track the live width and the right column
+  // reclaims space as the user drags.
+  const panelWidthRef = useRef(panelWidth);
+  useEffect(() => { panelWidthRef.current = panelWidth; }, [panelWidth]);
   const leftHandleRef = useRef<HTMLDivElement>(null);
   const chatBottomRef = useRef<HTMLDivElement>(null);
   const promptTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -6064,9 +6629,11 @@ function LeftPanel({
     t.style.height = t.scrollHeight + 'px';
   }, [aiPrompt]);
 
-  // Drag-to-resize with click-vs-drag fallback: if the pointer moves less
-  // than a small threshold, treat as a click (collapse the panel via the
-  // parent); otherwise resize.
+  // Drag-to-resize. Width is owned by the parent (so the body grid column
+  // can track the live value); local ref mirrors it during a drag to avoid
+  // re-running the effect on every pixel of movement. No click-to-collapse
+  // fallback — the handle is now a dedicated resize affordance, not a
+  // dual-purpose button.
   useEffect(() => {
     const handle = leftHandleRef.current;
     if (!handle) return;
@@ -6075,26 +6642,22 @@ function LeftPanel({
       e.stopPropagation();
       const startX = e.clientX;
       const startWidth = panelWidthRef.current;
-      let dragged = false;
       const onMove = (ev: MouseEvent) => {
         const dx = ev.clientX - startX;
-        if (!dragged && Math.abs(dx) < 3) return;
-        dragged = true;
-        const w = Math.min(600, Math.max(360, startWidth + dx));
+        const w = Math.min(600, Math.max(280, startWidth + dx));
         panelWidthRef.current = w;
-        setPanelWidth(w);
+        onPanelWidthChange(w);
       };
       const onUp = () => {
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', onUp);
-        if (!dragged) onCollapse();
       };
       document.addEventListener('mousemove', onMove);
       document.addEventListener('mouseup', onUp);
     };
     handle.addEventListener('mousedown', onDown);
     return () => handle.removeEventListener('mousedown', onDown);
-  }, [onCollapse]);
+  }, [onPanelWidthChange]);
 
   // Entries present at mount render without the typing animation; anything
   // added later is treated as a fresh AI response and types in.
@@ -6123,10 +6686,7 @@ function LeftPanel({
   };
 
   return (
-    <aside
-      className={styles.leftPanel}
-      style={{ width: panelWidth }}
-    >
+    <aside className={styles.leftPanel}>
       {/* Header removed — the AI panel collapse button + wordmark have
           been merged into the unified TopBar that spans the top of the
           builder. The panel itself starts directly with the resize
@@ -6408,7 +6968,23 @@ interface FlowNodeProps {
   onUpdateConditions?: (conditions: ConditionEntry[], logic: 'AND' | 'OR') => void;
   /** Group-based condition updater — forwarded to NodePopover. */
   onUpdateConditionGroups?: (groups: ConditionGroup[]) => void;
+  /** Branch-based condition updater — forwarded to NodePopover. */
+  onUpdateConditionBranches?: (branches: ConditionBranch[]) => void;
+  /** Branch-based policy updater — same shape as `onUpdateConditionBranches`
+   *  but for the policy node's `policyBranches` field. */
+  onUpdatePolicyBranches?: (branches: PolicyBranch[]) => void;
   hasOutgoingConnections?: boolean;
+  /** Edge id for the incoming connection (if any) — used by condition
+   *  nodes to mark their per-row LEFT anchor as connected so it can be
+   *  click-disconnected just like the legacy wrapper-level anchor. */
+  incomingEdgeId?: string;
+  /** Map of `branchId → outgoing edge id` for condition source nodes.
+   *  Drives the per-row RIGHT anchor's `data-connected` state so each
+   *  branch handle behaves like the wrapper-level anchor: `+` when the
+   *  branch has no outgoing edge, `−` when one is connected (click to
+   *  disconnect). One edge per branch is enforced upstream in the drop
+   *  handler. */
+  outgoingEdgeByBranch?: Record<string, string>;
   /** Label of the workflow's trigger step — forwarded to NodePopover for the AI Specialist Test tab. */
   triggerLabel?: string;
   /** Forwarded to NodePopover's bottom AI drawer. */
@@ -6439,9 +7015,13 @@ function FlowNode({
   isEditSelected = false,
   onUpdateConditions,
   onUpdateConditionGroups,
+  onUpdateConditionBranches,
+  onUpdatePolicyBranches,
   triggerLabel,
   onNodeAiSubmit,
   onSaveNodePopover,
+  incomingEdgeId,
+  outgoingEdgeByBranch,
 }: FlowNodeProps) {
   const cfg = STEP_CONFIG[step.type];
   const outerRef = useRef<HTMLDivElement>(null);
@@ -6595,6 +7175,16 @@ function FlowNode({
             ? segs.map(s => s.text).join('').trim()
             : step.selectedValue;
         }
+        // Surface the right-panel "Modify Timing" config inline on the
+        // pill (e.g. "1 Min After") once all three timing keys are set.
+        // Absent → no caption rendered. Stored on `step.configValues`
+        // under `modify_timing_amount / _unit / _direction` (see
+        // MODIFY_TIMING_KEYS).
+        const tAmount    = step.configValues?.[MODIFY_TIMING_KEYS.amount]    ?? '';
+        const tUnit      = step.configValues?.[MODIFY_TIMING_KEYS.unit]      ?? '';
+        const tDirection = step.configValues?.[MODIFY_TIMING_KEYS.direction] ?? '';
+        const timingActive = tUnit !== '' && tDirection !== '';
+        const timingText = timingActive ? `${tAmount || '1'} ${tUnit} ${tDirection}` : null;
         return (
           <div
             className={clsx(
@@ -6603,137 +7193,234 @@ function FlowNode({
               pillFocused && styles.triggerPillFocused,
             )}
           >
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
-              <path
-                d="M4 2.75L10.5 7L4 11.25V2.75Z"
-                stroke="currentColor"
-                strokeWidth="1.4"
-                strokeLinejoin="round"
-                strokeLinecap="round"
-              />
-            </svg>
+            <PlayIcon size={14} aria-hidden />
             <span>{triggerText}</span>
+            {timingText && (
+              <span className={styles.triggerPillTiming} aria-label="Modify timing">
+                {timingText}
+              </span>
+            )}
           </div>
         );
       })() : isCondition ? (() => {
-        const groups = deriveConditionGroups(step);
-        const total = countConditions(groups);
+        let branches = deriveConditionBranches(step);
+        // Legacy / synthetic fallback — when a condition has no branches at
+        // all (older persisted state), synthesize a single empty IF branch
+        // so the canvas card always renders the multi-row layout instead
+        // of collapsing to nothing.
+        if (branches.length === 0) {
+          branches = [{ id: 'b-empty', groups: [{ id: 'g-empty', conditions: [makeEmptyCondition()] }] }];
+        }
+        const total = countConditionsInBranches(branches);
         const filled = total > 0;
         const isActive = conditionActive;
 
-        // Top-row summary text — reads from the group model so && / || show
-        // correctly on the canvas card. Parens wrap multi-condition groups
-        // only when there are 2+ groups overall. Single-condition cards
-        // keep the legacy primary/secondary split (label on top, "is X"
-        // beneath); multi-condition cards render the full expression as
-        // typed segments so labels read in primary colour and op / value /
-        // logic-op parts read in the same muted slate-300 tone the
-        // secondary line uses.
-        let primary: string | null = null;
-        let secondary: string | null = null;
-        let primarySegs: ConditionExprSeg[] = [];
-        if (!filled) {
-          secondary = 'Add condition';
-        } else if (total === 1) {
-          const only = groups[0].conditions[0];
-          const def = CONDITION_LIBRARY.find(d => d.id === only.fieldId) ?? null;
-          primary = def?.label ?? 'Condition';
-          const opLabel = OPERATOR_LABELS[only.operator] ?? only.operator;
-          secondary = only.values.length > 0
-            ? `${opLabel} ${only.values.join(', ')}`
-            : opLabel;
-        } else {
-          primarySegs = buildConditionExprSegs(groups);
-        }
-
+        // Always render the multi-row layout — each IF branch as its own
+        // sub-card row with a right-edge anchor, plus the catch-all ELSE
+        // row at the bottom. The outer node-edge anchor is suppressed for
+        // filled conditions (see the `!isCondition || !filled` guard
+        // around the anchor div) so each row's anchor becomes the
+        // canonical outgoing handle for that branch.
         return (
           <div
             className={styles.conditionNodeCard}
             data-active={isActive ? 'true' : 'false'}
-            data-filled={filled ? 'true' : 'false'}
+            data-filled="true"
+            data-branches="true"
           >
-            <div className={styles.conditionNodeTopRow}>
+            {/* Card-level filter icon — single leading badge sits above the
+                row list instead of repeating on every IF/ELSE row, so the
+                node reads as one container with stacked branches rather
+                than independent cards. */}
+            <div className={styles.conditionNodeHeader}>
               <span className={styles.conditionNodeIconBox} aria-label={cfg.label}>
                 <FilterLinesIcon size={14} />
               </span>
-              <span className={styles.conditionNodeTopText}>
-                {primary && (
-                  <span className={styles.conditionNodeTopPrimary}>{primary}</span>
-                )}
-                {primarySegs.length > 0 && (
-                  <span className={styles.conditionNodeTopPrimary}>
-                    {primarySegs.map((s, i) => (
-                      <span
-                        key={i}
-                        className={s.role === 'muted' ? styles.conditionExprMuted : undefined}
-                      >
-                        {s.text}
-                      </span>
-                    ))}
-                  </span>
-                )}
-                {secondary && (
-                  <span className={styles.conditionNodeTopSecondary}>{secondary}</span>
-                )}
-              </span>
-              {/* No trailing spacer — dots menu floats outside the card's
-                  right edge (see .flowNodeOuterCondition .nodeDotsDropdown). */}
+            </div>
+            <div className={styles.conditionBranchRowList}>
+              {branches.map(branch => (
+                <Fragment key={branch.id}>
+                <div className={styles.conditionBranchRow}>
+                  <div className={styles.conditionBranchRowInner}>
+                    <span className={styles.conditionBranchKeyword}>IF</span>
+                    <span className={styles.conditionBranchExpr}>
+                      {branch.groups.map((g, gi) => (
+                        <Fragment key={g.id}>
+                          {g.conditions.map((c, ci) => {
+                            const def = CONDITION_LIBRARY.find(d => d.id === c.fieldId) ?? null;
+                            const opLabel = OPERATOR_LABELS[c.operator] ?? c.operator;
+                            const isLastInGroup = ci === g.conditions.length - 1;
+                            const isLastGroup = gi === branch.groups.length - 1;
+                            const trailingPill = !isLastInGroup
+                              ? 'AND'
+                              : !isLastGroup
+                                ? 'OR'
+                                : null;
+                            return (
+                              <span key={`${g.id}-${ci}`} className={styles.conditionBranchExprLine}>
+                                <span className={clsx(
+                                  styles.conditionBranchExprLabel,
+                                  !def && styles.conditionBranchExprPlaceholder,
+                                )}>
+                                  {def?.label ?? 'Add condition'}
+                                </span>
+                                {/* Suppress operator + values when the row has
+                                    no field yet — the placeholder label stands
+                                    on its own without a trailing "is". */}
+                                {def && opLabel && (
+                                  <span className={styles.conditionExprMuted}> {opLabel}</span>
+                                )}
+                                {def && c.values.length > 0 && (
+                                  <span className={styles.conditionBranchExprValue}>
+                                    {' '}
+                                    {c.values.join(', ')}
+                                  </span>
+                                )}
+                                {trailingPill === 'AND' && (
+                                  <Tag
+                                    size="sm"
+                                    variant="subtle"
+                                    color="neutral"
+                                    className={styles.conditionBranchPill}
+                                  >
+                                    {trailingPill}
+                                  </Tag>
+                                )}
+                                {trailingPill === 'OR' && (
+                                  // OR separates groups — drop it onto its own
+                                  // line so the visual hierarchy reads as
+                                  // grouped conditions stacked under each
+                                  // OR break, instead of an inline trailing
+                                  // pill that hides the boundary.
+                                  <span className={styles.conditionBranchOrBreak}>
+                                    <Tag
+                                      size="sm"
+                                      variant="subtle"
+                                      color="neutral"
+                                      className={styles.conditionBranchPill}
+                                    >
+                                      {trailingPill}
+                                    </Tag>
+                                  </span>
+                                )}
+                              </span>
+                            );
+                          })}
+                        </Fragment>
+                      ))}
+                    </span>
+                  </div>
+                  {(() => {
+                    const branchEdgeId = outgoingEdgeByBranch?.[branch.id];
+                    return (
+                      <div
+                        className={clsx(styles.anchor, styles.anchorRight, styles.conditionBranchAnchor)}
+                        data-anchor="right"
+                        data-anchor-node-id={step.id}
+                        data-anchor-branch-id={branch.id}
+                        data-connected={branchEdgeId ? 'true' : undefined}
+                        data-anchor-edge-id={branchEdgeId}
+                      />
+                    );
+                  })()}
+                </div>
+                </Fragment>
+              ))}
+              {/* ELSE catch-all row — renders after the last IF branch and
+                  carries its own outgoing anchor so the "matches everything
+                  else" path can fan out independently. */}
+              <div className={clsx(styles.conditionBranchRow, styles.conditionElseRow)}>
+                <div className={styles.conditionBranchRowInner}>
+                  <span className={styles.conditionBranchKeyword}>ELSE</span>
+                </div>
+                {(() => {
+                  const elseEdgeId = outgoingEdgeByBranch?.['else'];
+                  return (
+                    <div
+                      className={clsx(styles.anchor, styles.anchorRight, styles.conditionBranchAnchor)}
+                      data-anchor="right"
+                      data-anchor-node-id={step.id}
+                      data-anchor-branch-id="else"
+                      data-connected={elseEdgeId ? 'true' : undefined}
+                      data-anchor-edge-id={elseEdgeId}
+                    />
+                  );
+                })()}
+              </div>
             </div>
           </div>
         );
-      })() : isAction ? (
-        <>
+      })() : isAction ? (() => {
+        const actionFilled = step.configured && !!step.selectedValue;
+        return (
           <div
             className={clsx(
               styles.actionNodeCard,
               actionFocused && styles.actionNodeCardFocused,
             )}
+            data-active={actionFocused ? 'true' : 'false'}
+            data-filled={actionFilled ? 'true' : 'false'}
           >
-            <span
-              className={clsx(
-                styles.actionNodeIconBox,
-                step.configured && step.selectedValue && styles.actionNodeIconBoxFilled,
-              )}
-              aria-label={cfg.label}
-            >
-              {(() => {
-                const icon = getStepIcon(step);
-                return isValidElement(icon)
-                  ? cloneElement(icon as React.ReactElement<{ size?: number }>, { size: 20 })
-                  : <ArrowCircleBrokenRightIcon size={20} />;
-              })()}
-            </span>
-            <div className={styles.actionNodeContent}>
-              {step.configured && step.selectedValue ? (
-                <div className={styles.nodeConfigSummary} data-type="action">
-                  {(() => {
-                    const segs = buildNodeSnippet(step);
-                    if (segs) {
-                      return segs.map((seg, i) => (
-                        <span
-                          key={i}
-                          className={
-                            seg.role === 'val'
-                              ? styles.nodeConfigVal
-                              : seg.role === 'op'
-                              ? styles.nodeConfigOp
-                              : styles.nodeConfigLabel
+            {/* Card-level leading icon — mirrors the condition / policy
+                card layout (header above a single body row). */}
+            <div className={styles.conditionNodeHeader}>
+              <span
+                className={clsx(
+                  styles.actionNodeIconBox,
+                  actionFilled && styles.actionNodeIconBoxFilled,
+                )}
+                aria-label={cfg.label}
+              >
+                {(() => {
+                  const icon = getStepIcon(step);
+                  return isValidElement(icon)
+                    ? cloneElement(icon as React.ReactElement<{ size?: number }>, { size: 14 })
+                    : <ArrowCircleBrokenRightIcon size={14} />;
+                })()}
+              </span>
+            </div>
+            <div className={styles.conditionBranchRowList}>
+              <div className={styles.conditionBranchRow}>
+                <div className={styles.conditionBranchRowInner}>
+                  <span className={styles.conditionBranchExpr}>
+                    <span className={styles.conditionBranchExprLine}>
+                      {actionFilled ? (
+                        (() => {
+                          const segs = buildNodeSnippet(step);
+                          if (segs) {
+                            return segs.map((seg, i) => (
+                              <span
+                                key={i}
+                                className={
+                                  seg.role === 'val'
+                                    ? styles.conditionBranchExprValue
+                                    : seg.role === 'op'
+                                    ? styles.conditionExprMuted
+                                    : styles.conditionBranchExprLabel
+                                }
+                              >
+                                {i > 0 ? ' ' : ''}{seg.text}
+                              </span>
+                            ));
                           }
-                        >
-                          {seg.text}
+                          return <span className={styles.conditionBranchExprLabel}>{step.selectedValue}</span>;
+                        })()
+                      ) : (
+                        <span className={clsx(
+                          styles.conditionBranchExprLabel,
+                          styles.conditionBranchExprPlaceholder,
+                        )}>
+                          {step.placeholder}
                         </span>
-                      ));
-                    }
-                    return <span className={styles.nodeConfigLabel}>{step.selectedValue}</span>;
-                  })()}
+                      )}
+                    </span>
+                  </span>
                 </div>
-              ) : (
-                <span className={styles.actionNodePlaceholder}>{step.placeholder}</span>
-              )}
+              </div>
             </div>
           </div>
-        </>
-      ) : isAi ? (() => {
+        );
+      })() : isAi ? (() => {
         // Resolve the configured persona (if any) so the canvas card can
         // surface the picked specialist's avatar + name instead of the
         // generic Teambridge AI diamond. Mirrors the right-panel
@@ -6744,83 +7431,132 @@ function FlowNode({
         const personaConfigured =
           step.selectedValue === 'AI Specialist' && !!personaId;
         const persona = personaConfigured ? getPersonaById(personaId) : null;
+        const aiFilled = step.configured && !!step.selectedValue;
         return (
           <div
             className={clsx(
               styles.aiNodeCard,
               aiFocused && styles.aiNodeCardFocused,
             )}
+            data-active={aiFocused ? 'true' : 'false'}
+            data-filled={aiFilled ? 'true' : 'false'}
           >
-            <span
-              className={clsx(
-                styles.aiNodeIconBox,
-                step.configured && step.selectedValue && styles.aiNodeIconBoxFilled,
-                persona && styles.aiNodeIconBoxAvatar,
-              )}
-              aria-label={persona ? `${persona.name} — ${persona.role}` : cfg.label}
-            >
-              {persona
-                ? <PersonaAvatar personaId={persona.id} size={32} />
-                : <TeambridgeAIIcon size={26} />}
-            </span>
-            <div className={styles.actionNodeContent}>
-              {step.configured && step.selectedValue ? (
-                <div className={styles.nodeConfigSummary} data-type="ai">
-                  {persona ? (
-                    <>
-                      {/* Two-line label: role on top ("AI Specialist"),
-                          persona name beneath ("Erin"). The role line
-                          reads as the muted op part of the summary; the
-                          name reads as the configured value (the
-                          [data-type="ai"] selectors in the canvas CSS
-                          colour `.nodeConfigOp` and `.nodeConfigVal`
-                          differently to support this hierarchy). */}
-                      <span className={styles.nodeConfigOp}>AI Specialist</span>
-                      <span className={styles.nodeConfigVal}>{persona.name}</span>
-                    </>
-                  ) : (
-                    <span className={styles.nodeConfigLabel}>{step.selectedValue}</span>
-                  )}
-                </div>
-              ) : (
-                <span className={styles.aiNodePlaceholder}>Add a Specialist</span>
-              )}
+            {/* Centered layout — translucent sparkle circle on top, two
+                stacked text lines beneath. Matches the AI specialist card
+                Figma design. */}
+            <div className={styles.aiNodeCardBody}>
+              <span
+                className={styles.aiNodeSparkleCircle}
+                aria-label={persona ? `${persona.name} — ${persona.role}` : cfg.label}
+              >
+                <TeambridgeAIIcon size={20} />
+              </span>
+              <div className={styles.aiNodeText}>
+                <span className={styles.aiNodeEyebrow}>AI Specialist</span>
+                {aiFilled ? (
+                  <span className={styles.aiNodeName}>
+                    {persona?.name ?? step.selectedValue}
+                  </span>
+                ) : (
+                  <span className={styles.aiNodePlaceholder}>Add a Specialist</span>
+                )}
+              </div>
             </div>
           </div>
         );
       })() : isPolicy ? (() => {
-        const sel = parsePolicySelection(step.configValues);
-        const anySelected = sel.folders.length + sel.policies.length + sel.subPolicies.length > 0;
-        const filled = anySelected;
+        let branches = derivePolicyBranches(step);
+        // Synthesize an empty placeholder branch when none configured so
+        // the multi-row layout always renders (mirrors the condition node
+        // empty-state behavior).
+        if (branches.length === 0) branches = [makeEmptyPolicyBranch()];
         const isActive = policyActive;
-
-        let primary: string | null = null;
-        let secondary: string | null = null;
-        if (!filled) {
-          secondary = step.placeholder ?? 'Add policy';
-        } else {
-          primary = formatPolicySummary(sel);
-        }
 
         return (
           <div
             className={styles.policyNodeCard}
             data-active={isActive ? 'true' : 'false'}
-            data-filled={filled ? 'true' : 'false'}
+            data-filled="true"
+            data-branches="true"
           >
-            <div className={styles.policyNodeTopRow}>
+            {/* Card header — single leading triangle/warning icon mirrors
+                the condition node's filter icon header. */}
+            <div className={styles.conditionNodeHeader}>
               <span className={styles.policyNodeIconBox} aria-label={cfg.label}>
                 <TriangleUpIcon size={14} />
               </span>
-              <span className={styles.policyNodeTopText}>
-                {primary && (
-                  <span className={styles.policyNodeTopPrimary}>{primary}</span>
-                )}
-                {secondary && (
-                  <span className={styles.policyNodeTopSecondary}>{secondary}</span>
-                )}
-              </span>
-              <div style={{ width: 24 }} aria-hidden />
+            </div>
+            <div className={styles.conditionBranchRowList}>
+              {branches.map(branch => {
+                const sel: PolicySelectionSnapshot = {
+                  folders: branch.folders,
+                  policies: branch.policies,
+                  subPolicies: branch.subPolicies,
+                };
+                const anySelected = sel.folders.length + sel.policies.length + sel.subPolicies.length > 0;
+                const summary = anySelected ? formatPolicyShortSummary(sel) : null;
+                const thresholdLabel = anySelected
+                  ? (branch.thresholdMode === 'percentage'
+                      ? `${branch.thresholdValue || '0'}%`
+                      : `${branch.thresholdValue || '0'}/100`)
+                  : null;
+                return (
+                  <div key={branch.id} className={styles.conditionBranchRow}>
+                    <div className={styles.conditionBranchRowInner}>
+                      <span className={styles.conditionBranchKeyword}>IF</span>
+                      <span className={styles.conditionBranchExpr}>
+                        <span className={styles.conditionBranchExprLine}>
+                          {anySelected ? (
+                            <span className={styles.conditionBranchExprLabel}>{summary}</span>
+                          ) : (
+                            <span className={clsx(
+                              styles.conditionBranchExprLabel,
+                              styles.conditionBranchExprPlaceholder,
+                            )}>
+                              {step.placeholder ?? 'Select policies'}
+                            </span>
+                          )}
+                        </span>
+                      </span>
+                      {anySelected && thresholdLabel && (
+                        <span className={styles.conditionBranchExprThresholdTag}>{thresholdLabel}</span>
+                      )}
+                    </div>
+                    {(() => {
+                      const branchEdgeId = outgoingEdgeByBranch?.[branch.id];
+                      return (
+                        <div
+                          className={clsx(styles.anchor, styles.anchorRight, styles.conditionBranchAnchor)}
+                          data-anchor="right"
+                          data-anchor-node-id={step.id}
+                          data-anchor-branch-id={branch.id}
+                          data-connected={branchEdgeId ? 'true' : undefined}
+                          data-anchor-edge-id={branchEdgeId}
+                        />
+                      );
+                    })()}
+                  </div>
+                );
+              })}
+              {/* ELSE catch-all row — same as the condition node. */}
+              <div className={clsx(styles.conditionBranchRow, styles.conditionElseRow)}>
+                <div className={styles.conditionBranchRowInner}>
+                  <span className={styles.conditionBranchKeyword}>ELSE</span>
+                </div>
+                {(() => {
+                  const elseEdgeId = outgoingEdgeByBranch?.['else'];
+                  return (
+                    <div
+                      className={clsx(styles.anchor, styles.anchorRight, styles.conditionBranchAnchor)}
+                      data-anchor="right"
+                      data-anchor-node-id={step.id}
+                      data-anchor-branch-id="else"
+                      data-connected={elseEdgeId ? 'true' : undefined}
+                      data-anchor-edge-id={elseEdgeId}
+                    />
+                  );
+                })()}
+              </div>
             </div>
           </div>
         );
@@ -6861,29 +7597,6 @@ function FlowNode({
       </div>
       )}
 
-      {/* ··· Dots menu — Alloy DropdownMenu, positioned outside flowNode to escape overflow:hidden */}
-      <div
-        className={styles.nodeDotsDropdown}
-        onClick={(e) => e.stopPropagation()}
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        <DropdownMenu
-          trigger={
-            <Button
-              variant="ghost"
-              size="sm"
-              iconOnly
-              aria-label="Node actions"
-            >
-              <DotsHorizontalIcon />
-            </Button>
-          }
-          groups={dotsMenuGroups}
-          placement="bottom-end"
-          width="max-content"
-        />
-      </div>
-
       {/* Config popover — fixed to right side of screen */}
       {showPopover && createPortal(
         <div className={styles.rightPanel} style={{ width: panelWidth }}>
@@ -6896,9 +7609,12 @@ function FlowNode({
             onClose={() => setPopoverOpen(false)}
             onUpdateConditions={onUpdateConditions}
             onUpdateConditionGroups={onUpdateConditionGroups}
+            onUpdateConditionBranches={onUpdateConditionBranches}
+            onUpdatePolicyBranches={onUpdatePolicyBranches}
             onNodeAiSubmit={onNodeAiSubmit}
             triggerLabel={triggerLabel}
             onSave={onSaveNodePopover ? () => onSaveNodePopover(step.id) : undefined}
+            dotsMenuGroups={dotsMenuGroups}
           />
         </div>,
         document.body,
@@ -7077,6 +7793,10 @@ function ZoomControls({ zoom, onZoomIn, onZoomOut, onFit, onTidyUp }: ZoomContro
 interface PendingEdge {
   fromNodeId: string;
   fromCase?: string | null;
+  /** When the drag originated from a per-branch anchor on a condition node,
+   *  carries the branch id so the resulting edge can be tagged with
+   *  `fromBranchId` and routed from the correct anchor. */
+  fromBranchId?: string | null;
   startX: number;
   startY: number;
   currentX: number;
@@ -7273,7 +7993,7 @@ interface FlowCanvasProps {
   onInsertOnEdge: (edge: GraphEdge, type: StepType, value?: string) => void;
   onPositionChange: (id: string, x: number, y: number) => void;
   onSetAllPositions: (positions: Record<string, { x: number; y: number }>) => void;
-  onAddEdge: (fromNodeId: string, toNodeId: string) => void;
+  onAddEdge: (fromNodeId: string, toNodeId: string, fromBranchId?: string | null) => void;
   onDeleteEdge: (edgeId: string) => void;
   onCreateNodeAt: (type: StepType, x: number, y: number) => void;
   onCreateNodeAndConnect: (fromId: string, type: StepType, x: number, y: number) => void;
@@ -7285,6 +8005,9 @@ interface FlowCanvasProps {
   onUpdateConditions?: (nodeId: string, conditions: ConditionEntry[], logic: 'AND' | 'OR') => void;
   /** Group-based condition updater — forwards `(nodeId, groups)`. */
   onUpdateConditionGroups?: (nodeId: string, groups: ConditionGroup[]) => void;
+  /** Branch-based condition updater — forwards `(nodeId, branches)`. */
+  onUpdateConditionBranches?: (nodeId: string, branches: ConditionBranch[]) => void;
+  onUpdatePolicyBranches?: (nodeId: string, branches: PolicyBranch[]) => void;
   autoTidyToken?: number;
   fitToken?: number;
   /** Submits a prompt from the floating node-level AI input into the main
@@ -7303,6 +8026,8 @@ function FlowCanvas({
   editNodeMode, editingNodeIds, onEditNodeToggle,
   onUpdateConditions,
   onUpdateConditionGroups,
+  onUpdateConditionBranches,
+  onUpdatePolicyBranches,
   autoTidyToken,
   fitToken,
   onNodeAiSubmit,
@@ -7532,11 +8257,17 @@ function FlowCanvas({
     if (edgeHandleEl && graphContentRef.current) {
       const edgeId     = edgeHandleEl.getAttribute('data-edge-endpoint')!;
       const fromNodeId = edgeHandleEl.getAttribute('data-edge-from')!;
+      const fromBranchId = edgeHandleEl.getAttribute('data-edge-from-branch') || null;
       const gc = graphContentRef.current.getBoundingClientRect();
-      // Anchor the pending line at the source node's bottom anchor for visual continuity
-      const fromAnchorEl = graphContentRef.current.querySelector(
-        `[data-anchor-node-id="${fromNodeId}"][data-anchor="bottom"]`
-      ) as HTMLElement | null;
+      // Anchor the pending line at the source node's right anchor (or the
+      // specific per-branch anchor if the edge originated from one) so the
+      // reconnect rubber-band stays visually rooted at the same point the
+      // edge currently leaves the source.
+      const anchorSel = fromBranchId
+        ? `[data-anchor-node-id="${fromNodeId}"][data-anchor="right"][data-anchor-branch-id="${fromBranchId}"]`
+        : `[data-anchor-node-id="${fromNodeId}"][data-anchor="right"]`;
+      const fromAnchorEl = (graphContentRef.current.querySelector(anchorSel)
+        ?? graphContentRef.current.querySelector(`[data-anchor-node-id="${fromNodeId}"][data-anchor="right"]`)) as HTMLElement | null;
       let startX: number, startY: number;
       if (fromAnchorEl) {
         const r = fromAnchorEl.getBoundingClientRect();
@@ -7544,8 +8275,8 @@ function FlowCanvas({
         startY = (r.top  + r.height / 2 - gc.top)  / zoomRef.current;
       } else {
         const fp = nodePositions[fromNodeId] ?? { x: 0, y: 0 };
-        startX = fp.x + NODE_W / 2;
-        startY = fp.y + NODE_H;
+        startX = fp.x + NODE_W;
+        startY = fp.y + NODE_H / 2;
       }
       const currentX = (e.clientX - gc.left) / zoomRef.current;
       const currentY = (e.clientY - gc.top)  / zoomRef.current;
@@ -7561,11 +8292,12 @@ function FlowCanvas({
       const anchorNodeId = anchorEl.dataset.anchorNodeId;
       if (!anchorNodeId) return;
 
-      // Connected handle → click disconnects the attached edge(s); no drag.
-      // The user must disconnect first before drawing a new connection.
+      // Connected handle → no longer disconnects on click. The disconnect
+      // affordance now lives as a hover-revealed minus button at the
+      // path's midpoint (see edge-midpoint overlays below). Mousedown on
+      // a connected anchor just no-ops so the user can't accidentally
+      // remove an edge by clicking the handle.
       if (anchorEl.dataset.connected === 'true') {
-        const edgeIds = (anchorEl.dataset.anchorEdgeId ?? '').split(',').filter(Boolean);
-        edgeIds.forEach(id => onDeleteEdge(id));
         return;
       }
 
@@ -7573,7 +8305,8 @@ function FlowCanvas({
       const gc           = graphContentRef.current.getBoundingClientRect();
       const startX       = (anchorRect.left + anchorRect.width  / 2 - gc.left) / zoomRef.current;
       const startY       = (anchorRect.top  + anchorRect.height / 2 - gc.top)  / zoomRef.current;
-      pendingEdgeRef.current = { fromNodeId: anchorNodeId, fromCase: null, startX, startY, currentX: startX, currentY: startY };
+      const branchId     = anchorEl.dataset.anchorBranchId ?? null;
+      pendingEdgeRef.current = { fromNodeId: anchorNodeId, fromCase: null, fromBranchId: branchId, startX, startY, currentX: startX, currentY: startY };
       setPendingEdge(pendingEdgeRef.current);
       return;
     }
@@ -7817,11 +8550,20 @@ function FlowCanvas({
           setDraggingOverNodeId(null);
           return;
         }
-        const connectionError = getConnectionError(fromNodeId, targetId, nodes);
+        // Per-branch cap on condition source nodes — each branch (IF row
+        // or ELSE) accepts only one outgoing edge. Skipped during reconnect
+        // because the original edge is being moved, not duplicated.
+        const fromBranchId = pendingEdgeRef.current?.fromBranchId ?? null;
+        const branchAlreadyConnected = !isReconnect
+          && !!fromBranchId
+          && edges.some(e => e.from === fromNodeId && e.fromBranchId === fromBranchId);
+        const connectionError = branchAlreadyConnected
+          ? 'Branch already has an outgoing connection'
+          : getConnectionError(fromNodeId, targetId, nodes);
 
         if (!connectionError) {
           if (isReconnect) onDeleteEdge(reconnectingEdgeIdRef.current!);
-          onAddEdge(fromNodeId, targetId);
+          onAddEdge(fromNodeId, targetId, fromBranchId);
           connectedSuccessfully = true;
         } else {
           // Show inline error near the drop point, then clear after 1.8s
@@ -7970,7 +8712,45 @@ function FlowCanvas({
 
   // ── Tidy up: re-run layout algorithm, animate cards to their computed positions ──
   const handleTidyUp = () => {
-    const layout = computeLayout(nodes, edges);
+    // Measure each node's actual anchor-y offset (distance from the wrapper
+    // top to the anchor's visual centre) so the layout can place every card
+    // such that all anchors land on the same row, regardless of content
+    // variability or node-type-specific anchor positioning (e.g. ai/action
+    // anchors sit on the circle centre, not the wrapper centre). The layout
+    // sets `top = centreY - heightOf/2`, so we translate each node's actual
+    // anchor offset into a synthetic "height" that yields the right top.
+    const heightOverrides = new Map<string, number>();
+    const anchorOffsets   = new Map<string, { left: number; right: number }>();
+    if (graphContentRef.current) {
+      const z = zoomRef.current || 1;
+      nodes.forEach(n => {
+        const wrap = graphContentRef.current!.querySelector(
+          `[data-node-id="${n.id}"]`,
+        ) as HTMLElement | null;
+        if (!wrap) return;
+        const wrapRect = wrap.getBoundingClientRect();
+        const anyAnchor = wrap.querySelector(
+          '[data-anchor="left"], [data-anchor="right"]',
+        ) as HTMLElement | null;
+        if (anyAnchor) {
+          const ar = anyAnchor.getBoundingClientRect();
+          const yOff = ((ar.y + ar.height / 2) - wrapRect.y) / z;
+          // `heightOf` is divided by 2 in `place()` to derive the top, so
+          // store 2x the actual anchor offset.
+          if (yOff > 0) heightOverrides.set(n.id, yOff * 2);
+        }
+        const lEl = wrap.querySelector('[data-anchor="left"]')  as HTMLElement | null;
+        const rEl = wrap.querySelector('[data-anchor="right"]') as HTMLElement | null;
+        const fallbackR = (n.type === 'condition' || n.type === 'policy') ? wrapRect.width / z + 30 : wrapRect.width / z;
+        const fallbackL = (n.type === 'condition' || n.type === 'policy') ? -30 : 0;
+        const lr = lEl ? lEl.getBoundingClientRect() : null;
+        const rr = rEl ? rEl.getBoundingClientRect() : null;
+        const left  = lr ? ((lr.x + lr.width  / 2) - wrapRect.x) / z : fallbackL;
+        const right = rr ? ((rr.x + rr.width  / 2) - wrapRect.x) / z : fallbackR;
+        anchorOffsets.set(n.id, { left, right });
+      });
+    }
+    const layout = computeLayout(nodes, edges, undefined, heightOverrides, anchorOffsets);
 
     const next: Record<string, { x: number; y: number }> = {};
     layout.forEach((pos, id) => { next[id] = pos; });
@@ -8068,12 +8848,49 @@ function FlowCanvas({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fitToken]);
 
+  /** Resolve which branch anchor a given edge should originate from on a
+   *  condition source node. Honors an explicit `edge.fromBranchId` first;
+   *  otherwise falls back to insertion-order distribution — the Nth outgoing
+   *  edge from a condition picks the Nth branch anchor (last branches map
+   *  to the ELSE row). Returns `null` for non-condition sources or when
+   *  there's nothing to distribute. */
+  const resolveBranchIdForEdge = (edge: GraphEdge): string | null => {
+    if (edge.fromBranchId) return edge.fromBranchId;
+    const src = nodes.find(n => n.id === edge.from);
+    if (!src || src.type !== 'condition') return null;
+    const branches = deriveConditionBranches(src);
+    if (countConditionsInBranches(branches) === 0) return null;
+    const branchIds = [...branches.map(b => b.id), 'else'];
+    const outgoing = edges.filter(e => e.from === edge.from);
+    const idx = outgoing.findIndex(e => e.id === edge.id);
+    if (idx < 0) return null;
+    return branchIds[Math.min(idx, branchIds.length - 1)] ?? null;
+  };
+
   // ── Anchor position helper — reads DOM for pixel-accurate coordinates ──────────
-  const getAnchorCenter = (nodeId: string, side: 'top' | 'bottom' | 'left' | 'right'): { x: number; y: number } | null => {
+  // For source nodes that expose multiple anchors on the same side (condition
+  // nodes in branches mode — one anchor per IF branch + ELSE), pass
+  // `branchId` to target the specific row anchor; otherwise the first anchor
+  // matching `(nodeId, side)` is used.
+  const getAnchorCenter = (
+    nodeId: string,
+    side: 'top' | 'bottom' | 'left' | 'right',
+    branchId?: string | null,
+  ): { x: number; y: number } | null => {
     if (graphContentRef.current) {
-      const el = graphContentRef.current.querySelector(
-        `[data-anchor-node-id="${nodeId}"][data-anchor="${side}"]`
-      ) as HTMLElement | null;
+      const sel = branchId
+        ? `[data-anchor-node-id="${nodeId}"][data-anchor="${side}"][data-anchor-branch-id="${branchId}"]`
+        : `[data-anchor-node-id="${nodeId}"][data-anchor="${side}"]`;
+      let el = graphContentRef.current.querySelector(sel) as HTMLElement | null;
+      // Fall back to a non-branch anchor when the requested branch's row no
+      // longer exists (e.g. branch was removed from the right panel but its
+      // edge wasn't yet pruned). Keeps edges visually attached to the node
+      // until they're explicitly cleaned up.
+      if (!el && branchId) {
+        el = graphContentRef.current.querySelector(
+          `[data-anchor-node-id="${nodeId}"][data-anchor="${side}"]`
+        ) as HTMLElement | null;
+      }
       if (el) {
         const gc = graphContentRef.current.getBoundingClientRect();
         const r  = el.getBoundingClientRect();
@@ -8145,7 +8962,7 @@ function FlowCanvas({
                 The SVG has no pointer-events on visual paths; wide transparent
                 hit paths are added per-edge so users can drag to reconnect/disconnect. */}
             <svg
-              style={{ position: 'absolute', inset: 0, width: maxX, height: maxY, overflow: 'visible' }}
+              style={{ position: 'absolute', inset: 0, width: maxX, height: maxY, overflow: 'visible', pointerEvents: 'none' }}
               aria-hidden
             >
               {/* Chevron arrowhead marker — drawn at the end of every edge path.
@@ -8170,8 +8987,8 @@ function FlowCanvas({
                       Tip at (6.8, 3.7); wings at (3.5, 0.5) and (3.5, 6.9). */}
                   <path
                     d="M3.5 0.5 L6.8 3.7 L3.5 6.9"
-                    stroke="var(--color-slate-border-secondary)"
-                    strokeWidth="1"
+                    stroke="var(--Alloy-slate-200)"
+                    strokeWidth="1.5"
                     fill="none"
                     strokeLinecap="round"
                     strokeLinejoin="round"
@@ -8179,32 +8996,26 @@ function FlowCanvas({
                 </marker>
               </defs>
               {edges.map(edge => {
-                // ── Normal (vertical) edge ───────────────────────────────────────────────
-                // Anchors are offset 16px away from each node edge (see
-                // .anchorTop / .anchorBottom in CSS), so the path endpoints
+                // ── Normal (horizontal) edge ─────────────────────────────────────────────
+                // Anchors are offset 20px away from each node edge (see
+                // .anchorLeft / .anchorRight in CSS), so the path endpoints
                 // already float with a visual gap from the node surfaces.
-                const from = getAnchorCenter(edge.from, 'bottom');
-                const to   = getAnchorCenter(edge.to,   'top');
+                const fromBranch = resolveBranchIdForEdge(edge);
+                const from = getAnchorCenter(edge.from, 'right', fromBranch);
+                const to   = getAnchorCenter(edge.to,   'left');
                 if (!from || !to) return null;
 
                 const { x: x1, y: y1 } = from;
                 const { x: x2, y: y2 } = to;
-                const dy = Math.abs(y2 - y1) * 0.5;
-                const d  = `M ${x1} ${y1} C ${x1} ${y1 + dy}, ${x2} ${y2 - dy}, ${x2} ${y2}`;
+                const dx = Math.abs(x2 - x1) * 0.5;
+                const d  = `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
 
-                // ── Caret rotation ───────────────────────────────────────────────────────
-                // Our bezier always uses cx2=x2, so the mathematical tangent at t=1 is
-                // always (0, dy) — straight down — regardless of horizontal offset.
-                // We sample the curve at t=0.85 and take the chord to the endpoint; this
-                // captures the actual visual approach direction for any node arrangement.
-                //   Cubic B(t) = Σ C(3,k) · (1-t)^(3-k) · t^k · P_k
-                //   P0=(x1,y1)  P1=(x1,y1+dy)  P2=(x2,y2-dy)  P3=(x2,y2)
                 return (
                   <g key={edge.id}>
                     {/* Visual path — chevron arrowhead attached at the end
                         via <marker id="edge-arrow"> defined in <defs> above. */}
                     <path d={d}
-                      stroke="var(--color-slate-border-secondary)" strokeWidth="1.5"
+                      stroke="var(--Alloy-slate-200)" strokeWidth="1.5"
                       fill="none" strokeLinecap="round"
                       markerEnd="url(#edge-arrow)"
                       style={{ pointerEvents: 'none' }}
@@ -8214,6 +9025,7 @@ function FlowCanvas({
                     <path d={d} stroke="transparent" strokeWidth="12" fill="none"
                       data-edge-endpoint={edge.id}
                       data-edge-from={edge.from}
+                      data-edge-from-branch={edge.fromBranchId}
                       style={{ pointerEvents: 'stroke', cursor: 'grab' }} />
                   </g>
                 );
@@ -8222,8 +9034,8 @@ function FlowCanvas({
 
               {/* Pending edge while drawing or reconnecting */}
               {pendingEdge && (() => {
-                const dy = Math.abs(pendingEdge.currentY - pendingEdge.startY) * 0.5;
-                const d  = `M ${pendingEdge.startX} ${pendingEdge.startY} C ${pendingEdge.startX} ${pendingEdge.startY + dy}, ${pendingEdge.currentX} ${pendingEdge.currentY - dy}, ${pendingEdge.currentX} ${pendingEdge.currentY}`;
+                const dx = Math.abs(pendingEdge.currentX - pendingEdge.startX) * 0.5;
+                const d  = `M ${pendingEdge.startX} ${pendingEdge.startY} C ${pendingEdge.startX + dx} ${pendingEdge.startY}, ${pendingEdge.currentX - dx} ${pendingEdge.currentY}, ${pendingEdge.currentX} ${pendingEdge.currentY}`;
                 return (
                   <path d={d} stroke="var(--color-border-selected)" strokeWidth="2" fill="none"
                     strokeLinecap="round" style={{ pointerEvents: 'none' }} />
@@ -8236,8 +9048,8 @@ function FlowCanvas({
                 const y1 = edgeDragDrop.anchorY;
                 const x2 = edgeDragDrop.canvasX;
                 const y2 = edgeDragDrop.canvasY;
-                const dy = Math.abs(y2 - y1) * 0.5;
-                const d  = `M ${x1} ${y1} C ${x1} ${y1 + dy}, ${x2} ${y2 - dy}, ${x2} ${y2}`;
+                const dx = Math.abs(x2 - x1) * 0.5;
+                const d  = `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
                 return (
                   <path d={d} stroke="var(--color-content-disabled)" strokeWidth="1.5" fill="none"
                     strokeDasharray="5 4" strokeLinecap="round" style={{ pointerEvents: 'none' }} />
@@ -8260,45 +9072,35 @@ function FlowCanvas({
               />
             )}
 
-            {/* Edge midpoint overlays — insert + button */}
+            {/* Edge midpoint delete button — hover-revealed minus glyph
+                at the centre of each path. The canonical disconnect
+                surface, paired with hidden node anchors when an edge is
+                attached so there's only one minus affordance per edge. */}
             {edges.map(edge => {
-              const from = getAnchorCenter(edge.from, 'bottom');
-              const to   = getAnchorCenter(edge.to,   'top');
+              const fromBranch = resolveBranchIdForEdge(edge);
+              const from = getAnchorCenter(edge.from, 'right', fromBranch);
+              const to   = getAnchorCenter(edge.to,   'left');
               if (!from || !to) return null;
               const midX = (from.x + to.x) / 2;
               const midY = (from.y + to.y) / 2;
-
               return (
                 <div
-                  key={`midplus-${edge.id}`}
+                  key={`mid-del-${edge.id}`}
                   className={styles.edgeMidpointArea}
                   style={{ left: midX - 60, top: midY - 25, width: 120, height: 50 }}
-                  /* Block the canvas pan / deselect handler from running
-                     for mousedowns on the midpoint area — otherwise the
-                     parent graphContent would treat this as a click on
-                     empty space and start a pan, which can swallow the
-                     subsequent click event before it reaches our
-                     button. */
                   onMouseDown={e => e.stopPropagation()}
                 >
                   <button
                     type="button"
-                    className={styles.edgeMidplusBtn}
-                    onMouseDown={e => {
-                      // stopPropagation on click isn't enough — the
-                      // canvas listens on mousedown for pan / drag
-                      // detection, which can intercept the synthetic
-                      // click before it lands on the button.
-                      e.stopPropagation();
-                    }}
+                    className={styles.edgeMidDeleteBtn}
+                    onMouseDown={e => e.stopPropagation()}
                     onClick={e => {
                       e.stopPropagation();
-                      const rect = e.currentTarget.getBoundingClientRect();
-                      setEdgeInsert({ edge, anchorRect: rect });
+                      onDeleteEdge(edge.id);
                     }}
-                    aria-label="Insert node on edge"
+                    aria-label="Remove path"
                   >
-                    <PlusIcon size={8} />
+                    <span aria-hidden className={styles.edgeMidDeleteGlyph} />
                   </button>
                 </div>
               );
@@ -8333,13 +9135,17 @@ function FlowCanvas({
                   data-multi-selected={multiSelectedIds.has(node.id) ? 'true' : undefined}
                   data-drag-target={draggingOverNodeId === node.id ? 'true' : undefined}
                 >
-                  {/* Top anchor — all non-trigger nodes */}
+                  {/* Left anchor — input handle for all non-trigger nodes.
+                      Sits at the outer card's left edge for every node type
+                      (including condition nodes) so the incoming path
+                      terminates on the node card itself, not on the
+                      per-branch sub-card rows. */}
                   {node.type !== 'trigger' && (() => {
                     const inEdgeId = edges.find(e => e.to === node.id)?.id;
                     return (
                       <div
-                        className={clsx(styles.anchor, styles.anchorTop)}
-                        data-anchor="top"
+                        className={clsx(styles.anchor, styles.anchorLeft)}
+                        data-anchor="left"
                         data-anchor-node-id={node.id}
                         data-connected={inEdgeId ? 'true' : undefined}
                         data-anchor-edge-id={inEdgeId}
@@ -8369,22 +9175,39 @@ function FlowCanvas({
                     isEditSelected={editingNodeIds.has(node.id)}
                     onUpdateConditions={onUpdateConditions ? (conds, logic) => onUpdateConditions(node.id, conds, logic) : undefined}
                     onUpdateConditionGroups={onUpdateConditionGroups ? (groups) => onUpdateConditionGroups(node.id, groups) : undefined}
+                    onUpdateConditionBranches={onUpdateConditionBranches ? (branches) => onUpdateConditionBranches(node.id, branches) : undefined}
+                    onUpdatePolicyBranches={onUpdatePolicyBranches ? (branches) => onUpdatePolicyBranches(node.id, branches) : undefined}
                     hasOutgoingConnections={edges.some(e => e.from === node.id)}
+                    incomingEdgeId={edges.find(e => e.to === node.id)?.id}
+                    outgoingEdgeByBranch={node.type === 'condition'
+                      ? edges.reduce<Record<string, string>>((acc, e) => {
+                          if (e.from === node.id && e.fromBranchId) acc[e.fromBranchId] = e.id;
+                          return acc;
+                        }, {})
+                      : undefined}
                     triggerLabel={nodes.find(n => n.type === 'trigger')?.selectedValue}
                     onNodeAiSubmit={onNodeAiSubmit}
                     onSaveNodePopover={onSaveNodePopover}
                   />
 
-                  {/* Bottom anchor — output handle. Always shows + and
+                  {/* Right anchor — output handle. Always shows + and
                       allows drawing a new connection. Multiple outgoing
                       edges are permitted on every node type (conditions
                       can fan out to any number of downstream nodes; the
-                      old 2-edge Yes/No cap was removed). */}
-                  <div
-                    className={clsx(styles.anchor, styles.anchorBottom)}
-                    data-anchor="bottom"
-                    data-anchor-node-id={node.id}
-                  />
+                      old 2-edge Yes/No cap was removed).
+
+                      Suppressed for condition nodes that already render
+                      per-branch anchors inside the card body — those
+                      per-row anchors replace the single node-edge anchor
+                      so each IF branch (and the catch-all ELSE) can fan
+                      out to its own downstream chain. */}
+                  {node.type !== 'condition' && node.type !== 'policy' && (
+                    <div
+                      className={clsx(styles.anchor, styles.anchorRight)}
+                      data-anchor="right"
+                      data-anchor-node-id={node.id}
+                    />
+                  )}
                 </div>
               );
             })}
@@ -8891,7 +9714,7 @@ const WORKFLOW_TEMPLATES: Record<string, WorkflowTemplate> = {
   // condition, AI handoff to Onbi, and parallel comms + task-assignment branches.
   wf_01HGXZ7K3QN4A2MB: {
     name: 'New hire onboarding',
-    status: 'active',
+    status: 'live',
     summary: [
       'Welcome back to **New hire onboarding** — the full-fat onboarding flow.',
       '',
@@ -8990,7 +9813,7 @@ const WORKFLOW_TEMPLATES: Record<string, WorkflowTemplate> = {
   // DataOps AI audit, parallel email-escalation + payroll-webhook branches.
   wf_01HGY2F9PW4VRJ8N: {
     name: 'Timesheet approval reminder',
-    status: 'active',
+    status: 'live',
     summary: [
       "You're back on **Timesheet approval reminder** — the weekly payroll-prep sweep.",
       '',
@@ -9080,7 +9903,7 @@ const WORKFLOW_TEMPLATES: Record<string, WorkflowTemplate> = {
   // worker-outreach + manager-status branches.
   wf_01HGYH6CXD3TZ5QK: {
     name: 'Shift swap notification',
-    status: 'paused',
+    status: 'archived',
     summary: [
       'Hey — this is **Shift swap notification**.',
       '',
@@ -9257,7 +10080,7 @@ const WORKFLOW_TEMPLATES: Record<string, WorkflowTemplate> = {
   // equipment-recovery branches.
   wf_01HH01VQY7JN4E5M: {
     name: 'Contractor offboarding',
-    status: 'active',
+    status: 'live',
     summary: [
       "Here's **Contractor offboarding**.",
       '',
@@ -9384,7 +10207,7 @@ const WORKFLOW_TEMPLATES: Record<string, WorkflowTemplate> = {
 
     return {
       name: 'Premium shift dispatch & compliance',
-      status: 'active' as AutomationStatus,
+      status: 'live' as AutomationStatus,
       summary: [
         "You're back on **Premium shift dispatch & compliance** — the showcase routing flow.",
         '',
@@ -9578,7 +10401,7 @@ const WORKFLOW_TEMPLATES: Record<string, WorkflowTemplate> = {
   // scheduling-block branches with delayed re-check + escalation.
   wf_01HK_CREDENTIAL_EXPIRY: {
     name: 'Credential expiry monitor',
-    status: 'active',
+    status: 'live',
     summary: [
       'Welcome to **Credential expiry monitor** — the daily compliance sweep.',
       '',
@@ -9671,7 +10494,7 @@ const WORKFLOW_TEMPLATES: Record<string, WorkflowTemplate> = {
   // payroll) showing how the canvas handles wider branching.
   wf_01HK_PAY_PERIOD_CLOSE: {
     name: 'Pay period close & payroll prep',
-    status: 'active',
+    status: 'live',
     summary: [
       'Welcome to **Pay period close & payroll prep** — the bi-weekly close-out.',
       '',
@@ -9779,7 +10602,7 @@ const WORKFLOW_TEMPLATES: Record<string, WorkflowTemplate> = {
   // 9 · Document e-sign workflow — focused on document/notification node mix.
   wf_01HK_DOC_ESIGN: {
     name: 'Document e-sign reminder',
-    status: 'active',
+    status: 'live',
     summary: [
       'Welcome to **Document e-sign reminder**.',
       '',
@@ -9856,7 +10679,7 @@ const WORKFLOW_TEMPLATES: Record<string, WorkflowTemplate> = {
   // node-card interactions.
   wf_01HK_BRANCH_DEMO: {
     name: 'Eligibility branch demo',
-    status: 'active',
+    status: 'live',
     summary: [
       'Welcome to **Eligibility branch demo** — a focused flow that splits a single condition into two parallel downstream paths.',
       '',
@@ -10006,6 +10829,26 @@ export function BuilderPage() {
   const [selectedId,      setSelectedId]      = useState<string | null>(isNew ? 'trigger-1' : null);
   const [draggingLibNode, setDraggingLibNode] = useState<LibraryItem | null>(null);
   const [autoTidyToken,   setAutoTidyToken]   = useState(0);
+
+  // ── Initial auto-tidy ──────────────────────────────────────────────────────
+  // The seed/template layout uses static `NODE_HEIGHTS` estimates, which can
+  // be off by tens of pixels for content-heavy policy/condition cards or for
+  // ai/action nodes whose anchor sits on the icon (not the wrapper centre).
+  // After the first paint the DOM has the real heights and anchor offsets, so
+  // bump `autoTidyToken` once to re-run layout with measured values — every
+  // node lands with its anchor centred on the chain's row, producing a clean
+  // horizontal flow. Skip when restoring a persisted graph (the user's
+  // manual nudges should win) and when the workflow is brand new (no nodes
+  // beyond the trigger stub means nothing to tidy). */
+  const didInitialAutoTidy = useRef(false);
+  useEffect(() => {
+    if (didInitialAutoTidy.current) return;
+    if (persistedGraph?.nodePositions) return;
+    if (initialNodes.length < 2) return;
+    didInitialAutoTidy.current = true;
+    // Defer one frame so refs + measured DOM are wired before tidy runs.
+    requestAnimationFrame(() => setAutoTidyToken(t => t + 1));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [fitToken,        setFitToken]        = useState(0);
   const [editNodeMode,    setEditNodeMode]    = useState(false);
   const [editingNodeIds,  setEditingNodeIds]  = useState<Set<string>>(new Set());
@@ -10017,6 +10860,11 @@ export function BuilderPage() {
   // entirely and a small re-open button surfaces beneath the top bar in
   // the right column.
   const [aiPanelCollapsed, setAiPanelCollapsed] = useState(false);
+  // AI panel width — drag-to-resize from the LeftPanel's right edge. Owned
+  // here so the surrounding `.body` grid can size its first column to the
+  // live value (CSS grid `grid-template-columns` is set inline against
+  // `aiPanelWidth`); the LeftPanel just reports new widths via callback.
+  const [aiPanelWidth, setAiPanelWidth] = useState(360);
 
   // ── Undo history (Cmd/Ctrl+Z) ─────────────────────────────────────────────
   // Snapshots `{ nodes, edges, name, nodePositions }` before each mutation;
@@ -10280,6 +11128,18 @@ export function BuilderPage() {
       ...(type === 'delay' ? { configValues: { unit: 'minutes' } } : {}),
       ...(type === 'policy' ? {
         configValues: { thresholdValue: '50', thresholdMode: 'score' },
+        // Seed one empty IF branch so the canvas card immediately
+        // renders the multi-row layout (mirrors condition nodes).
+        policyBranches: [makeEmptyPolicyBranch()],
+      } : {}),
+      // Condition nodes start with one empty IF branch so the canvas card
+      // and right panel both render the multi-row layout immediately —
+      // no separate "empty pill" placeholder. The branch contains a
+      // single placeholder ConditionEntry the user fills in.
+      ...(type === 'condition' ? {
+        conditionBranches: [
+          { id: makeBranchId(), groups: [{ id: makeGroupId(), conditions: [makeEmptyCondition()] }] },
+        ],
       } : {}),
     };
   };
@@ -10298,12 +11158,13 @@ export function BuilderPage() {
     const parentPos = parentId ? nodePositions[parentId] : null;
     let initX: number, initY: number;
     if (parentId === null) {
-      const xs = Object.values(nodePositions).map(p => p.x);
-      initX = xs.length > 0 ? Math.max(...xs) + H_SPACING : 0;
-      initY = CANVAS_TOP;
+      // Independent flow — stack new roots vertically beneath the existing ones
+      const ys = Object.values(nodePositions).map(p => p.y);
+      initX = 0;
+      initY = ys.length > 0 ? Math.max(...ys) + V_SPACING : CANVAS_TOP;
     } else if (parentPos) {
-      initX = parentPos.x;
-      initY = parentPos.y + V_SPACING;
+      initX = parentPos.x + H_SPACING;
+      initY = parentPos.y;
     } else {
       initX = 0; initY = CANVAS_TOP;
     }
@@ -10457,6 +11318,62 @@ export function BuilderPage() {
     }));
   };
 
+  /** Branch-based updater — replaces the node's `conditionBranches` list and
+   *  projects flat `conditionGroups`, `conditions`, and `conditionLogic`
+   *  legacy fields (using the *first* branch's groups) so existing readers
+   *  keep working. */
+  const updateConditionBranches = (nodeId: string, branches: ConditionBranch[]) => {
+    const firstBranchGroups = branches[0]?.groups ?? [];
+    const flat = flattenConditionGroups(firstBranchGroups);
+    const firstCond = flat.conditions[0];
+    const firstDef = firstCond
+      ? CONDITION_LIBRARY.find(d => d.id === firstCond.fieldId) ?? null
+      : null;
+    const totalCount = countConditionsInBranches(branches);
+    setNodes(prev => prev.map(n => {
+      if (n.id !== nodeId) return n;
+      return touchNode({
+        ...n,
+        conditionBranches: branches,
+        conditionGroups: firstBranchGroups,
+        conditions: flat.conditions,
+        conditionLogic: flat.conditionLogic,
+        selectedValue: firstDef?.label ?? (totalCount > 0 ? n.selectedValue : undefined),
+        configured: totalCount > 0,
+      });
+    }));
+  };
+
+
+  /** Replace a policy node's `policyBranches` list and project the FIRST
+   *  branch's selection + threshold back onto the legacy `configValues`
+   *  fields so existing readers (canvas summary, modal, downstream code)
+   *  keep working without a full migration. */
+  const updatePolicyBranches = (nodeId: string, branches: PolicyBranch[]) => {
+    const first = branches[0];
+    setNodes(prev => prev.map(n => {
+      if (n.id !== nodeId) return n;
+      const baseVals = { ...(n.configValues ?? {}) };
+      if (first) {
+        baseVals.selectedFolders     = JSON.stringify(first.folders);
+        baseVals.selectedPolicies    = JSON.stringify(first.policies);
+        baseVals.selectedSubPolicies = JSON.stringify(first.subPolicies);
+        baseVals.thresholdValue      = first.thresholdValue;
+        baseVals.thresholdMode       = first.thresholdMode;
+      }
+      const totalSelected = branches.reduce(
+        (n, b) => n + b.folders.length + b.policies.length + b.subPolicies.length,
+        0,
+      );
+      return touchNode({
+        ...n,
+        policyBranches: branches,
+        configValues: baseVals,
+        configured: totalSelected > 0,
+      });
+    }));
+  };
+
   // Silent state mutation — the thread gets a single summary activity when
   // the user clicks Save in the right panel (see handleSaveNodePopover).
   const updateConfigField = (id: string, key: string, value: string) =>
@@ -10530,8 +11447,8 @@ export function BuilderPage() {
     // Position new node at midpoint between the two connected nodes
     const fromPos = nodePositions[edge.from];
     const toPos   = nodePositions[edge.to];
-    const initX   = fromPos && toPos ? (fromPos.x + toPos.x) / 2 : 0;
-    const initY   = fromPos && toPos ? (fromPos.y + NODE_H + toPos.y) / 2 : CANVAS_TOP;
+    const initX   = fromPos && toPos ? (fromPos.x + NODE_W + toPos.x) / 2 : 0;
+    const initY   = fromPos && toPos ? (fromPos.y + toPos.y) / 2 : CANVAS_TOP;
     setNodePositions(prev => ({ ...prev, [n.id]: { x: initX, y: initY } }));
 
     // Replace old edge with two new edges: from→new, new→to. Plain edge
@@ -10549,13 +11466,13 @@ export function BuilderPage() {
   // Validation (getConnectionError) is performed by the sole caller in the
   // drag-drop MouseUp handler. Duplicates are silently rejected; conditions
   // can fan out to any number of downstream nodes.
-  const addEdge = (fromNodeId: string, toNodeId: string) => {
+  const addEdge = (fromNodeId: string, toNodeId: string, fromBranchId?: string | null) => {
     if (isConnectionSilentlyBlocked(fromNodeId, toNodeId, nodes, edges)) return;
     const fromNode = nodes.find(n => n.id === fromNodeId);
     const newEdgeId = `edge-${++_nextId}`;
     let didAdd = false;
     setEdges(prev => {
-      const next = appendEdgeIfMissing(prev, fromNodeId, toNodeId, newEdgeId);
+      const next = appendEdgeIfMissing(prev, fromNodeId, toNodeId, newEdgeId, fromBranchId ?? undefined);
       if (next === null) return prev;
       didAdd = true;
       return next;
@@ -10770,7 +11687,11 @@ export function BuilderPage() {
         onToggleAiPanel={() => setAiPanelCollapsed(c => !c)}
       />
 
-      <div className={styles.body} data-ai-collapsed={aiPanelCollapsed}>
+      <div
+        className={styles.body}
+        data-ai-collapsed={aiPanelCollapsed}
+        style={!aiPanelCollapsed ? { gridTemplateColumns: `${aiPanelWidth}px 1px 1fr` } : undefined}
+      >
         {/* LeftPanel + body divider unmount entirely when the AI panel is
             collapsed. The re-open affordance lives in the right column
             (see `expandAiBtn` below the top bar). */}
@@ -10787,6 +11708,8 @@ export function BuilderPage() {
               onAiSend={handleGlobalAiSend}
               onCollapse={() => setAiPanelCollapsed(true)}
               onBack={() => navigate('/automations')}
+              panelWidth={aiPanelWidth}
+              onPanelWidthChange={setAiPanelWidth}
             />
 
             <div className={styles.bodyDivider} aria-hidden />
@@ -10824,6 +11747,8 @@ export function BuilderPage() {
           onEditNodeToggle={handleEditNodeToggle}
           onUpdateConditions={updateConditions}
           onUpdateConditionGroups={updateConditionGroups}
+          onUpdateConditionBranches={updateConditionBranches}
+          onUpdatePolicyBranches={updatePolicyBranches}
           autoTidyToken={autoTidyToken}
           fitToken={fitToken}
           onNodeAiSubmit={handleNodeAiSubmit}

@@ -18,10 +18,8 @@ import { Divider } from '@alloy/components/Divider';
 import { ValueChangeLabel } from '@alloy/components/ValueChangeLabel';
 import { SegmentedControl } from '@alloy/components/SegmentedControl';
 import { ChartCard } from '@alloy/components/Charts/ChartCard';
-import { RatioBar } from '@alloy/components/Charts/RatioBar';
 import { BarChart } from '@alloy/components/Charts/BarChart';
-import { ActivityHeatMap } from '@alloy/components/Charts/ActivityHeatMap';
-import type { ActivityHeatMapDay } from '@alloy/components/Charts/ActivityHeatMap';
+import { RatioBar } from '@alloy/components/Charts/RatioBar';
 import { Tabs } from '@alloy/components/Tabs';
 import { ListItem } from '@alloy/components/ListItem';
 import { Pagination } from '@alloy/components/Pagination';
@@ -49,34 +47,70 @@ import {
   type Automation,
   type AutomationStatus,
 } from './AutomationsPage';
+import { AI_PERSONAS } from '@/features/ai/personas';
 import styles from './AutomationDetailPage.module.css';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type UsageRange = 'all' | '24h' | '7d' | '30d';
 
+/** Action-type taxonomy surfaced in the "Actions Taken" filterable
+ *  chart. Mirrors the action-node library on the canvas. Swap to a
+ *  real classification once runs emit per-action telemetry. */
+export type ActionTypeKey =
+  | 'email'
+  | 'assign_group'
+  | 'create_record'
+  | 'report'
+  | 'chat_message';
+
+export const ACTION_TYPE_KEYS: ActionTypeKey[] = [
+  'email',
+  'assign_group',
+  'create_record',
+  'report',
+  'chat_message',
+];
+
+export const ACTION_TYPE_LABELS: Record<ActionTypeKey, string> = {
+  email:         'Email',
+  assign_group:  'Assign group',
+  create_record: 'Create record',
+  report:        'Report',
+  chat_message:  'Chat message',
+};
+
+/** Stack colours per action type — semantic Alloy hue tokens so each
+ *  segment reads as a distinct, named action category. */
+export const ACTION_TYPE_COLORS: Record<ActionTypeKey, string> = {
+  email:         'var(--Alloy-blue-500)',
+  assign_group:  'var(--Alloy-green-500)',
+  create_record: 'var(--Alloy-purple-500)',
+  report:        'var(--Alloy-orange-500)',
+  chat_message:  'var(--Alloy-pink-500)',
+};
+
 interface UsageMetrics {
-  totalRuns:      { current: number; prior: number };
-  successRatePct: { current: number; prior: number };
-  avgDurationSec: { current: number; prior: number };
-  activeUsers:    { current: number; prior: number };
-  peopleReached:  { current: number; prior: number };
-  /** Per-bucket time series — every metric tile in the top row pulls
-   *  a parallel array from here so its sparkline reflects the same
-   *  bucket cadence as the period totals. `succeeded` / `failed`
-   *  remain available for the Success rate ratio bar.
-   *  `runsHeatmap` is a separate 90-day daily series powering the
-   *  Total runs ActivityHeatMap so the heatmap always fills its
-   *  container regardless of which period is currently selected. */
+  totalTriggered:       { current: number; prior: number };
+  totalActive:          { current: number; prior: number };
+  totalCompleted:       { current: number; prior: number };
+  actionsTaken:         { current: number; prior: number };
+  specialistsActivated: { current: number; prior: number };
+  /** Per-bucket time series — every metric tile + chart pulls a
+   *  parallel array from here so the visualisations track the same
+   *  bucket cadence as the period totals. */
   series: {
     labels:        string[];
-    succeeded:     number[];
-    failed:        number[];
-    totalRuns:     number[];
-    avgDuration:   number[];
-    activeUsers:   number[];
-    peopleReached: number[];
-    runsHeatmap:   ActivityHeatMapDay[];
+    triggered:     number[];
+    active:        number[];
+    completed:     number[];
+    /** Stacked-bar inputs — one parallel array per action type. */
+    actionsByType: Record<ActionTypeKey, number[]>;
+    /** Total activations per persona id (used by the horizontal
+     *  Specialists Activated chart). Personas with zero activations
+     *  in the period are still keyed (count = 0) so the chart can
+     *  optionally surface idle specialists. */
+    activationsByPersona: Record<string, number>;
   };
 }
 
@@ -144,22 +178,6 @@ function seeded(key: string): () => number {
   };
 }
 
-/** Map a numeric per-bucket series to ActivityHeatMap day rows.
- *  Dates are synthesised back-walking from today so the heatmap reads
- *  as "recent activity"; the labels carry through to the cell tooltip. */
-function seriesToHeatmapDays(values: number[], labels: string[]): ActivityHeatMapDay[] {
-  const today = new Date();
-  return values.map((count, i) => {
-    const d = new Date(today);
-    d.setDate(today.getDate() - (values.length - 1 - i));
-    return {
-      date:  d.toISOString().slice(0, 10),
-      label: labels[i] ?? d.toISOString().slice(0, 10),
-      count,
-    };
-  });
-}
-
 function bucketsForRange(range: UsageRange): { count: number; labelFor: (i: number) => string } {
   switch (range) {
     case '24h': return { count: 24, labelFor: i => `${i}:00` };
@@ -172,129 +190,121 @@ function bucketsForRange(range: UsageRange): { count: number; labelFor: (i: numb
 function synthMetrics(workflow: Automation, range: UsageRange): UsageMetrics {
   const { count, labelFor } = bucketsForRange(range);
   const rnd = seeded(`${workflow.id}|${range}`);
-  // Intrinsic per-workflow success rate, derived deterministically from
-  // the id so it varies workflow-to-workflow but stays stable across
-  // re-renders. Sits in 78–96% so the ratio bar always reads as a real
-  // mix instead of all-green.
-  const baseRate = 0.78 + (seeded(`${workflow.id}|rate`)() * 0.18);
-  // Daily run baseline scales with the workflow's lifetime total.
+  // Daily trigger baseline scales off the workflow's lifetime total.
   const dailyBaseline = Math.max(2, workflow.runsTotal / 30);
   const rangeFactor = range === '24h' ? 0.04
                     : range === '7d'  ? 0.25
                     : range === '30d' ? 1.0
                                       : 1.5;
   const baseline = Math.max(2, Math.round(dailyBaseline * rangeFactor));
+
+  // Active-rate (currently in-progress) and completion-rate are stable
+  // per workflow id so the trend reads consistently across re-renders.
+  // Active sits ~5–18% of triggered (workflows with long-running steps
+  // skew higher); completed claims the rest after a small fail/abandon
+  // slice (1–4%).
+  const activeRate    = 0.05 + seeded(`${workflow.id}|active`)()    * 0.13;
+  const failRate      = 0.01 + seeded(`${workflow.id}|fail`)()      * 0.03;
+
   const labels: string[] = [];
-  const succeeded: number[] = [];
-  const failed: number[] = [];
-  let totalSucc = 0;
-  let totalFail = 0;
+  const triggered: number[] = [];
+  const active:    number[] = [];
+  const completed: number[] = [];
+  let totalTriggered = 0;
+  let totalActive    = 0;
+  let totalCompleted = 0;
+
+  // Per-action-type per-bucket weights — different workflows lean on
+  // different action mixes, so each type's weight is keyed off the
+  // workflow id so the stacked chart varies between rows. Weights are
+  // normalised below into a unit distribution per bucket.
+  const actionWeights: Record<ActionTypeKey, number> = {
+    email:         0.5 + seeded(`${workflow.id}|w-email`)()    * 0.8,
+    assign_group:  0.3 + seeded(`${workflow.id}|w-assign`)()   * 0.7,
+    create_record: 0.4 + seeded(`${workflow.id}|w-create`)()   * 0.7,
+    report:        0.2 + seeded(`${workflow.id}|w-report`)()   * 0.5,
+    chat_message:  0.3 + seeded(`${workflow.id}|w-chat`)()     * 0.7,
+  };
+  const weightSum = ACTION_TYPE_KEYS.reduce((s, k) => s + actionWeights[k], 0);
+
+  // Each triggered run averages 2.5 actions (range 1–4 across types).
+  const actionsPerRun = 2.5;
+
+  const actionsByType: Record<ActionTypeKey, number[]> = {
+    email:         [],
+    assign_group:  [],
+    create_record: [],
+    report:        [],
+    chat_message:  [],
+  };
+  let totalActionsTaken = 0;
+
   for (let i = 0; i < count; i++) {
     labels.push(labelFor(i));
-    // Per-bucket total runs around the baseline, then split by the
-    // intrinsic rate ± a small day-to-day jitter so the bar segments
-    // ripple naturally instead of repeating identical proportions.
-    const total = Math.max(1, Math.round(baseline * (0.7 + rnd() * 0.6)));
-    const dayRate = Math.max(0.5, Math.min(1, baseRate + (rnd() - 0.5) * 0.12));
-    const succ = Math.round(total * dayRate);
-    const fail = Math.max(0, total - succ);
-    succeeded.push(succ);
-    failed.push(fail);
-    totalSucc += succ;
-    totalFail += fail;
+    // Triggered count for this bucket, with some natural jitter.
+    const t = Math.max(1, Math.round(baseline * (0.7 + rnd() * 0.6)));
+    triggered.push(t);
+    totalTriggered += t;
+
+    // Active = currently in-progress at bucket close. Some buckets
+    // have zero active when nothing's mid-flight.
+    const a = Math.max(0, Math.round(t * activeRate * (0.5 + rnd() * 1.5)));
+    active.push(a);
+    totalActive += a;
+
+    // Completed = finished successfully (triggered − active − failed).
+    const f = Math.max(0, Math.round(t * failRate));
+    const c = Math.max(0, t - a - f);
+    completed.push(c);
+    totalCompleted += c;
+
+    // Actions for this bucket — distribute the bucket-total across
+    // action types using the workflow's weight distribution + small
+    // jitter so the stacked bar segments don't sit at identical
+    // proportions every period.
+    const bucketActions = Math.max(0, Math.round(t * actionsPerRun));
+    for (const k of ACTION_TYPE_KEYS) {
+      const weight = actionWeights[k] / weightSum;
+      const v = Math.max(0, Math.round(bucketActions * weight * (0.7 + rnd() * 0.6)));
+      actionsByType[k].push(v);
+      totalActionsTaken += v;
+    }
   }
-  const totalRuns = totalSucc + totalFail;
-  const priorTotal = Math.max(1, Math.round(totalRuns * (0.85 + rnd() * 0.3)));
-  // Prior period sits a little below the current rate so the trend
+
+  // Specialists activated — total persona invocations across the
+  // period. Weighted so each persona shows distinct usage; total
+  // sits in the 30–110% range of triggered runs (some triggers
+  // activate multiple specialists, others none).
+  const activationsByPersona: Record<string, number> = {};
+  let totalSpecialistsActivated = 0;
+  for (const p of AI_PERSONAS) {
+    const personaWeight = 0.05 + seeded(`${workflow.id}|p-${p.id}`)() * 0.35;
+    const c = Math.max(0, Math.round(totalTriggered * personaWeight));
+    activationsByPersona[p.id] = c;
+    totalSpecialistsActivated += c;
+  }
+
+  // Prior-period totals — sit a little below current so the trend
   // delta has a non-zero direction more often than not.
-  const priorRate = Math.max(0.6, Math.min(0.99, baseRate - 0.04 + rnd() * 0.06));
-  const priorSucc  = Math.max(0, Math.round(priorTotal * priorRate));
-  const successPct = totalRuns ? (totalSucc / totalRuns) * 100 : 0;
-  const priorSuccessPct = priorTotal ? (priorSucc / priorTotal) * 100 : 0;
-  const avgDur = 24 + Math.floor(rnd() * 90);
-  const priorAvg = avgDur + Math.floor(rnd() * 20 - 10);
-  const activeUsers = Math.max(1, Math.round(workflow.stats.reached * (range === '24h' ? 0.05 : range === '7d' ? 0.3 : range === '30d' ? 0.8 : 1)));
-  const priorUsers = Math.max(1, Math.round(activeUsers * (0.9 + rnd() * 0.2)));
-  // Per-bucket sparkline series — each metric tile pulls a parallel
-  // array. Total runs is just succeeded + failed by bucket; avg
-  // duration orbits the period average; active users orbit a
-  // per-bucket baseline so the curve has natural peaks and dips.
-  const totalRunsSeries  = succeeded.map((s, i) => s + (failed[i] ?? 0));
-  const avgDurationSeries: number[] = [];
-  for (let i = 0; i < count; i++) {
-    avgDurationSeries.push(Math.max(1, Math.round(avgDur * (0.7 + rnd() * 0.6))));
-  }
-  const usersBaseline = Math.max(1, activeUsers / Math.max(1, count));
-  const activeUsersSeries: number[] = [];
-  for (let i = 0; i < count; i++) {
-    const v = Math.round(usersBaseline * (0.55 + rnd() * 0.9));
-    activeUsersSeries.push(Math.max(0, v));
-  }
+  const triggeredPrior   = Math.max(1, Math.round(totalTriggered    * (0.85 + rnd() * 0.3)));
+  const activePrior      = Math.max(0, Math.round(totalActive       * (0.7  + rnd() * 0.6)));
+  const completedPrior   = Math.max(1, Math.round(totalCompleted    * (0.85 + rnd() * 0.3)));
+  const actionsPrior     = Math.max(1, Math.round(totalActionsTaken * (0.85 + rnd() * 0.3)));
+  const specialistsPrior = Math.max(0, Math.round(totalSpecialistsActivated * (0.8 + rnd() * 0.4)));
 
-  // People reached — distinct people the workflow successfully acted
-  // on in the period. Scales off the workflow's lifetime `reached`
-  // count using the same range factor as runs, then walks bucket-by-
-  // bucket so the BarChart reads as a real cadence.
-  const reachedPeriodTotal = Math.max(
-    0,
-    Math.round(workflow.stats.reached * rangeFactor),
-  );
-  const reachedBaseline = Math.max(1, reachedPeriodTotal / Math.max(1, count));
-  const peopleReachedSeries: number[] = [];
-  let peopleReachedCurrent = 0;
-  for (let i = 0; i < count; i++) {
-    const v = Math.max(0, Math.round(reachedBaseline * (0.55 + rnd() * 0.9)));
-    peopleReachedSeries.push(v);
-    peopleReachedCurrent += v;
-  }
-  const peopleReachedPrior = Math.max(
-    0,
-    Math.round(peopleReachedCurrent * (0.85 + rnd() * 0.3)),
-  );
-
-  // Heatmap series — full year of daily buckets (≈53 weekly columns
-  // of standard 14px squares). Alloy's `.gridWrap` is right-anchored
-  // with `overflow: hidden`, so generating more columns than the card
-  // can display guarantees the grid spans edge-to-edge at any width;
-  // the surplus simply clips off the left. Decoupled from `range` so
-  // the heatmap reads as a stable backdrop regardless of period.
-  const HEATMAP_DAYS = 371;
-  const hmRnd = seeded(`${workflow.id}|heatmap`);
-  const hmBaseline = Math.max(2, Math.round(workflow.runsTotal / 30));
-  const today = new Date();
-  const runsHeatmap: ActivityHeatMapDay[] = [];
-  for (let i = HEATMAP_DAYS - 1; i >= 0; i--) {
-    const d = new Date(today);
-    d.setDate(today.getDate() - i);
-    // Spread counts across 0–~2× baseline so the heatmap surfaces all
-    // five intensity steps. ~8% of days drop to zero (level 0), the
-    // rest scale from a sliver of activity up to peak load — otherwise
-    // a tight band collapses every cell to one or two shades.
-    const r = hmRnd();
-    const dayCount = r < 0.08
-      ? 0
-      : Math.max(0, Math.round(hmBaseline * (0.15 + r * 2.0)));
-    runsHeatmap.push({
-      date:  d.toISOString().slice(0, 10),
-      label: d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
-      count: dayCount,
-    });
-  }
   return {
-    totalRuns:      { current: totalRuns, prior: priorTotal },
-    successRatePct: { current: successPct, prior: priorSuccessPct },
-    avgDurationSec: { current: avgDur, prior: priorAvg },
-    activeUsers:    { current: activeUsers, prior: priorUsers },
-    peopleReached:  { current: peopleReachedCurrent, prior: peopleReachedPrior },
-    series:         {
+    totalTriggered:       { current: totalTriggered,           prior: triggeredPrior   },
+    totalActive:          { current: totalActive,              prior: activePrior      },
+    totalCompleted:       { current: totalCompleted,           prior: completedPrior   },
+    actionsTaken:         { current: totalActionsTaken,        prior: actionsPrior     },
+    specialistsActivated: { current: totalSpecialistsActivated, prior: specialistsPrior },
+    series:               {
       labels,
-      succeeded,
-      failed,
-      totalRuns:     totalRunsSeries,
-      avgDuration:   avgDurationSeries,
-      activeUsers:   activeUsersSeries,
-      peopleReached: peopleReachedSeries,
-      runsHeatmap,
+      triggered,
+      active,
+      completed,
+      actionsByType,
+      activationsByPersona,
     },
   };
 }
@@ -424,23 +434,10 @@ function fmtDuration(sec: number): string {
 }
 
 const WORKFLOW_STATUS_TAG: Record<AutomationStatus, { status: StatusTagStatus; label: string }> = {
-  active: { status: 'success', label: 'Active' },
-  paused: { status: 'warning', label: 'Paused' },
-  draft:  { status: 'neutral', label: 'Draft'  },
+  draft:    { status: 'neutral', label: 'Draft'    },
+  live:     { status: 'success', label: 'Live'     },
+  archived: { status: 'warning', label: 'Archived' },
 };
-
-/** ActivityHeatMap level ramps — five-stop colour stacks built from
- *  semantic Alloy hue tokens. Index 0 is the empty-cell track; 1–4
- *  step from a soft tertiary tint up to the hue's strong border, so
- *  the heat reads consistently across light / dark mode without any
- *  raw palette refs. */
-const HEATMAP_LEVELS_BLUE: [string, string, string, string, string] = [
-  'var(--color-bg-tertiary)',
-  'var(--color-blue-bg-tertiary)',
-  'var(--color-blue-bg-secondary)',
-  'var(--color-blue-content-tertiary)',
-  'var(--color-blue-content-secondary)',
-];
 
 const RUN_STATUS_TAG: Record<RecentRun['status'], { status: StatusTagStatus; label: string }> = {
   success: { status: 'success', label: 'Succeeded' },
@@ -498,6 +495,9 @@ export function AutomationDetailPage() {
   const detail = useWorkflowDetail(id);
 
   const [usageRange, setUsageRange]     = useState<UsageRange>('30d');
+  const [actionTypeFilter, setActionTypeFilter] = useState<Set<ActionTypeKey>>(
+    () => new Set(ACTION_TYPE_KEYS),
+  );
   const [activityTab, setActivityTab]   = useState<'runs' | 'edits'>('runs');
   const [summaryOpen, setSummaryOpen]   = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -656,180 +656,147 @@ export function AutomationDetailPage() {
               </SegmentedControl>
             </div>
 
-            {/* Top metric row — sparkline tiles. Total runs (heatmap)
-                  moved to the chart row below, paired with Success rate. */}
-            <div className={styles.metricRow}>
-              <MetricCard
-                title="Avg duration"
-                subtitle={`Per run — ${
-                  usageRange === '24h' ? 'past 24 hours' :
-                  usageRange === '7d'  ? 'past 7 days'   :
-                  usageRange === '30d' ? 'past 30 days'  :
-                                         'all time'
-                }`}
-                value={fmtDuration(usage.avgDurationSec.current)}
-                change={<Change current={usage.avgDurationSec.current} prior={usage.avgDurationSec.prior} invertDirection />}
-                chart={
-                  <Sparkline
-                    values={usage.series.avgDuration}
-                    color="var(--color-content-secondary)"
-                  />
-                }
-              />
-              <MetricCard
-                title="Active users"
-                subtitle={`Distinct users — ${
-                  usageRange === '24h' ? 'past 24 hours' :
-                  usageRange === '7d'  ? 'past 7 days'   :
-                  usageRange === '30d' ? 'past 30 days'  :
-                                         'all time'
-                }`}
-                value={fmtNum(usage.activeUsers.current)}
-                change={<Change current={usage.activeUsers.current} prior={usage.activeUsers.prior} />}
-                chart={
-                  <Sparkline
-                    values={usage.series.activeUsers}
-                    color="var(--color-purple-content-secondary)"
-                  />
-                }
-              />
-            </div>
-
-            {/* Chart row — Success rate ratio bar paired with the
-                  Total runs heatmap (which moved out of the top
-                  sparkline row to live alongside the ratio chart). */}
-            <div className={styles.chartRow}>
             {(() => {
-              const succTotal = usage.series.succeeded.reduce((s, v) => s + v, 0);
-              const failTotal = usage.series.failed.reduce((s, v) => s + v, 0);
-              const total     = succTotal + failTotal;
-              const succPct   = total > 0 ? (succTotal / total) * 100 : 0;
-              const failPct   = 100 - succPct;
+              const rangeLabel =
+                usageRange === '24h' ? 'past 24 hours' :
+                usageRange === '7d'  ? 'past 7 days'   :
+                usageRange === '30d' ? 'past 30 days'  :
+                                       'all time';
               return (
-                <ChartCard
-                  title="Success rate"
-                  subtitle={`Succeeded vs. failed — ${
-                    usageRange === '24h' ? 'past 24 hours' :
-                    usageRange === '7d'  ? 'past 7 days'   :
-                    usageRange === '30d' ? 'past 30 days'  :
-                                           'all time'
-                  }`}
-                >
-                  <div className={styles.successRateChartBody}>
-                    <div className={styles.successRateHero}>
-                      <span className={styles.successRateValue}>
-                        {Math.round(usage.successRatePct.current)}%
-                      </span>
-                      <Change
-                        current={usage.successRatePct.current}
-                        prior={usage.successRatePct.prior}
+                <>
+                  {/* Top metric row — Triggered / Active / Completed.
+                      Compact tiles with title + hero value, no inline
+                      chart so the row reads as a clean KPI strip. */}
+                  <div className={styles.metricRow}>
+                    <MetricCard
+                      title="Total triggered"
+                      subtitle={`Trigger fires — ${rangeLabel}`}
+                      value={fmtNum(usage.totalTriggered.current)}
+                      change={<Change current={usage.totalTriggered.current} prior={usage.totalTriggered.prior} />}
+                    />
+                    <MetricCard
+                      title="Total active"
+                      subtitle={`In-progress runs — ${rangeLabel}`}
+                      value={fmtNum(usage.totalActive.current)}
+                      change={<Change current={usage.totalActive.current} prior={usage.totalActive.prior} />}
+                    />
+                    <MetricCard
+                      title="Total completed"
+                      subtitle={`Successfully finished — ${rangeLabel}`}
+                      value={fmtNum(usage.totalCompleted.current)}
+                      change={<Change current={usage.totalCompleted.current} prior={usage.totalCompleted.prior} />}
+                    />
+                  </div>
+
+                  {/* Actions Taken — stacked BarChart with a filter pill
+                      row that toggles which action types are visible.
+                      Each segment carries the action type's semantic
+                      colour so the stack reads as a named breakdown. */}
+                  <ChartCard
+                    title="Actions taken"
+                    subtitle={`Actions executed by type — ${rangeLabel}`}
+                  >
+                    <div className={styles.peopleReachedBody}>
+                      <div className={styles.successRateHero}>
+                        <span className={styles.successRateValue}>
+                          {fmtNum(usage.actionsTaken.current)}
+                        </span>
+                        <Change
+                          current={usage.actionsTaken.current}
+                          prior={usage.actionsTaken.prior}
+                        />
+                      </div>
+
+                      {/* Filter pills — toggle each action type in/out
+                          of the stacked bar. At least one type stays
+                          on so the chart never empties out. */}
+                      <div className={styles.actionFilterRow} role="group" aria-label="Filter actions by type">
+                        {ACTION_TYPE_KEYS.map(key => {
+                          const active = actionTypeFilter.has(key);
+                          return (
+                            <button
+                              key={key}
+                              type="button"
+                              className={styles.actionFilterPill}
+                              data-active={active ? 'true' : 'false'}
+                              onClick={() => {
+                                setActionTypeFilter(prev => {
+                                  const next = new Set(prev);
+                                  if (next.has(key)) {
+                                    if (next.size > 1) next.delete(key);
+                                  } else {
+                                    next.add(key);
+                                  }
+                                  return next;
+                                });
+                              }}
+                              aria-pressed={active}
+                            >
+                              <span
+                                className={styles.actionFilterDot}
+                                style={{ background: ACTION_TYPE_COLORS[key] }}
+                                aria-hidden
+                              />
+                              {ACTION_TYPE_LABELS[key]}
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      <BarChart
+                        variant="stacked"
+                        height={200}
+                        showLegend={false}
+                        labels={usage.series.labels}
+                        series={ACTION_TYPE_KEYS
+                          .filter(k => actionTypeFilter.has(k))
+                          .map(k => ({
+                            label: ACTION_TYPE_LABELS[k],
+                            data:  usage.series.actionsByType[k],
+                            color: ACTION_TYPE_COLORS[k],
+                          }))}
+                        formatTooltipValue={(v) => fmtNum(v)}
                       />
                     </div>
+                  </ChartCard>
 
-                    {/* Alloy's official RatioBar — gives us the gap +
-                          2px-radius segment treatment for free. `flat`
-                          drops the dim/emphasized opacity dance so both
-                          segments render at full saturation. */}
-                    <RatioBar
-                      flat
-                      segments={[
-                        { label: 'Succeeded', value: succTotal, color: 'var(--color-success-fill)' },
-                        // Failed segment renders in slate so the bar reads
-                        // as a calm proportion view rather than alarming
-                        // the user with a red wash whenever any failures
-                        // exist. The success/failure split is still
-                        // unambiguous via the green Succeeded segment +
-                        // legend labels below.
-                        { label: 'Failed',    value: failTotal, color: 'var(--Alloy-slate-400)' },
-                      ]}
-                      ariaLabel={`${succTotal.toLocaleString()} succeeded, ${failTotal.toLocaleString()} failed`}
-                    />
-
-                  </div>
-                </ChartCard>
+                  {/* Specialists Activated — RatioBar with one segment
+                      per persona. `aiGradient` paints each segment as a
+                      slice of the purple→blue AI gradient so the bar
+                      reads as one continuous brand ramp; `showLegend`
+                      surfaces the persona / count breakdown beneath. */}
+                  <ChartCard
+                    title="Specialists activated"
+                    subtitle={`AI persona invocations — ${rangeLabel}`}
+                  >
+                    <div className={styles.peopleReachedBody}>
+                      <div className={styles.successRateHero}>
+                        <span className={styles.successRateValue}>
+                          {fmtNum(usage.specialistsActivated.current)}
+                        </span>
+                        <Change
+                          current={usage.specialistsActivated.current}
+                          prior={usage.specialistsActivated.prior}
+                        />
+                      </div>
+                      <RatioBar
+                        aiGradient
+                        height={32}
+                        segments={AI_PERSONAS.map(p => ({
+                          label: p.name,
+                          value: usage.series.activationsByPersona[p.id] ?? 0,
+                        }))}
+                        ariaLabel={`Specialist activations: ${
+                          AI_PERSONAS
+                            .map(p => `${p.name} ${usage.series.activationsByPersona[p.id] ?? 0}`)
+                            .join(', ')
+                        }`}
+                      />
+                    </div>
+                  </ChartCard>
+                </>
               );
             })()}
-
-            {/* Total runs — uses the Success rate card's top-bottom
-                layout (title + hero value over the chart) so the
-                heatmap reads as a true backdrop instead of a
-                squeezed inline panel. Mirrors `successRateChartBody`. */}
-            <ChartCard
-              title="Total runs"
-              subtitle={`Runs — ${
-                usageRange === '24h' ? 'past 24 hours' :
-                usageRange === '7d'  ? 'past 7 days'   :
-                usageRange === '30d' ? 'past 30 days'  :
-                                       'all time'
-              }`}
-            >
-              <div className={styles.successRateChartBody}>
-                <div className={styles.successRateHero}>
-                  <span className={styles.successRateValue}>
-                    {fmtNum(usage.totalRuns.current)}
-                  </span>
-                  <Change
-                    current={usage.totalRuns.current}
-                    prior={usage.totalRuns.prior}
-                  />
-                </div>
-                <ActivityHeatMap
-                  days={usage.series.runsHeatmap}
-                  levelColors={HEATMAP_LEVELS_BLUE}
-                />
-              </div>
-            </ChartCard>
-            </div>
-
-            {/* People reached — full-width BarChart card. Bars carry
-                the Alloy purple hue so the row visually pairs with the
-                Active users sparkline above (same series concept,
-                rolled up across the period). */}
-            <ChartCard
-              title="People reached"
-              subtitle={`Distinct people acted on — ${
-                usageRange === '24h' ? 'past 24 hours' :
-                usageRange === '7d'  ? 'past 7 days'   :
-                usageRange === '30d' ? 'past 30 days'  :
-                                       'all time'
-              }`}
-            >
-              <div className={styles.peopleReachedBody}>
-                <div className={styles.successRateHero}>
-                  <span className={styles.successRateValue}>
-                    {fmtNum(usage.peopleReached.current)}
-                  </span>
-                  <Change
-                    current={usage.peopleReached.current}
-                    prior={usage.peopleReached.prior}
-                  />
-                </div>
-                <BarChart
-                  variant="gradient"
-                  height={160}
-                  showLegend={false}
-                  labels={usage.series.labels}
-                  series={[
-                    {
-                      label: 'People reached',
-                      data:  usage.series.peopleReached,
-                      // Alloy doesn't ship a semantic mid-blue between
-                      // bg-secondary (#1969FE / 500) and content-tertiary
-                      // (#1969FE / 500), so we drop down to the raw
-                      // palette here — `--Alloy-blue-400` for the cap
-                      // line and `--Alloy-blue-300` for the gradient
-                      // floor land in the saturation range the design
-                      // wants. Matches Alloy's own DEFAULT_PALETTE which
-                      // also references --Alloy-* directly.
-                      color: 'var(--Alloy-blue-400)',
-                    },
-                  ]}
-                  gradientFrom="var(--Alloy-blue-400)"
-                  gradientTo="var(--Alloy-blue-300)"
-                  formatTooltipValue={(v) => fmtNum(v)}
-                />
-              </div>
-            </ChartCard>
 
           </section>
 
@@ -1051,25 +1018,22 @@ interface MetricCardProps {
   subtitle: string;
   value:    string;
   change?:  React.ReactNode;
-  /** Chart slot — caller decides between Sparkline, ActivityHeatMap,
-   *  or any other Alloy chart primitive that fits the card body. */
-  chart:    React.ReactNode;
+  /** Optional chart slot — when omitted, the card renders just the
+   *  title / subtitle / hero-value column without a right-side chart. */
+  chart?:   React.ReactNode;
 }
 
-/** Top-row metric tile — wraps an Alloy ChartCard with a 2-column body
- *  so the title/subtitle and hero value stack on the left and the
- *  sparkline (or any other chart slot) fills the right side. Bypasses
- *  ChartCard's automatic header so the heading sits on the left of
- *  the row alongside the hero value, instead of running across the
- *  top of the card and forcing the chart below. Title / subtitle
- *  typography mirrors Alloy's ChartCard tokens (text-sm medium /
- *  text-xs tertiary). */
+/** Top-row metric tile — wraps an Alloy ChartCard with the title /
+ *  subtitle / hero-value column on the left. When a `chart` prop is
+ *  passed, a second column hosts the chart slot. Bypasses ChartCard's
+ *  automatic header so the heading sits inside the body. Title /
+ *  subtitle typography mirrors Alloy's ChartCard tokens (text-sm
+ *  medium / text-xs tertiary). */
 function MetricCard({ title, subtitle, value, change, chart }: MetricCardProps) {
   return (
     // Pass an empty title so ChartCard's required prop is satisfied;
     // the empty header is hidden by CSS (`.metricCardEmptyHeader`)
-    // since rendering it would leave a blank H3 above our custom
-    // 2-column body.
+    // since rendering it would leave a blank H3 above our custom body.
     <ChartCard title="" className={styles.metricCardEmptyHeader}>
       <div className={styles.metricCardBody}>
         <div className={styles.metricCardLeft}>
@@ -1080,7 +1044,7 @@ function MetricCard({ title, subtitle, value, change, chart }: MetricCardProps) 
             {change}
           </div>
         </div>
-        <div className={styles.metricCardRight}>{chart}</div>
+        {chart && <div className={styles.metricCardRight}>{chart}</div>}
       </div>
     </ChartCard>
   );

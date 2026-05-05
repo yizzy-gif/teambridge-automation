@@ -6,7 +6,7 @@ export interface PromptConditionEntry {
 
 export interface PromptNode {
   id: string;
-  type: 'trigger' | 'condition' | 'action' | 'ai' | 'delay';
+  type: 'trigger' | 'condition' | 'action' | 'ai' | 'delay' | 'policy';
   selectedValue?: string;
   /** Multi-condition list for condition nodes. */
   conditions?: PromptConditionEntry[];

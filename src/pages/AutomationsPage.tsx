@@ -50,11 +50,13 @@ function loadWorkflowSettings(): WorkflowSettingsStore {
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 /**
- * Workflow-level lifecycle status — tracks whether the workflow accepts new
- * triggers. Drives the Active/Paused toggle on the card and the preview's
- * Resume/Pause button. Independent of run-level status below.
+ * Workflow-level lifecycle status — tracks where the workflow sits in its
+ * authoring lifecycle. Three states:
+ *   - draft:    in progress, not yet published
+ *   - live:     published and accepting triggers
+ *   - archived: previously live, now retired (no triggers, kept for history)
  */
-export type AutomationStatus = 'active' | 'paused' | 'draft';
+export type AutomationStatus = 'draft' | 'live' | 'archived';
 
 /**
  * Run-level status — the outcome of the most recent execution. Four terminal
@@ -125,7 +127,7 @@ export const MOCK_AUTOMATIONS: Automation[] = [
     name: 'New hire onboarding',
     description:
       'Onboarding compliance flow: employment-type gate, Onbi specialist handoff, and parallel branches for welcome comms (delayed task assignment) + HR record creation with packet delivery.',
-    status: 'active',
+    status: 'live',
     lastRunStatus: 'ongoing',
     trigger: 'Employee created',
     lastRun: '2 hours ago',
@@ -144,7 +146,7 @@ export const MOCK_AUTOMATIONS: Automation[] = [
     name: 'Timesheet approval reminder',
     description:
       'Weekly payroll prep with a multi-group condition (pending OR overtime), DataOps audit, and parallel branches: manager email with 24 hr SMS escalation + payroll webhook with audit report to finance.',
-    status: 'active',
+    status: 'live',
     lastRunStatus: 'failed',
     trigger: 'Schedule — weekly',
     lastRun: '3 days ago',
@@ -164,7 +166,7 @@ export const MOCK_AUTOMATIONS: Automation[] = [
     name: 'Shift swap notification',
     description:
       'Open-shift dispatch with policy guard, urgency multi-group condition, and Sched specialist routing: feed message → 15 min escalation SMS branch + manager status modify branch.',
-    status: 'paused',
+    status: 'archived',
     lastRunStatus: 'completed',
     trigger: 'Shift updated',
     lastRun: '1 week ago',
@@ -202,7 +204,7 @@ export const MOCK_AUTOMATIONS: Automation[] = [
     name: 'Contractor offboarding',
     description:
       'Offboarding compliance flow: policy gate, contractor-only condition, 1 hr grace delay, Onbi specialist checklist, then parallel access-revocation branch (modify + finance email + record lock) and equipment-recovery branch (assign task + audit report + people-ops chat).',
-    status: 'active',
+    status: 'live',
     lastRunStatus: 'exited',
     trigger: 'Contract end date',
     lastRun: '5 hours ago',
@@ -225,7 +227,7 @@ export const MOCK_AUTOMATIONS: Automation[] = [
     name: 'Premium shift dispatch & compliance',
     description:
       'Routes premium-rate clinical shifts: applies compliance policy, evaluates eligibility (credential, state, signature), then uses an AI specialist to fan out to a worker-outreach branch (with 30 min escalation delay) and an operations branch in parallel.',
-    status: 'active',
+    status: 'live',
     lastRunStatus: 'completed',
     trigger: 'Shift requested',
     lastRun: '11 minutes ago',
@@ -244,7 +246,7 @@ export const MOCK_AUTOMATIONS: Automation[] = [
     name: 'Credential expiry monitor',
     description:
       'Daily compliance sweep that flags users whose credentials expire within 30 days. DataOps audits the queue, fans out into a renewal-reminder cascade and an operations branch that blocks new shift assignments.',
-    status: 'active',
+    status: 'live',
     lastRunStatus: 'completed',
     trigger: 'Recurring — daily 8am',
     lastRun: 'Today at 08:00',
@@ -263,7 +265,7 @@ export const MOCK_AUTOMATIONS: Automation[] = [
     name: 'Pay period close & payroll prep',
     description:
       'Bi-weekly close-out flow with a 3-way fan-out: audit branch (report + record lock), comms branch (manager chat with delayed email escalation), and payroll branch (webhook + status modify).',
-    status: 'active',
+    status: 'live',
     lastRunStatus: 'ongoing',
     trigger: 'Recurring — bi-weekly Fri 5pm',
     lastRun: '23 minutes ago',
@@ -282,7 +284,7 @@ export const MOCK_AUTOMATIONS: Automation[] = [
     name: 'Eligibility branch demo',
     description:
       'Tiny showcase flow built to exercise the binary Yes/No branch on a condition node — auto-approve on the Yes path, manager email + 30 min escalation on the No path.',
-    status: 'active',
+    status: 'live',
     lastRunStatus: 'completed',
     trigger: 'User claims a shift',
     lastRun: '12 minutes ago',
@@ -301,7 +303,7 @@ export const MOCK_AUTOMATIONS: Automation[] = [
     name: 'Document e-sign reminder',
     description:
       'Compliance e-signing flow: when a Document is completed, Cassie shepherds the signer with a 48 hr delay then SMS reminder, while a parallel branch posts to records and chats the archive team.',
-    status: 'active',
+    status: 'live',
     lastRunStatus: 'completed',
     trigger: 'Document completed',
     lastRun: '6 hours ago',
@@ -320,9 +322,9 @@ export const MOCK_AUTOMATIONS: Automation[] = [
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const STATUS_LABEL: Record<AutomationStatus, string> = {
-  active: 'Active',
-  paused: 'Paused',
-  draft: 'Draft',
+  draft:    'Draft',
+  live:     'Live',
+  archived: 'Archived',
 };
 
 const CATEGORY_COLOR: Record<string, TagColor> = {
@@ -332,9 +334,9 @@ const CATEGORY_COLOR: Record<string, TagColor> = {
 };
 
 const STATUS_TAG_STATUS: Record<AutomationStatus, StatusTagStatus> = {
-  active: 'success', // green
-  paused: 'neutral', // gray
-  draft:  'neutral', // gray (distinct from Ongoing's info blue)
+  draft:    'neutral', // gray — unfinished authoring state
+  live:     'success', // green — published & running
+  archived: 'warning', // amber — retired but kept for history
 };
 
 /** Run-level status → Alloy StatusTag mapping. */
@@ -861,10 +863,11 @@ export function AutomationsPage() {
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
   /**
-   * Active tab id. Built-in values map to a status filter:
-   *   - 'all'     → no status filter
-   *   - 'draft'   → workflow-lifecycle status === 'draft'
-   *   - 'ongoing' / 'completed' / 'failed' / 'exited' → most-recent run status
+   * Active tab id. Built-in values map to the workflow lifecycle:
+   *   - 'all'      → no status filter
+   *   - 'draft'    → workflow-lifecycle status === 'draft'
+   *   - 'live'     → workflow-lifecycle status === 'live'
+   *   - 'archived' → workflow-lifecycle status === 'archived'
    * Any other string is a custom-tab id (created via the "+" tab below).
    * Custom tabs run with no status filter — equivalent to 'all' — and start
    * with the condition-filter list empty so the user gets a fresh blank
@@ -886,9 +889,9 @@ export function AutomationsPage() {
    *  the screen coordinates the menu should anchor to. `null` when the
    *  menu is closed. */
   const [tabMenu, setTabMenu] = useState<{ tabId: string; x: number; y: number } | null>(null);
-  /** Built-in run-status tab ids. Used to distinguish "real" status tabs
-   *  from user-created custom tabs in the filter chain below. */
-  const BUILT_IN_TAB_IDS = ['all', 'ongoing', 'completed', 'failed', 'exited', 'draft'] as const;
+  /** Built-in workflow-status tab ids. Used to distinguish "real" status
+   *  tabs from user-created custom tabs in the filter chain below. */
+  const BUILT_IN_TAB_IDS = ['all', 'draft', 'live', 'archived'] as const;
   const isBuiltInTab = (id: string): id is typeof BUILT_IN_TAB_IDS[number] =>
     (BUILT_IN_TAB_IDS as readonly string[]).includes(id);
 
@@ -1035,12 +1038,11 @@ export function AutomationsPage() {
       a.description.toLowerCase().includes(q) ||
       (a.tags ?? []).some(t => t.toLowerCase().includes(q));
     // Custom tabs run with no status filter (treat like 'all'); built-in
-     // ids fall back to their old status semantics.
+    // ids map directly to the workflow's lifecycle status.
     const matchesFilter =
       !isBuiltInTab(filter) ? true
         : filter === 'all' ? true
-        : filter === 'draft' ? a.status === 'draft'
-        : a.lastRunStatus === filter;
+        : a.status === filter;
     // Condition filters AND together: a workflow must satisfy every active
     // row to pass.
     const matchesConditions = activeConditions.every(c => applyFilterCondition(a, c));
@@ -1089,7 +1091,7 @@ export function AutomationsPage() {
                 second click on the same tab surfaces the menu. The
                 first click never trips the popup because at onClick
                 fire time React still has the OLD `filter` value. */}
-            {(['ongoing', 'completed', 'failed', 'exited', 'draft'] as const)
+            {(['draft', 'live', 'archived'] as const)
               .filter(id => !hiddenBuiltInTabs.has(id))
               .map(id => (
                 <Tabs.Tab
@@ -1288,11 +1290,7 @@ export function AutomationsPage() {
 
                 {/* ── Top row: status pill · spacer · last run ── */}
                 <div className={styles.cardTop}>
-                  {automation.status === 'draft' ? (
-                    <StatusBadge status="draft" />
-                  ) : automation.lastRunStatus ? (
-                    <RunStatusBadge status={automation.lastRunStatus} />
-                  ) : null}
+                  <StatusBadge status={automation.status} />
                   <span className={styles.cardTopSpacer} />
                   <span className={styles.cardLastRun}>
                     <ClockIcon size={12} />
@@ -1322,10 +1320,10 @@ export function AutomationsPage() {
                   >
                     <Switch
                       size="sm"
-                      checked={automation.status === 'active'}
+                      checked={automation.status === 'live'}
                       disabled={isDraft}
-                      onChange={(on) => setStatus(automation.id, on ? 'active' : 'paused')}
-                      aria-label={`${automation.status === 'active' ? 'Pause' : 'Activate'} ${automation.name}`}
+                      onChange={(on) => setStatus(automation.id, on ? 'live' : 'archived')}
+                      aria-label={`${automation.status === 'live' ? 'Archive' : 'Activate'} ${automation.name}`}
                     />
                   </span>
                 </div>
@@ -1376,17 +1374,9 @@ export function AutomationsPage() {
                       />
                     </TableCell>
                     <TableCell>
-                      {automation.status === 'draft' ? (
-                        <CellStatusTag status={STATUS_TAG_STATUS.draft}>
-                          {STATUS_LABEL.draft}
-                        </CellStatusTag>
-                      ) : automation.lastRunStatus ? (
-                        <CellStatusTag status={RUN_STATUS_TAG_STATUS[automation.lastRunStatus]}>
-                          {RUN_STATUS_LABEL[automation.lastRunStatus]}
-                        </CellStatusTag>
-                      ) : (
-                        <CellText variant="secondary">—</CellText>
-                      )}
+                      <CellStatusTag status={STATUS_TAG_STATUS[automation.status]}>
+                        {STATUS_LABEL[automation.status]}
+                      </CellStatusTag>
                     </TableCell>
                     <TableCell>
                       <CellTag color={CATEGORY_COLOR[automation.category]} variant="subtle">

@@ -265,17 +265,76 @@
 }
 
 /* ─── Metric row — sparkline tiles ──────────────────────────────────────── */
-/* Avg duration + Active users live here as ChartCard sparklines. Total
-   runs moved to .chartRow below to pair with Success rate. */
+/* Total triggered / Total active / Total completed live here as ChartCard
+   sparklines, 3 across on desktop. Stacks at narrow widths. */
 .metricRow {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-4);
 }
-@media (max-width: 960px) {
+@media (max-width: 1180px) {
+  .metricRow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 720px) {
   .metricRow {
     grid-template-columns: 1fr;
   }
+}
+
+/* Action-type filter row — toggleable pills above the stacked bar
+   chart. Each pill carries a hue-coded leading dot so the user can
+   trace the pill back to its segment in the chart. */
+.actionFilterRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.actionFilterPill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--color-border-opaque);
+  background: var(--color-bg-primary);
+  border-radius: var(--radius-full);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-secondary);
+  cursor: pointer;
+  transition:
+    background var(--duration-fast) var(--ease-default),
+    border-color var(--duration-fast) var(--ease-default),
+    color var(--duration-fast) var(--ease-default),
+    opacity var(--duration-fast) var(--ease-default);
+}
+.actionFilterPill:hover {
+  background: var(--color-bg-secondary);
+  color: var(--color-content-primary);
+}
+.actionFilterPill[data-active="false"] {
+  /* Off pills wash out so the visible-segment set reads at a glance. */
+  opacity: 0.5;
+}
+.actionFilterPill[data-active="true"] {
+  background: var(--color-bg-secondary);
+  border-color: var(--color-border-secondary);
+  color: var(--color-content-primary);
+}
+.actionFilterPill:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+}
+
+.actionFilterDot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
 }
 
 /* Chart row — Success rate ratio bar + Total runs heatmap, 2 across
