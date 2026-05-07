@@ -21,11 +21,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Configure git auth for private GitHub clones
+        # `package.json` references `alloy-design-system` via the
+        # `github:owner/repo` shorthand, which npm rewrites to an SSH
+        # clone (`ssh://git@github.com/...`). The runner has no SSH
+        # key, so we redirect any SSH/HTTPS GitHub clone through the
+        # PAT-authenticated HTTPS URL. The same redirect makes the
+        # explicit `git clone` step below work too.
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.ALLOY_ACCESS }}@github.com/".insteadOf "ssh://git@github.com/"
+          git config --global url."https://x-access-token:${{ secrets.ALLOY_ACCESS }}@github.com/".insteadOf "git@github.com:"
+
       - name: Clone Alloy Design System (sibling)
         # Alloy is a private sibling repo; the fine-grained PAT stored
         # as ALLOY_ACCESS has read-only Contents access scoped to that
-        # repo, so the clone authenticates without exposing the token
-        # to logs (GitHub Actions auto-masks secret values).
+        # repo. GitHub Actions auto-masks secret values in logs.
         run: git clone https://x-access-token:${{ secrets.ALLOY_ACCESS }}@github.com/yizzy-gif/alloy-design-system.git ${{ github.workspace }}/../Alloy
 
       - name: Set up Node.js
