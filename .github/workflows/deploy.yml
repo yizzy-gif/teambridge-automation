@@ -22,7 +22,11 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Clone Alloy Design System (sibling)
-        run: git clone https://github.com/yizzy-gif/alloy-design-system.git ${{ github.workspace }}/../Alloy
+        # Alloy is a private sibling repo; the fine-grained PAT stored
+        # as ALLOY_ACCESS has read-only Contents access scoped to that
+        # repo, so the clone authenticates without exposing the token
+        # to logs (GitHub Actions auto-masks secret values).
+        run: git clone https://x-access-token:${{ secrets.ALLOY_ACCESS }}@github.com/yizzy-gif/alloy-design-system.git ${{ github.workspace }}/../Alloy
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
