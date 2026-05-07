@@ -2,6 +2,11 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-6);
+  /* AppShell's `.contentInner` has no global gutter — each page owns
+     its own padding. Match AutomationsPage's 24px page gutter and
+     drop a 48px floor at the bottom so the last section breathes
+     before the scroll viewport ends. */
+  padding: var(--space-6) var(--space-6) var(--space-12);
 }
 
 .notFound {
