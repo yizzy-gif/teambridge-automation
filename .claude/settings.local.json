@@ -41,7 +41,21 @@
       "Read(//Users/unassignedlaptop9/.cache/teambridge-ui/alloy-design-system/src/components/Badge/**)",
       "Read(//Users/unassignedlaptop9/.cache/teambridge-ui/alloy-design-system/src/components/Tooltip/**)",
       "Bash(sips -s format png /tmp/div.svg --out /tmp/div.png)",
-      "Bash(curl -s http://localhost:5173/teambridge-automation/ -I)"
+      "Bash(curl -s http://localhost:5173/teambridge-automation/ -I)",
+      "Bash(ln -s /Users/unassignedlaptop9/Documents/MyClaudeFolder/Alloy ../Alloy)",
+      "Bash(git -C /Users/unassignedlaptop9/Documents/MyClaudeFolder/TeambridgeCode log --oneline -20)",
+      "Bash(ps -p 39316 -o pid,command)",
+      "Bash(cat /Users/unassignedlaptop9/Documents/MyClaudeFolder/Alloy/src/components/icons/ClockIcon.tsx 2>&1 | head -25)",
+      "Bash(grep -E \"text-3xl|text-4xl|text-4-5xl|text-3-5xl|text-2xl\" /Users/unassignedlaptop9/Documents/MyClaudeFolder/Alloy/src/tokens/*.css /Users/unassignedlaptop9/Documents/MyClaudeFolder/Alloy/src/styles/*.css 2>/dev/null | head -10)",
+      "Bash(find /Users/unassignedlaptop9/Documents/MyClaudeFolder/Alloy/src -name \"*.css\" | xargs grep -l \"text-4xl\\\\|text-3xl\" 2>/dev/null)",
+      "Bash(awk 'NR>=815 && NR<=905' src/pages/TemplatesPage.tsx)",
+      "Bash(awk 'NR>=814 && NR<=902 { gsub\\(/\\\\{/, \"&\"\\); gsub\\(/\\\\}/, \"&\"\\); for \\(i=1; i<=length\\($0\\); i++\\) { c=substr\\($0,i,1\\); if \\(c==\"{\"\\) opens++; if \\(c==\"}\"\\) closes++; } } END { print \"opens=\" opens \" closes=\" closes }' src/pages/TemplatesPage.tsx)",
+      "Bash(awk 'NR>=809 && NR<=905' src/pages/TemplatesPage.tsx)",
+      "Bash(awk 'NR>=846 && NR<=905' src/pages/TemplatesPage.tsx)",
+      "Bash(git -C /Users/unassignedlaptop9/Documents/MyClaudeFolder/Automation_2.0/.claude/worktrees/zen-neumann-99228a stash)",
+      "Bash(git -C /Users/unassignedlaptop9/Documents/MyClaudeFolder/Automation_2.0/.claude/worktrees/zen-neumann-99228a stash pop)",
+      "Bash(find /Users/unassignedlaptop9/Documents/MyClaudeFolder -type d -name \"teambridge-module\" -not -path \"*/node_modules/*\" 2>/dev/null | head -5)",
+      "Bash(find ~ -maxdepth 6 -type d \\\\\\( -name \"TeambridgeCode\" -o -name \"teambridge-module\" \\\\\\) -not -path \"*/node_modules/*\" 2>/dev/null | head -10)"
     ]
   }
 }

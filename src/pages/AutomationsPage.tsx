@@ -1,36 +1,49 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ComponentType } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { clsx } from 'clsx';
-import { Tabs } from '@alloy/components/Tabs';
+import {
+  DndContext,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  useDraggable,
+  useDroppable,
+  DragOverlay,
+} from '@dnd-kit/core';
+import type { DragEndEvent, DragStartEvent, DragOverEvent } from '@dnd-kit/core';
 import { StatusTag } from '@alloy/components/StatusTag';
 import type { StatusTagStatus } from '@alloy/components/StatusTag';
-import { Tag } from '@alloy/components/Tag';
 import type { TagColor } from '@alloy/components/Tag';
 import { ToggleButton } from '@alloy/components/ToggleButton';
 import { Switch } from '@alloy/components/Switch';
 import { Button } from '@alloy/components/Button';
+import { Badge } from '@alloy/components/Badge';
+import { Accordion, AccordionItem } from '@alloy/components/Accordion';
+import { DropdownMenu } from '@alloy/components/DropdownMenu';
+import { Dialog, DialogHeader, DialogContent, DialogFooter } from '@alloy/components/Dialog';
+import { useToast } from '@alloy/components/Toast';
 import { TextField, NumberField, SelectField } from '@alloy/components/Input';
 import { FilterPill, FilterPillGroup } from '@alloy/components/FilterPill';
-import { ListItem } from '@alloy/components/ListItem';
 import { PlusIcon } from '@alloy/components/icons/PlusIcon';
 import {
   Table, TableHeader, TableBody, TableRow, TableHead, TableCell,
   CellStack, CellStatusTag, CellTag, CellText,
 } from '@alloy/components/Table';
 import { Grid01Icon } from '@alloy/components/icons/Grid01Icon';
-import { Users03Icon } from '@alloy/components/icons/Users03Icon';
 import { CheckCircleIcon } from '@alloy/components/icons/CheckCircleIcon';
 import { ListBulletIcon } from '@alloy/components/icons/ListBulletIcon';
 import { ClockIcon } from '@alloy/components/icons/ClockIcon';
-import { Mail01Icon } from '@alloy/components/icons/Mail01Icon';
-import { Bell01Icon } from '@alloy/components/icons/Bell01Icon';
-import { ClipboardCheckIcon } from '@alloy/components/icons/ClipboardCheckIcon';
-import { MessageNotificationCircleIcon } from '@alloy/components/icons/MessageNotificationCircleIcon';
-import { RefreshCw04Icon } from '@alloy/components/icons/RefreshCw04Icon';
-import { BankIcon } from '@alloy/components/icons/BankIcon';
-import { PackageIcon } from '@alloy/components/icons/PackageIcon';
-import { TeambridgeAIIcon } from '@alloy/components/icons/TeambridgeAIIcon';
+import { DotsHorizontalIcon } from '@alloy/components/icons/DotsHorizontalIcon';
+import {
+  useWorkflowFolders,
+  useCreateFolder,
+  useRenameFolder,
+  useDeleteFolder,
+  useMoveWorkflowToFolder,
+  getWorkflowFolderId,
+  UNCATEGORIZED_FOLDER_ID,
+} from '@/features/workflows/folders';
+import type { WorkflowFolder } from '@/features/workflows/folders';
 import styles from './AutomationsPage.module.css';
 
 // ─── Workflow settings persistence ────────────────────────────────────────────
@@ -47,37 +60,39 @@ function loadWorkflowSettings(): WorkflowSettingsStore {
   } catch { return {}; }
 }
 
+// ─── Per-folder expand/collapse persistence ──────────────────────────────────
+// Folders default to expanded; the user's choice for each folder persists in
+// localStorage under `teambridge:manage:folder:{folderId}:expanded`.
+
+const FOLDER_EXPANDED_KEY = (id: string) => `teambridge:manage:folder:${id}:expanded`;
+
+function loadInitialExpandedSet(folders: WorkflowFolder[]): Set<string> {
+  const out = new Set<string>();
+  for (const f of folders) {
+    let stored: string | null = null;
+    try { stored = localStorage.getItem(FOLDER_EXPANDED_KEY(f.id)); } catch { /* noop */ }
+    // No persisted preference → default to expanded.
+    if (stored === null || stored === '1') out.add(f.id);
+  }
+  return out;
+}
+
+function persistExpanded(id: string, expanded: boolean) {
+  try { localStorage.setItem(FOLDER_EXPANDED_KEY(id), expanded ? '1' : '0'); } catch { /* noop */ }
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-/**
- * Workflow-level lifecycle status — tracks where the workflow sits in its
- * authoring lifecycle. Three states:
- *   - draft:    in progress, not yet published
- *   - live:     published and accepting triggers
- *   - archived: previously live, now retired (no triggers, kept for history)
- */
 export type AutomationStatus = 'draft' | 'live' | 'archived';
-
-/**
- * Run-level status — the outcome of the most recent execution. Four terminal
- * / ongoing states per product spec:
- *   - ongoing:   currently executing
- *   - completed: finished successfully (workflow turned off after purpose)
- *   - failed:    errored out or system-stopped due to error
- *   - exited:    soft stop — user stopped mid-run, or flow hit a dead end
- */
 export type RunStatus = 'ongoing' | 'completed' | 'failed' | 'exited';
 type ViewMode = 'card' | 'table';
 
 interface AutomationStats {
-  reached: number;  // successfully acted on (green)
-  pending: number;  // queued / awaiting step (blue)
-  skipped: number;  // condition unmet / filtered out (yellow)
+  reached: number;
+  pending: number;
+  skipped: number;
 }
 
-/** Keys for the action-node icons shown in the card cluster. Each maps to an
- * Alloy icon in ACTION_ICON_MAP below. Derive this list from the workflow's
- * action nodes once the graph is wired to the backend. */
 type ActionIconKey =
   | 'mail' | 'bell' | 'task' | 'message' | 'sync' | 'people'
   | 'finance' | 'package' | 'ai';
@@ -87,8 +102,6 @@ export interface Automation {
   name: string;
   description: string;
   status: AutomationStatus;
-  /** Status of the most recent run (separate from workflow-level `status`).
-   *  Undefined when the workflow has never run (draft). */
   lastRunStatus?: RunStatus;
   trigger: string;
   lastRun: string | null;
@@ -97,27 +110,15 @@ export interface Automation {
   category: string;
   stats: AutomationStats;
   tags?: string[];
-  /** Icons for action nodes used in the workflow, in graph order. */
   actionIcons?: ActionIconKey[];
-  /** When true, the card shows a subtle warning indicator. */
   hasErrors?: boolean;
-  // Preview-only metadata. TODO(api): populate from the workflow endpoint once wired.
+  /** Folder assignment. null === Uncategorized. Mock data ships everything as
+   *  null; the user moves cards into folders via drag and drop. */
+  folderId?: string | null;
   owner: { name: string; avatarUrl?: string };
-  createdAt: string;  // ISO
-  updatedAt: string;  // ISO
+  createdAt: string;
+  updatedAt: string;
 }
-
-const ACTION_ICON_MAP: Record<ActionIconKey, ComponentType<{ size?: number }>> = {
-  mail:    Mail01Icon,
-  bell:    Bell01Icon,
-  task:    ClipboardCheckIcon,
-  message: MessageNotificationCircleIcon,
-  sync:    RefreshCw04Icon,
-  people:  Users03Icon,
-  finance: BankIcon,
-  package: PackageIcon,
-  ai:      TeambridgeAIIcon,
-};
 
 // ─── Mock data ────────────────────────────────────────────────────────────────
 
@@ -186,7 +187,6 @@ export const MOCK_AUTOMATIONS: Automation[] = [
     description:
       'Multi-tier overtime check (regular > 35 OR single OT > 0 OR double OT > 0) with DataOps audit. Branch A warns the employee with delayed payroll webhook; Branch B notifies the manager and flags the record for review.',
     status: 'draft',
-    // lastRunStatus omitted — draft workflows have never run.
     trigger: 'Hours logged',
     lastRun: null,
     runsTotal: 0,
@@ -218,10 +218,6 @@ export const MOCK_AUTOMATIONS: Automation[] = [
     createdAt: '2025-09-09T09:30:00Z',
     updatedAt: '2026-04-16T11:00:00Z',
   },
-  // Showcase / demo workflow — exercises every node type (trigger, policy,
-  // multi-group condition, AI specialist, fan-out branches with delay +
-  // follow-up condition) end-to-end. Wired to the matching builder
-  // template `wf_01HK_PREMIUM_DISPATCH` in BuilderPage.tsx.
   {
     id: 'wf_01HK_PREMIUM_DISPATCH',
     name: 'Premium shift dispatch & compliance',
@@ -334,30 +330,13 @@ const CATEGORY_COLOR: Record<string, TagColor> = {
 };
 
 const STATUS_TAG_STATUS: Record<AutomationStatus, StatusTagStatus> = {
-  draft:    'neutral', // gray — unfinished authoring state
-  live:     'success', // green — published & running
-  archived: 'warning', // amber — retired but kept for history
-};
-
-/** Run-level status → Alloy StatusTag mapping. */
-const RUN_STATUS_LABEL: Record<RunStatus, string> = {
-  ongoing:   'Ongoing',
-  completed: 'Completed',
-  failed:    'Failed',
-  exited:    'Exited',
-};
-
-const RUN_STATUS_TAG_STATUS: Record<RunStatus, StatusTagStatus> = {
-  ongoing:   'info',    // primary/info blue
-  completed: 'success', // success green
-  failed:    'error',   // error / danger red
-  exited:    'warning', // warning orange / amber
+  draft:    'neutral',
+  live:     'success',
+  archived: 'warning',
 };
 
 // ─── Status badges ────────────────────────────────────────────────────────────
 
-/** Workflow-level status badge (Active / Paused / Draft). Currently unused on
- *  the card surface — kept available for workflow-lifecycle affordances. */
 function StatusBadge({ status }: { status: AutomationStatus }) {
   return (
     <StatusTag status={STATUS_TAG_STATUS[status]} size="sm">
@@ -366,88 +345,7 @@ function StatusBadge({ status }: { status: AutomationStatus }) {
   );
 }
 
-/** Run-level status badge — Ongoing / Completed / Failed / Exited. Drives the
- *  card's status pill and the table's Status column (most-recent run). */
-function RunStatusBadge({ status }: { status: RunStatus }) {
-  return (
-    <StatusTag status={RUN_STATUS_TAG_STATUS[status]} size="sm">
-      {RUN_STATUS_LABEL[status]}
-    </StatusTag>
-  );
-}
-
-// ─── Action icon cluster ─────────────────────────────────────────────────────
-// Up to 3 icons stacked/overlapped; a +N pip appears when more exist. A
-// placeholder is rendered when the workflow has no action nodes at all.
-
-const MAX_CLUSTER_ICONS = 3;
-
-function ActionIconCluster({ icons }: { icons: ActionIconKey[] | undefined }) {
-  const list = icons ?? [];
-  if (list.length === 0) {
-    return (
-      <div className={clsx(styles.iconCluster, styles.iconClusterEmpty)} aria-hidden>
-        <span className={styles.iconDot}>
-          <PackageIcon size={14} />
-        </span>
-      </div>
-    );
-  }
-  const visible = list.slice(0, MAX_CLUSTER_ICONS);
-  const overflow = list.length - visible.length;
-  return (
-    <div className={styles.iconCluster} aria-hidden>
-      {visible.map((key, i) => {
-        const Icon = ACTION_ICON_MAP[key];
-        return (
-          <span key={`${key}-${i}`} className={styles.iconDot}>
-            <Icon size={14} />
-          </span>
-        );
-      })}
-      {overflow > 0 && (
-        <span className={clsx(styles.iconDot, styles.iconOverflow)}>+{overflow}</span>
-      )}
-    </div>
-  );
-}
-
-// ─── Segmented stats bar ──────────────────────────────────────────────────────
-
-function AutomationBar({ stats, compact }: { stats: AutomationStats; compact?: boolean }) {
-  const total = stats.reached + stats.pending + stats.skipped;
-  if (total === 0) return null;
-  const pReached = (stats.reached / total) * 100;
-  const pPending = (stats.pending / total) * 100;
-  const pSkipped = (stats.skipped / total) * 100;
-  return (
-    <div className={clsx(styles.statsWrap, compact && styles.statsWrapCompact)}>
-      <div className={styles.statsBar}>
-        {pReached > 0 && <div className={styles.barReached} style={{ width: `${pReached}%` }} />}
-        {pPending > 0 && <div className={styles.barPending} style={{ width: `${pPending}%` }} />}
-        {pSkipped > 0 && <div className={styles.barSkipped} style={{ width: `${pSkipped}%` }} />}
-      </div>
-      {!compact && (
-        <div className={styles.statsLegend}>
-          <span className={styles.legendItem}>
-            <span className={clsx(styles.legendDot, styles.dotReached)} />
-            {stats.reached} reached
-          </span>
-          <span className={styles.legendItem}>
-            <span className={clsx(styles.legendDot, styles.dotPending)} />
-            {stats.pending} pending
-          </span>
-          <span className={styles.legendItem}>
-            <span className={clsx(styles.legendDot, styles.dotSkipped)} />
-            {stats.skipped} skipped
-          </span>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── Empty state ──────────────────────────────────────────────────────────────
+// ─── Empty states ─────────────────────────────────────────────────────────────
 
 function EmptyState({ onNew }: { onNew: () => void }) {
   return (
@@ -467,11 +365,9 @@ function EmptyState({ onNew }: { onNew: () => void }) {
 }
 
 // ─── Filter framework ────────────────────────────────────────────────────────
-// Condition-based filter builder. Each row is a `{ field, operator, value }`
-// triple — e.g. `{ field: 'status', operator: 'is', value: 'completed' }` —
-// and the workflow list is filtered by the AND of every active condition.
-// Per-field operator sets keep the editor honest: a date field can't pick
-// "Contains", a text field can't pick "Before", etc.
+// Condition-based filter builder. Status filtering — previously a tab strip —
+// is now one of the filter facets here, so the toolbar carries a single
+// composer instead of two parallel filter mechanisms.
 
 type FilterFieldId =
   | 'name'
@@ -483,46 +379,33 @@ type FilterFieldId =
   | 'tags';
 
 type FilterOperator =
-  // Text
   | 'contains'
   | 'does_not_contain'
   | 'is_empty'
   | 'is_not_empty'
-  // Enum / select
   | 'is'
   | 'is_not'
-  // Date
   | 'before'
   | 'after'
-  // Number
   | 'gt'
   | 'lt'
   | 'eq';
 
 interface FilterCondition {
-  /** Stable id so React can key rows + callers can patch a single row. */
   id: string;
   field: FilterFieldId;
   operator: FilterOperator;
-  /** String-coerced value. The renderer interprets it per field type
-   *  (number / date / select) at apply time. */
   value: string;
 }
 
 interface FilterFieldDef {
   id: FilterFieldId;
   label: string;
-  /** Drives the value-input control type. */
   type: 'text' | 'select' | 'date' | 'number';
-  /** When `type === 'select'`, the canonical option list. */
-  options?: string[];
-  /** Per-field operator allowlist — surfaces only the operators that make
-   *  semantic sense for the field's value type. */
+  options?: { value: string; label: string }[];
   operators: FilterOperator[];
 }
 
-/** Operator label registry — short, sentence-case copy used in the
- *  operator dropdown. Keep these consistent with the design's pill copy. */
 const FILTER_OP_LABEL: Record<FilterOperator, string> = {
   contains:        'Contains',
   does_not_contain: 'Does Not Contain',
@@ -537,9 +420,6 @@ const FILTER_OP_LABEL: Record<FilterOperator, string> = {
   eq:              'Equals',
 };
 
-/** Surface-level field definitions — every field the filter editor knows
- *  how to compose a condition for. Order here determines the order in
- *  the field picker. */
 const FILTER_FIELDS: FilterFieldDef[] = [
   {
     id: 'name',
@@ -548,17 +428,33 @@ const FILTER_FIELDS: FilterFieldDef[] = [
     operators: ['contains', 'does_not_contain', 'is_empty', 'is_not_empty'],
   },
   {
+    // The Status facet now subsumes the removed tab strip. Options match the
+    // previously-visible tabs (Ongoing / Completed / Failed / Exited / Draft);
+    // adding multiple Status pills in succession yields an OR-ish workflow
+    // because each row ANDs against a distinct lifecycle state — but the
+    // shared expectation here is the user wants one status at a time, which
+    // mirrors the legacy tab behaviour.
     id: 'status',
     label: 'Status',
     type: 'select',
-    options: ['ongoing', 'completed', 'failed', 'exited', 'draft'],
+    options: [
+      { value: 'ongoing',   label: 'Ongoing' },
+      { value: 'completed', label: 'Completed' },
+      { value: 'failed',    label: 'Failed' },
+      { value: 'exited',    label: 'Exited' },
+      { value: 'draft',     label: 'Draft' },
+    ],
     operators: ['is', 'is_not'],
   },
   {
     id: 'category',
     label: 'Category',
     type: 'select',
-    options: ['HR', 'Finance', 'Scheduling'],
+    options: [
+      { value: 'HR',         label: 'HR' },
+      { value: 'Finance',    label: 'Finance' },
+      { value: 'Scheduling', label: 'Scheduling' },
+    ],
     operators: ['is', 'is_not'],
   },
   {
@@ -587,13 +483,10 @@ const FILTER_FIELDS: FilterFieldDef[] = [
   },
 ];
 
-/** Resolve a field id back to its definition. */
 function getFilterFieldDef(id: FilterFieldId): FilterFieldDef {
   return FILTER_FIELDS.find(f => f.id === id) ?? FILTER_FIELDS[0];
 }
 
-/** Pull the value an automation has for the given field, normalized to the
- *  comparable shape the operator switch expects. */
 function getAutomationFieldValue(
   a: Automation,
   field: FilterFieldId,
@@ -610,17 +503,11 @@ function getAutomationFieldValue(
   }
 }
 
-/** Apply a single FilterCondition to an Automation — returns true if the
- *  workflow passes the rule. Handles per-field/operator semantics so the
- *  caller can keep `evaluateConditionFilters` as a one-liner. */
 function applyFilterCondition(a: Automation, c: FilterCondition): boolean {
   const def    = getFilterFieldDef(c.field);
   const raw    = getAutomationFieldValue(a, c.field);
   const valStr = c.value.trim().toLowerCase();
 
-  // For text/array fields, normalize to a lowercase string for substring
-  // checks. Arrays (tags) join with " " so a "contains" match can hit any
-  // tag in the list.
   const haystack = (() => {
     if (Array.isArray(raw)) return raw.join(' ').toLowerCase();
     if (typeof raw === 'string') return raw.toLowerCase();
@@ -667,7 +554,6 @@ function applyFilterCondition(a: Automation, c: FilterCondition): boolean {
   }
 }
 
-/** Default condition seed — used when "+ Add Filter" creates a fresh row. */
 function makeBlankFilter(): FilterCondition {
   const first = FILTER_FIELDS[0];
   return {
@@ -678,36 +564,29 @@ function makeBlankFilter(): FilterCondition {
   };
 }
 
+/** Pretty-print a filter pill summary, mapping a select-field's raw value
+ *  back to its visible option label. */
+function formatFilterValue(c: FilterCondition): string {
+  const def = getFilterFieldDef(c.field);
+  if (def.type === 'select' && def.options) {
+    return def.options.find(o => o.value === c.value)?.label ?? c.value;
+  }
+  return c.value;
+}
+
 // ─── FilterPopover ───────────────────────────────────────────────────────────
-// Single-row composer for ONE new filter at a time. Per-product spec the
-// popover never stacks multiple drafts: the user opens it via "+ Filter",
-// edits one `{ field, operator, value }` triple, and the row auto-commits
-// the moment it becomes valid (a value is picked / typed for value-needing
-// operators, or an empty-state operator is selected). Clicking outside
-// dismisses without committing if the row is still incomplete.
-//
-// Existing committed filters are not edited here — they live as chips in
-// the FilterPillGroup outside the popover. Removing a chip removes that
-// committed row.
 
 interface FilterPopoverProps {
-  /** The single in-progress draft row being edited. */
   draft: FilterCondition;
-  /** Patch the draft as the user edits a control. */
   onChange: (next: FilterCondition) => void;
-  /** Commit the draft to the active filters list and close. */
   onCommit: () => void;
-  /** Close without committing — used by outside-click + Esc. */
   onClose: () => void;
-  /** Bounding rect of the trigger so the popover anchors below it. */
   anchorRect: DOMRect;
 }
 
 function FilterPopover({ draft, onChange, onCommit, onClose, anchorRect }: FilterPopoverProps) {
   const ref = useRef<HTMLDivElement>(null);
 
-  // Outside click — close the popover when the user mousedowns anywhere
-  // outside the panel itself.
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node;
@@ -717,7 +596,6 @@ function FilterPopover({ draft, onChange, onCommit, onClose, anchorRect }: Filte
     return () => document.removeEventListener('mousedown', onDown);
   }, [onClose]);
 
-  // Escape closes too.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', onKey);
@@ -725,15 +603,9 @@ function FilterPopover({ draft, onChange, onCommit, onClose, anchorRect }: Filte
   }, [onClose]);
 
   const def = getFilterFieldDef(draft.field);
-  // If the operator no longer fits the (possibly just-changed) field, snap
-  // it to the field's first valid op so the row never carries an invalid
-  // pair.
   const op = def.operators.includes(draft.operator) ? draft.operator : def.operators[0];
   const showValue = op !== 'is_empty' && op !== 'is_not_empty';
 
-  /** Auto-commit on Enter for free-text + number values. Selects (single-
-   *  click pick) and dates (single-click pick) call `onCommit` directly
-   *  from their own onChange handlers. */
   const onValueKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' && draft.value.trim() !== '') {
       e.preventDefault();
@@ -776,9 +648,6 @@ function FilterPopover({ draft, onChange, onCommit, onClose, anchorRect }: Filte
               const nextOperator = nextOp as FilterOperator;
               const next = { ...draft, operator: nextOperator };
               onChange(next);
-              // Empty-state operators don't need a value — the row is
-              // complete the moment one is selected, so commit straight
-              // away to match the "auto-add when fully filled" rule.
               if (nextOperator === 'is_empty' || nextOperator === 'is_not_empty') {
                 onCommit();
               }
@@ -796,12 +665,10 @@ function FilterPopover({ draft, onChange, onCommit, onClose, anchorRect }: Filte
                 value={draft.value}
                 onChange={(v) => {
                   onChange({ ...draft, value: v });
-                  // Single-click select: as soon as the user picks a
-                  // value the row is complete, so commit.
                   if (v.trim() !== '') onCommit();
                 }}
                 placeholder="Select value…"
-                options={def.options.map(v => ({ value: v, label: v }))}
+                options={def.options}
                 aria-label="Filter value"
               />
             );
@@ -821,10 +688,6 @@ function FilterPopover({ draft, onChange, onCommit, onClose, anchorRect }: Filte
             );
           }
           if (def.type === 'date') {
-            // Alloy doesn't expose a DateField yet; the raw native
-            // input keeps the date picker behaviour while the
-            // wrapping `.filterValueInput` styles match the other
-            // Alloy field shells (32px, outlined, focus ring).
             return (
               <input
                 className={styles.filterValueInput}
@@ -857,105 +720,399 @@ function FilterPopover({ draft, onChange, onCommit, onClose, anchorRect }: Filte
   );
 }
 
+// ─── Workflow card ───────────────────────────────────────────────────────────
+// Extracted from the page body so the dnd-kit draggable wrapper can sit
+// outside the <Link> navigation target. Click → navigate (handled by Link),
+// drag → move (handled by the outer draggable wrapper). The PointerSensor
+// activation distance below ensures click and drag don't fight.
+
+interface WorkflowCardProps {
+  automation: Automation;
+  onToggleStatus: (id: string, status: AutomationStatus) => void;
+  /** When the parent renders this inside the DragOverlay — strip pointer
+   *  affordances so the floating ghost doesn't try to navigate. */
+  asOverlay?: boolean;
+}
+
+function WorkflowCardInner({ automation, onToggleStatus, asOverlay }: WorkflowCardProps) {
+  const isDraft = automation.status === 'draft';
+
+  // The Switch is a non-navigating, non-dragging affordance. We intercept
+  // pointerdown so dnd-kit's PointerSensor never receives it (drag never
+  // starts), and click + keydown so the surrounding <Link> never navigates.
+  const stopAll = (e: React.SyntheticEvent) => {
+    e.stopPropagation();
+    if ('preventDefault' in e) (e as React.MouseEvent).preventDefault?.();
+  };
+
+  const cardBody = (
+    <>
+      {automation.hasErrors && (
+        <span className={styles.cardWarningDot} aria-label="Has recent errors" />
+      )}
+
+      <div className={styles.cardTop}>
+        <StatusBadge status={automation.status} />
+        <span className={styles.cardTopSpacer} />
+        <span className={styles.cardLastRun}>
+          <ClockIcon size={12} />
+          {automation.lastRun ?? 'Never'}
+        </span>
+      </div>
+
+      <span className={styles.cardName}>{automation.name}</span>
+
+      <div className={styles.cardFooter}>
+        <div className={styles.cardStats}>
+          <span className={styles.cardStat} title="Total runs">
+            <ListBulletIcon size={12} />
+            {automation.runsTotal}
+          </span>
+          <span className={styles.cardStat} title="Successful runs">
+            <CheckCircleIcon size={12} />
+            {automation.runsSuccessful}
+          </span>
+        </div>
+        {!asOverlay && (
+          <span
+            data-card-action
+            onPointerDown={stopAll}
+            onMouseDown={stopAll}
+            onClick={stopAll}
+            onKeyDown={(e) => e.stopPropagation()}
+          >
+            <Switch
+              size="sm"
+              checked={automation.status === 'live'}
+              disabled={isDraft}
+              onChange={(on) => onToggleStatus(automation.id, on ? 'live' : 'archived')}
+              aria-label={`${automation.status === 'live' ? 'Archive' : 'Activate'} ${automation.name}`}
+            />
+          </span>
+        )}
+      </div>
+    </>
+  );
+
+  if (asOverlay) {
+    return <div className={clsx(styles.card, styles.cardOverlay)}>{cardBody}</div>;
+  }
+  return (
+    <Link
+      to={`/automations/${automation.id}`}
+      className={styles.card}
+      aria-label={`Open ${automation.name}`}
+    >
+      {cardBody}
+    </Link>
+  );
+}
+
+/** Drag-source wrapper around WorkflowCardInner. Sits outside the <Link>
+ *  so dnd-kit's listeners attach to a parent <div> while the inner <Link>
+ *  remains a real anchor — keyboard nav, right-click, copy-link all keep
+ *  working natively. PointerSensor distance:6 in the DndContext below
+ *  keeps short clicks from initiating a drag. */
+function DraggableWorkflowCard(props: WorkflowCardProps) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: `wf:${props.automation.id}`,
+    data: { type: 'workflow', workflowId: props.automation.id },
+  });
+  return (
+    <div
+      ref={setNodeRef}
+      className={clsx(styles.cardDragWrap, isDragging && styles.cardDragging)}
+      {...attributes}
+      {...listeners}
+    >
+      <WorkflowCardInner {...props} />
+    </div>
+  );
+}
+
+// ─── EditableFolderName ──────────────────────────────────────────────────────
+// Inline-editable folder name — same affordance as the workflow-name field
+// in the builder TopBar. Click the text to edit; Enter blurs (commits);
+// Escape reverts; an empty trimmed value reverts. The visible chrome is a
+// dotted hover underline that solidifies on focus.
+//
+// The system folder ("Uncategorized") opts out by passing readOnly=true,
+// which renders a plain non-editable span.
+
+interface EditableFolderNameProps {
+  name: string;
+  readOnly?: boolean;
+  /** Focus the contenteditable on mount. Used by the "draft" row in the
+   *  add-folder flow so the user can start typing immediately. */
+  autoFocus?: boolean;
+  /** Visible hint text when the field is empty. The contenteditable can't
+   *  use a real `placeholder` attribute, so we render it via CSS
+   *  `:empty::before { content: attr(data-placeholder) }`. */
+  placeholder?: string;
+  /** Imperative focus hook so external triggers (DropdownMenu's "Rename"
+   *  item) can put the field into edit mode. */
+  editHandle?: { focus: () => void };
+  onCommit: (next: string) => void;
+  /** Called on Escape, or on blur when the trimmed value is empty. The
+   *  draft row uses this to dismiss itself when the user backs out. */
+  onCancel?: () => void;
+}
+
+function EditableFolderName({
+  name,
+  readOnly,
+  autoFocus,
+  placeholder,
+  editHandle,
+  onCommit,
+  onCancel,
+}: EditableFolderNameProps) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const focused = useRef(false);
+
+  // Sync external `name` changes into the DOM only when the user is not
+  // actively typing — same pattern the BuilderPage TopBar uses to avoid
+  // clobbering the caret on every parent re-render.
+  useEffect(() => {
+    const el = ref.current;
+    if (el && !focused.current && el.textContent !== name) {
+      el.textContent = name;
+    }
+  }, [name]);
+
+  // Initial mount — seed the contenteditable with the current name and
+  // (for the draft row) auto-focus so the user can start typing.
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.textContent = name;
+    if (autoFocus) {
+      el.focus();
+      // Caret-at-end for empty draft, select-all for non-empty initial.
+      if (name) {
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        const sel = window.getSelection();
+        sel?.removeAllRanges();
+        sel?.addRange(range);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Expose a focus() to the parent. Selecting all text on entry mirrors the
+  // builder's behaviour and is friendlier than dropping a caret somewhere
+  // in the middle of the existing name.
+  useEffect(() => {
+    if (!editHandle) return;
+    editHandle.focus = () => {
+      const el = ref.current;
+      if (!el) return;
+      el.focus();
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+    };
+  }, [editHandle]);
+
+  if (readOnly) {
+    return <span className={styles.folderName}>{name}</span>;
+  }
+
+  return (
+    <span
+      ref={ref}
+      className={styles.folderNameEditable}
+      contentEditable
+      suppressContentEditableWarning
+      role="textbox"
+      aria-label="Folder name"
+      spellCheck={false}
+      data-placeholder={placeholder}
+      // Stop the click + pointerdown from bubbling to the accordion's
+      // hit-target button (which would toggle expand/collapse). Editing
+      // the name should never collapse the folder.
+      onClick={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+      onPointerDown={(e) => e.stopPropagation()}
+      onFocus={() => { focused.current = true; }}
+      onBlur={(e) => {
+        focused.current = false;
+        const text = (e.currentTarget.textContent ?? '').replace(/\n/g, '').trim();
+        if (text === '') {
+          // Empty → revert (rename) or dismiss (draft).
+          if (onCancel) {
+            onCancel();
+          } else {
+            e.currentTarget.textContent = name;
+          }
+          return;
+        }
+        if (text === name) {
+          // No-op — name unchanged, leave DOM as-is.
+          return;
+        }
+        onCommit(text);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          e.currentTarget.blur();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          if (ref.current) ref.current.textContent = name;
+          if (onCancel) onCancel();
+          e.currentTarget.blur();
+        }
+      }}
+    />
+  );
+}
+
+// ─── Folder section ──────────────────────────────────────────────────────────
+
+interface FolderSectionProps {
+  folder: WorkflowFolder;
+  workflows: Automation[];
+  expanded: boolean;
+  onExpandedChange: (expanded: boolean) => void;
+  onToggleStatus: (id: string, status: AutomationStatus) => void;
+  onRename: (next: string) => void;
+  onDelete: () => void;
+  /** True while a card is being dragged anywhere on the page. Drives the
+   *  drop-target tinting on this folder's body. */
+  dragActive: boolean;
+}
+
+function FolderSection({
+  folder,
+  workflows,
+  expanded,
+  onExpandedChange,
+  onToggleStatus,
+  onRename,
+  onDelete,
+  dragActive,
+}: FolderSectionProps) {
+  // Single droppable wrapping the entire AccordionItem (header + body) so
+  // a card hovering over a collapsed folder still registers as "over" —
+  // the body alone has 0 height when collapsed and would never appear
+  // under the pointer.
+  const { setNodeRef: setSectionRef, isOver } = useDroppable({
+    id: `folder:${folder.id}`,
+    data: { type: 'folder', folderId: folder.id },
+  });
+
+  const isUncategorized = folder.id === UNCATEGORIZED_FOLDER_ID;
+
+  // Imperative handle so the DropdownMenu's "Rename" item can put the
+  // contenteditable into edit mode (focus + select all). Plain object
+  // mutated by the editor on mount; no state needed.
+  const editHandle = useMemo(() => ({ focus: () => undefined }), []);
+
+  const label = (
+    <EditableFolderName
+      name={folder.name}
+      readOnly={isUncategorized}
+      editHandle={editHandle}
+      onCommit={onRename}
+    />
+  );
+
+  // Trailing slot — count badge + (for user folders) a DropdownMenu of
+  // folder actions. Wrapped in a stop-prop span so clicks on the menu
+  // trigger don't bubble to the accordion's expand/collapse hit target.
+  const trailing = (
+    <span
+      className={styles.folderTrailing}
+      onMouseDown={e => e.stopPropagation()}
+      onClick={e => e.stopPropagation()}
+    >
+      <Badge variant="neutral">{workflows.length}</Badge>
+      {!isUncategorized && (
+        <DropdownMenu
+          placement="bottom-end"
+          width={180}
+          trigger={
+            <Button
+              variant="ghost"
+              size="xs"
+              iconOnly
+              aria-label={`Folder options for ${folder.name}`}
+            >
+              <DotsHorizontalIcon size={14} />
+            </Button>
+          }
+          groups={[
+            {
+              id: 'folder-actions',
+              options: [
+                { id: 'rename', label: 'Rename',         onClick: () => editHandle.focus() },
+                { id: 'delete', label: 'Delete folder',  onClick: onDelete, destructive: true },
+              ],
+            },
+          ]}
+        />
+      )}
+    </span>
+  );
+
+  return (
+    <div
+      ref={setSectionRef}
+      className={clsx(
+        styles.folderSection,
+        dragActive && styles.folderSectionDropZone,
+        isOver && styles.folderSectionDropActive,
+      )}
+    >
+      <AccordionItem
+        value={folder.id}
+        label={label}
+        trailingSlot={trailing}
+        expanded={expanded}
+        onExpandedChange={onExpandedChange}
+      >
+        <div className={styles.folderBody}>
+          {workflows.length === 0 ? (
+            <div className={styles.folderEmpty}>Drag workflows here</div>
+          ) : (
+            <div className={styles.list}>
+              {workflows.map((automation) => (
+                <DraggableWorkflowCard
+                  key={automation.id}
+                  automation={automation}
+                  onToggleStatus={onToggleStatus}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      </AccordionItem>
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export function AutomationsPage() {
   const navigate = useNavigate();
+  const { toast } = useToast();
   const [search, setSearch] = useState('');
-  /**
-   * Active tab id. Built-in values map to the workflow lifecycle:
-   *   - 'all'      → no status filter
-   *   - 'draft'    → workflow-lifecycle status === 'draft'
-   *   - 'live'     → workflow-lifecycle status === 'live'
-   *   - 'archived' → workflow-lifecycle status === 'archived'
-   * Any other string is a custom-tab id (created via the "+" tab below).
-   * Custom tabs run with no status filter — equivalent to 'all' — and start
-   * with the condition-filter list empty so the user gets a fresh blank
-   * working surface.
-   */
-  const [filter, setFilter] = useState<string>('all');
+  const [view, setView] = useState<ViewMode>('card');
 
-  /** User-created tabs that sit between the built-in status tabs and the
-   *  trailing "+" tab. Each entry just carries an id + label; per-tab
-   *  filter state lives in `conditionFilters` and is reset whenever a new
-   *  tab is added (matching the "no filter applied" intent). */
-  const [customTabs, setCustomTabs] = useState<Array<{ id: string; label: string }>>([]);
-  /** Hidden built-in tab ids. The user can hide built-in status tabs via
-   *  the per-tab "⋯ → Remove" menu (the first "All" tab is always
-   *  protected and never shows the menu). The set persists for the
-   *  session so a hidden tab stays hidden until it's re-added. */
-  const [hiddenBuiltInTabs, setHiddenBuiltInTabs] = useState<Set<string>>(new Set());
-  /** Per-tab context-menu open state: which tab's "⋯" was clicked, plus
-   *  the screen coordinates the menu should anchor to. `null` when the
-   *  menu is closed. */
-  const [tabMenu, setTabMenu] = useState<{ tabId: string; x: number; y: number } | null>(null);
-  /** Built-in workflow-status tab ids. Used to distinguish "real" status
-   *  tabs from user-created custom tabs in the filter chain below. */
-  const BUILT_IN_TAB_IDS = ['all', 'draft', 'live', 'archived'] as const;
-  const isBuiltInTab = (id: string): id is typeof BUILT_IN_TAB_IDS[number] =>
-    (BUILT_IN_TAB_IDS as readonly string[]).includes(id);
+  // ── Folder data ──────────────────────────────────────────────────────────
+  const { folders, assignments } = useWorkflowFolders();
+  const createFolder = useCreateFolder();
+  const renameFolder = useRenameFolder();
+  const deleteFolder = useDeleteFolder();
+  const moveWorkflow = useMoveWorkflowToFolder();
 
-  /** Outside-click + Escape close for the tab context menu. */
-  useEffect(() => {
-    if (!tabMenu) return;
-    const onDown = (e: MouseEvent) => {
-      const t = e.target as HTMLElement;
-      if (!t.closest('[data-tab-menu]')) setTabMenu(null);
-    };
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setTabMenu(null); };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [tabMenu]);
-
-  /** Remove the menu's tab — drops a custom tab from `customTabs` or adds
-   *  a built-in one to the hidden set, switching back to "All" if the
-   *  removed tab was active. Also drops the tab's committed filter
-   *  bucket so a re-added tab (or a new tab that recycles the id) starts
-   *  fresh instead of inheriting stale filters. */
-  const removeTab = useCallback((tabId: string) => {
-    if (tabId === 'all') return;
-    if (isBuiltInTab(tabId)) {
-      setHiddenBuiltInTabs(curr => new Set([...curr, tabId]));
-    } else {
-      setCustomTabs(curr => curr.filter(t => t.id !== tabId));
-    }
-    setConditionFiltersByTab(curr => {
-      if (!(tabId in curr)) return curr;
-      const next = { ...curr };
-      delete next[tabId];
-      return next;
-    });
-    setFilter(curr => (curr === tabId ? 'all' : curr));
-    setTabMenu(null);
-  }, []);
-
-  /** Currently-active (committed) condition filters, keyed by the tab
-   *  they belong to. Each row is a `{ field, operator, value }` triple
-   *  — see `applyFilterCondition` for the per-field semantics. The
-   *  active tab's list ANDs together to filter the workflow grid;
-   *  switching tabs swaps in that tab's own list, so filters under
-   *  "Ongoing" don't bleed into "Completed" or any custom tab.
-   *
-   *  Filters land here only after the user commits a fully-filled
-   *  draft from the popover; in-progress edits live in `filterDraft`
-   *  instead so half-typed rows don't already hide workflows. */
-  const [conditionFiltersByTab, setConditionFiltersByTab] =
-    useState<Record<string, FilterCondition[]>>({});
-  /** Convenience accessor — the current tab's committed filter list. */
-  const conditionFilters = conditionFiltersByTab[filter] ?? [];
-
-  /** In-progress draft — the single row currently rendered in the popover
-   *  (when open). Held outside `conditionFilters` so it doesn't filter the
-   *  list until the user commits it. */
+  // ── Filter state ─────────────────────────────────────────────────────────
+  const [conditionFilters, setConditionFilters] = useState<FilterCondition[]>([]);
   const [filterDraft, setFilterDraft] = useState<FilterCondition | null>(null);
-
-  /** Anchor rect for positioning. The popover is portal-style positioned
-   *  at `anchorRect.bottom + 8`, so we keep the trigger ref to re-resolve
-   *  the rect on each open. */
   const [filterAnchorRect, setFilterAnchorRect] = useState<DOMRect | null>(null);
   const filterTriggerRef = useRef<HTMLButtonElement | null>(null);
   const filterOpen = filterDraft !== null;
@@ -964,53 +1121,29 @@ export function AutomationsPage() {
     if (filterTriggerRef.current) {
       setFilterAnchorRect(filterTriggerRef.current.getBoundingClientRect());
     }
-    // Always seed a fresh blank draft — every open of the popover lets
-    // the user compose ONE new filter; previously-committed filters are
-    // untouched and continue to render as chips next to the trigger.
     setFilterDraft(makeBlankFilter());
   }, []);
 
   const closeFilterPopover = useCallback(() => {
-    // Drop the in-progress draft on close. A draft is committed via the
-    // explicit `commitFilterDraft` path — anything still in `filterDraft`
-    // when we close is by definition incomplete and shouldn't sneak into
-    // the active filter set.
     setFilterDraft(null);
   }, []);
 
-  /** Latest draft snapshot — read inside `commitFilterDraft` so the
-   *  commit path doesn't have to live inside a `setFilterDraft` updater
-   *  function (which would be a side-effect-in-pure-updater pattern,
-   *  and React 18 StrictMode double-invokes updater functions in dev,
-   *  producing a duplicate filter pill on every commit). */
   const filterDraftRef = useRef<FilterCondition | null>(null);
   filterDraftRef.current = filterDraft;
-  /** Active-tab snapshot for the same reason — the commit path needs
-   *  to know which tab's bucket to push the new filter into without
-   *  reading `filter` from a stale closure. */
-  const activeTabRef = useRef<string>(filter);
-  activeTabRef.current = filter;
 
   const commitFilterDraft = useCallback(() => {
     const curr = filterDraftRef.current;
     if (!curr) return;
-    // Defensive guard — only commit when the row is actually complete:
-    // empty-state operators don't need a value, everything else does.
     const isComplete =
       curr.operator === 'is_empty' ||
       curr.operator === 'is_not_empty' ||
       curr.value.trim() !== '';
     if (!isComplete) return;
-    const tabId = activeTabRef.current;
-    setConditionFiltersByTab(prev => ({
-      ...prev,
-      [tabId]: [...(prev[tabId] ?? []), curr],
-    }));
+    setConditionFilters(prev => [...prev, curr]);
     setFilterDraft(null);
   }, []);
-  const [view, setView] = useState<ViewMode>('card');
 
-  // Merge localStorage-saved settings over mock data (name, description, tags)
+  // ── Workflows ────────────────────────────────────────────────────────────
   const [automations, setAutomations] = useState<Automation[]>(() => {
     const stored = loadWorkflowSettings();
     return MOCK_AUTOMATIONS.map(a => {
@@ -1019,219 +1152,276 @@ export function AutomationsPage() {
     });
   });
 
-  // ── Status toggle ────────────────────────────────────────────────────────
-  // Cards used to inline-expand a preview panel; that's been replaced with
-  // a navigation to the detail page (`/automations/:id`). All that remains
-  // here is the per-row Active/Paused toggle.
   const setStatus = useCallback((id: string, status: AutomationStatus) => {
     setAutomations(prev => prev.map(a => a.id === id ? { ...a, status } : a));
   }, []);
 
   const q = search.toLowerCase();
-  // `conditionFilters` only contains rows the user has explicitly committed
-  // (the draft popover holds in-flight edits), so the AND-able active set
-  // is just the array itself — no need to re-filter for completeness here.
-  const activeConditions = conditionFilters;
-  const filtered = automations.filter((a) => {
+  const filtered = useMemo(() => automations.filter((a) => {
     const matchesSearch =
       a.name.toLowerCase().includes(q) ||
       a.description.toLowerCase().includes(q) ||
       (a.tags ?? []).some(t => t.toLowerCase().includes(q));
-    // Custom tabs run with no status filter (treat like 'all'); built-in
-    // ids map directly to the workflow's lifecycle status.
-    const matchesFilter =
-      !isBuiltInTab(filter) ? true
-        : filter === 'all' ? true
-        : a.status === filter;
-    // Condition filters AND together: a workflow must satisfy every active
-    // row to pass.
-    const matchesConditions = activeConditions.every(c => applyFilterCondition(a, c));
-    return matchesSearch && matchesFilter && matchesConditions;
-  });
+    const matchesConditions = conditionFilters.every(c => applyFilterCondition(a, c));
+    return matchesSearch && matchesConditions;
+  }), [automations, q, conditionFilters]);
+
+  // Bucket the filtered workflows by folder. Anything without an explicit
+  // assignment falls into Uncategorized.
+  const workflowsByFolder = useMemo(() => {
+    const map = new Map<string, Automation[]>();
+    for (const f of folders) map.set(f.id, []);
+    for (const a of filtered) {
+      const fid = getWorkflowFolderId(assignments, a.id) ?? UNCATEGORIZED_FOLDER_ID;
+      const bucket = map.get(fid) ?? map.get(UNCATEGORIZED_FOLDER_ID)!;
+      bucket.push(a);
+    }
+    return map;
+  }, [filtered, folders, assignments]);
+
+  // ── Folder expand/collapse state ─────────────────────────────────────────
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(
+    () => loadInitialExpandedSet(folders),
+  );
+  // Whenever a new folder appears (e.g. user just created one), default it
+  // to expanded if we haven't seen it before.
+  useEffect(() => {
+    setExpandedFolders(prev => {
+      let changed = false;
+      const next = new Set(prev);
+      for (const f of folders) {
+        let stored: string | null = null;
+        try { stored = localStorage.getItem(FOLDER_EXPANDED_KEY(f.id)); } catch { /* noop */ }
+        if (stored === null && !next.has(f.id)) {
+          next.add(f.id);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [folders]);
+
+  const toggleFolderExpanded = useCallback((id: string, expanded: boolean) => {
+    setExpandedFolders(prev => {
+      const next = new Set(prev);
+      if (expanded) next.add(id); else next.delete(id);
+      return next;
+    });
+    persistExpanded(id, expanded);
+  }, []);
+
+  // ── Inline add ───────────────────────────────────────────────────────────
+  // The add affordance is a draft AccordionItem rendered at the top of the
+  // folder list while `adding` is true. The draft's label is the same
+  // EditableFolderName component used for inline rename, so the layout +
+  // behaviour match exactly: dotted-underline-on-hover, solid-on-focus,
+  // Enter commits, Escape / empty blur cancels.
+  const [adding, setAdding] = useState(false);
+
+  const startAdd = () => { setAdding(true); };
+  const commitAddName = (v: string) => {
+    setAdding(false);
+    if (v === '') return;
+    const id = createFolder(v);
+    persistExpanded(id, true);
+    toast.success('Folder created');
+  };
+  const cancelAdd = () => { setAdding(false); };
+
+  // ── Delete confirmation dialog ───────────────────────────────────────────
+  const [deleteTarget, setDeleteTarget] = useState<WorkflowFolder | null>(null);
+  const confirmDelete = () => {
+    if (!deleteTarget) return;
+    const folder = deleteTarget;
+    deleteFolder(folder.id);
+    setDeleteTarget(null);
+    toast.success(`Deleted "${folder.name}"`, {
+      description: 'Workflows moved to Uncategorized.',
+      size: 'lg',
+    });
+  };
+
+  // ── Drag and drop ────────────────────────────────────────────────────────
+  // PointerSensor distance: 6 — short clicks (under ~6px movement) never
+  // start a drag, so the inner <Link> still navigates. The Switch on the
+  // card stops pointerdown earlier so it never even reaches dnd-kit.
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+  );
+  const [dragWorkflow, setDragWorkflow] = useState<Automation | null>(null);
+
+  // Auto-expand a collapsed folder after ~600ms hover so the user can drop
+  // a card into it without manually expanding first.
+  const hoverTimerRef = useRef<{ folderId: string; t: number } | null>(null);
+
+  const handleDragStart = (e: DragStartEvent) => {
+    const id = String(e.active.id);
+    if (id.startsWith('wf:')) {
+      const wfId = id.slice(3);
+      const wf = automations.find(a => a.id === wfId) ?? null;
+      setDragWorkflow(wf);
+    }
+  };
+
+  const handleDragOver = (e: DragOverEvent) => {
+    const overId = e.over?.id ? String(e.over.id) : null;
+    const folderId = e.over?.data?.current?.folderId as string | undefined;
+    if (!overId || !folderId) {
+      if (hoverTimerRef.current) {
+        clearTimeout(hoverTimerRef.current.t);
+        hoverTimerRef.current = null;
+      }
+      return;
+    }
+    // Only schedule auto-expand when entering a NEW collapsed folder; if
+    // the same folder is already pending we leave the existing timer alone.
+    if (hoverTimerRef.current?.folderId === folderId) return;
+    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current.t);
+    if (expandedFolders.has(folderId)) {
+      hoverTimerRef.current = null;
+      return;
+    }
+    const t = window.setTimeout(() => {
+      toggleFolderExpanded(folderId, true);
+      hoverTimerRef.current = null;
+    }, 600);
+    hoverTimerRef.current = { folderId, t };
+  };
+
+  const handleDragEnd = (e: DragEndEvent) => {
+    if (hoverTimerRef.current) {
+      clearTimeout(hoverTimerRef.current.t);
+      hoverTimerRef.current = null;
+    }
+    setDragWorkflow(null);
+    const activeId = String(e.active.id);
+    const targetFolderId = e.over?.data?.current?.folderId as string | undefined;
+    if (!activeId.startsWith('wf:') || !targetFolderId) return;
+    const wfId = activeId.slice(3);
+
+    // Optimistic update — move locally first, then mutation. For the local
+    // mock there is no failure path; when the API lands, wrap moveWorkflow
+    // in a try/catch and revert on failure with toast.error.
+    const nextFolderId = targetFolderId === UNCATEGORIZED_FOLDER_ID ? null : targetFolderId;
+    moveWorkflow(wfId, nextFolderId);
+  };
+
+  const handleDragCancel = () => {
+    if (hoverTimerRef.current) {
+      clearTimeout(hoverTimerRef.current.t);
+      hoverTimerRef.current = null;
+    }
+    setDragWorkflow(null);
+  };
+
+  const dragActive = dragWorkflow !== null;
+
+  // List of folder ids currently expanded — passed as the controlled value
+  // to Accordion (multiple type) so all open folders render their bodies.
+  const expandedValueArr = useMemo(
+    () => folders.filter(f => expandedFolders.has(f.id)).map(f => f.id),
+    [folders, expandedFolders],
+  );
 
   return (
     <div className={styles.page}>
-      {/* Toolbar — page-level actions on top (view toggle, new workflow);
-          status tabs in the middle; search + tag-filter bar below the tabs.
-          The search box and tag pills live UNDER the tabs so they read as
-          per-tab filters: switching tabs (e.g. Failed) preserves whatever
-          query / tag pills are applied and the list re-runs the same
-          filter against the new tab's workflow subset. */}
+      {/* Toolbar — search + view toggle + page-level CTAs on a single
+          row, then the filter pill row underneath. The "Add folder" /
+          "New workflow" buttons used to live in their own row above
+          the toolbar; merging them here lets the search field stretch
+          across the full row width while the trailing buttons stay
+          right-aligned. */}
       <div className={styles.toolbar}>
-        {/* Tabs row — status tabs on the left, "+ New workflow" anchored
-            to the trailing edge. The wrapping row carries its own
-            bottom border so the underline continues all the way under
-            the button (Tabs' own border-bottom only spans its own
-            width, which stops where the button starts). */}
-        <div className={styles.toolbarTabsRow}>
-          <Tabs
-            className={styles.toolbarTabs}
-            value={filter}
-            onChange={(v) => {
-              // The trailing "+" tab uses a sentinel value. Intercept it
-              // here: spawn a fresh custom tab, switch to it, and reset
-              // the condition filters so the new view starts unfiltered.
-              if (v === '__add_tab__') {
-                const idx = customTabs.length + 1;
-                const id  = `view-${Date.now()}`;
-                setCustomTabs(curr => [...curr, { id, label: `View ${idx}` }]);
-                setFilter(id);
-                // New tabs start with no filters — but other tabs keep
-                // theirs. We don't need to seed anything; the bucket
-                // simply doesn't exist yet and `?? []` handles the read.
-                return;
-              }
-              setFilter(v);
-            }}
-          >
-            <Tabs.Tab value="all">All</Tabs.Tab>
-            {/* Built-in status tabs render only when not hidden. Each
-                non-All tab opens the Remove popup when the user clicks
-                it while it's already active — first click switches,
-                second click on the same tab surfaces the menu. The
-                first click never trips the popup because at onClick
-                fire time React still has the OLD `filter` value. */}
-            {(['draft', 'live', 'archived'] as const)
-              .filter(id => !hiddenBuiltInTabs.has(id))
-              .map(id => (
-                <Tabs.Tab
-                  key={id}
-                  value={id}
-                  onClick={(e) => {
-                    if (filter !== id) return;
-                    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                    setTabMenu({ tabId: id, x: r.left, y: r.bottom + 4 });
-                  }}
-                >
-                  {id.charAt(0).toUpperCase() + id.slice(1)}
-                </Tabs.Tab>
-              ))}
-            {customTabs.map(t => (
-              <Tabs.Tab
-                key={t.id}
-                value={t.id}
-                onClick={(e) => {
-                  if (filter !== t.id) return;
-                  const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                  setTabMenu({ tabId: t.id, x: r.left, y: r.bottom + 4 });
-                }}
-              >
-                {t.label}
-              </Tabs.Tab>
-            ))}
-            {/* Trailing "+" tab — sentinel value intercepted in onChange
-                above to create a new custom tab instead of switching. */}
-            <Tabs.Tab value="__add_tab__" aria-label="Add new view">+</Tabs.Tab>
-          </Tabs>
-          <button
-            className={styles.newBtn}
-            onClick={() => navigate('/automations/new')}
-          >
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
-              <path d="M6 1v10M1 6h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-            </svg>
-            New workflow
-          </button>
-        </div>
-
-        {/* Per-tab filter row — search input + view toggle on the first
-            line, removable tag pills on the second. Both narrow the
-            workflow list within the currently-active status tab; Enter
-            commits a typed pill, Escape (or blur while empty) cancels.
-            The view toggle sits at the search input's trailing position
-            so card/table switching is right next to the query input. */}
-        <div className={styles.toolbarFilterRow}>
-          <div className={styles.toolbarSearchRow}>
-            <div className={styles.searchWrap}>
-              <span className={styles.searchIcon} aria-hidden>
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                  <circle cx="6" cy="6" r="4.5" stroke="currentColor" strokeWidth="1.2"/>
-                  <path d="m9.5 9.5 2.5 2.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
-                </svg>
-              </span>
-              <input
-                className={styles.searchInput}
-                type="search"
-                placeholder="Search automations…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                aria-label="Search automations"
-              />
-            </div>
-
-            <div className={styles.viewToggle}>
-              <ToggleButton
-                size="sm"
-                iconOnly
-                selectionStyle="border"
-                selected={view === 'card'}
-                onSelectedChange={() => setView('card')}
-                aria-label="Card view"
-              >
-                <Grid01Icon size={14} />
-              </ToggleButton>
-              <ToggleButton
-                size="sm"
-                iconOnly
-                selectionStyle="border"
-                selected={view === 'table'}
-                onSelectedChange={() => setView('table')}
-                aria-label="Table view"
-              >
-                <ListBulletIcon size={14} />
-              </ToggleButton>
-            </div>
+        <div className={styles.toolbarSearchRow}>
+          <div className={styles.searchWrap}>
+            <span className={styles.searchIcon} aria-hidden>
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <circle cx="6" cy="6" r="4.5" stroke="currentColor" strokeWidth="1.2"/>
+                <path d="m9.5 9.5 2.5 2.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+              </svg>
+            </span>
+            <input
+              className={styles.searchInput}
+              type="search"
+              placeholder="Search automations…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              aria-label="Search automations"
+            />
           </div>
 
-          {/* Condition filter trigger — opens the FilterPopover anchored
-              below this button. The popover lets the user compose
-              `{ field, operator, value }` rows that filter the workflow
-              list (e.g. "Status Is Completed", "Name Contains onboard"). */}
-          <FilterPillGroup aria-label="Filters">
-            {activeConditions.map(c => {
-              const def = getFilterFieldDef(c.field);
-              const opLabel = FILTER_OP_LABEL[c.operator];
-              // Compact rendered summary for an applied filter pill.
-              // Empty-state operators don't show a value; everything
-              // else trails with the user's typed/picked value.
-              const showValue = c.operator !== 'is_empty' && c.operator !== 'is_not_empty';
-              return (
-                <FilterPill
-                  key={c.id}
-                  active
-                  // Click on a chip just removes it — single-row popover
-                  // composes new filters only; existing rows are managed
-                  // through the chip cluster (remove via the X). This
-                  // keeps the popover surface as a one-shot composer.
-                  onRemove={() => setConditionFiltersByTab(prev => ({
-                    ...prev,
-                    [filter]: (prev[filter] ?? []).filter(f => f.id !== c.id),
-                  }))}
-                >
-                  {def.label} {opLabel.toLowerCase()}{showValue && c.value ? ` ${c.value}` : ''}
-                </FilterPill>
-              );
-            })}
-            <Button
-              ref={filterTriggerRef}
-              className={styles.filterAddBtn}
-              variant="ghost"
+          <div className={styles.viewToggle}>
+            <ToggleButton
               size="sm"
-              leadingArtwork={<PlusIcon size={14} />}
-              onClick={openFilterPopover}
-              aria-haspopup="dialog"
-              aria-expanded={filterOpen}
-              aria-label="Add filter"
+              iconOnly
+              selectionStyle="border"
+              selected={view === 'card'}
+              onSelectedChange={() => setView('card')}
+              aria-label="Card view"
             >
-              Filter
-            </Button>
-          </FilterPillGroup>
+              <Grid01Icon size={14} />
+            </ToggleButton>
+            <ToggleButton
+              size="sm"
+              iconOnly
+              selectionStyle="border"
+              selected={view === 'table'}
+              onSelectedChange={() => setView('table')}
+              aria-label="Table view"
+            >
+              <ListBulletIcon size={14} />
+            </ToggleButton>
+          </div>
+
+          <Button
+            variant="secondary"
+            size="sm"
+            leadingArtwork={<PlusIcon size={14} />}
+            onClick={startAdd}
+          >
+            Add folder
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            leadingArtwork={<PlusIcon size={14} />}
+            onClick={() => navigate('/automations/new')}
+          >
+            New workflow
+          </Button>
         </div>
+
+        <FilterPillGroup aria-label="Filters">
+          {conditionFilters.map(c => {
+            const def = getFilterFieldDef(c.field);
+            const opLabel = FILTER_OP_LABEL[c.operator];
+            const showValue = c.operator !== 'is_empty' && c.operator !== 'is_not_empty';
+            return (
+              <FilterPill
+                key={c.id}
+                active
+                onRemove={() => setConditionFilters(prev => prev.filter(f => f.id !== c.id))}
+              >
+                {def.label} {opLabel.toLowerCase()}{showValue && c.value ? ` ${formatFilterValue(c)}` : ''}
+              </FilterPill>
+            );
+          })}
+          <Button
+            ref={filterTriggerRef}
+            className={styles.filterAddBtn}
+            variant="ghost"
+            size="sm"
+            leadingArtwork={<PlusIcon size={14} />}
+            onClick={openFilterPopover}
+            aria-haspopup="dialog"
+            aria-expanded={filterOpen}
+            aria-label="Add filter"
+          >
+            Filter
+          </Button>
+        </FilterPillGroup>
       </div>
 
-      {/* FilterPopover — portalled positionally under the trigger button.
-          Only rendered while a draft is in flight so outside-click
-          handling stays simple. */}
       {filterOpen && filterAnchorRect && filterDraft && (
         <FilterPopover
           draft={filterDraft}
@@ -1242,95 +1432,79 @@ export function AutomationsPage() {
         />
       )}
 
-      {/* Tab context menu — fixed-positioned popup anchored at the dots
-          icon's bounding rect. One-row Alloy ListItem with a destructive
-          "Remove" action. The page-level outside-click handler in
-          `useEffect([tabMenu])` closes it when the user clicks anywhere
-          outside the menu or its trigger. */}
-      {tabMenu && (
-        <div
-          data-tab-menu
-          className={styles.tabMenu}
-          style={{ top: tabMenu.y, left: tabMenu.x }}
-          role="menu"
-          aria-label="Tab actions"
-        >
-          <ListItem
-            role="menuitem"
-            size="sm"
-            label="Remove"
-            destructive
-            divider={false}
-            onClick={() => removeTab(tabMenu.tabId)}
-          />
-        </div>
-      )}
-
       {/* Content */}
-      {filtered.length === 0 ? (
+      {filtered.length === 0 && conditionFilters.length === 0 && search === '' ? (
         <EmptyState onNew={() => navigate('/automations/new')} />
       ) : view === 'card' ? (
-        <div className={styles.list}>
-          {filtered.map((automation) => {
-            const isDraft = automation.status === 'draft';
-            // The whole card is now a navigation link to the read-only
-            // detail page. Interactive children (status toggle) keep
-            // their own click handlers and stop propagation so toggling
-            // doesn't navigate. The legacy expand chevron is gone.
-            return (
-              <Link
-                key={automation.id}
-                to={`/automations/${automation.id}`}
-                className={styles.card}
-                aria-label={`Open ${automation.name}`}
-              >
-                {automation.hasErrors && (
-                  <span className={styles.cardWarningDot} aria-label="Has recent errors" />
-                )}
-
-                {/* ── Top row: status pill · spacer · last run ── */}
-                <div className={styles.cardTop}>
-                  <StatusBadge status={automation.status} />
-                  <span className={styles.cardTopSpacer} />
-                  <span className={styles.cardLastRun}>
-                    <ClockIcon size={12} />
-                    {automation.lastRun ?? 'Never'}
-                  </span>
-                </div>
-
-                {/* ── Body: workflow name (up to 3 lines, ellipsis) ── */}
-                <span className={styles.cardName}>{automation.name}</span>
-
-                {/* ── Bottom row: run count · success count · toggle ── */}
-                <div className={styles.cardFooter}>
-                  <div className={styles.cardStats}>
-                    <span className={styles.cardStat} title="Total runs">
-                      <ListBulletIcon size={12} />
-                      {automation.runsTotal}
-                    </span>
-                    <span className={styles.cardStat} title="Successful runs">
-                      <CheckCircleIcon size={12} />
-                      {automation.runsSuccessful}
-                    </span>
-                  </div>
-                  <span
-                    data-card-action
-                    onClick={e => { e.stopPropagation(); e.preventDefault(); }}
-                    onKeyDown={e => e.stopPropagation()}
-                  >
-                    <Switch
-                      size="sm"
-                      checked={automation.status === 'live'}
-                      disabled={isDraft}
-                      onChange={(on) => setStatus(automation.id, on ? 'live' : 'archived')}
-                      aria-label={`${automation.status === 'live' ? 'Archive' : 'Activate'} ${automation.name}`}
+        <DndContext
+          sensors={sensors}
+          onDragStart={handleDragStart}
+          onDragOver={handleDragOver}
+          onDragEnd={handleDragEnd}
+          onDragCancel={handleDragCancel}
+        >
+          <Accordion
+            type="multiple"
+            value={expandedValueArr}
+            onValueChange={(v) => {
+              // Reconcile the new expanded array against persistence so a
+              // single click on a folder header writes the right localStorage
+              // entry. Anything not in the new array becomes collapsed.
+              const next = new Set(Array.isArray(v) ? v : [v]);
+              for (const f of folders) {
+                const wasExpanded = expandedFolders.has(f.id);
+                const isExpanded = next.has(f.id);
+                if (wasExpanded !== isExpanded) persistExpanded(f.id, isExpanded);
+              }
+              setExpandedFolders(next);
+            }}
+          >
+            {/* Draft folder row — sits at the top of the list while the
+                user is naming a new folder. Reuses AccordionItem so the
+                chrome (chevron, header rhythm) matches the real folders;
+                the label is the same EditableFolderName used for inline
+                rename, so layout + behaviour match exactly. */}
+            {adding && (
+              <div className={styles.folderSection}>
+                <AccordionItem
+                  value="__draft__"
+                  label={
+                    <EditableFolderName
+                      name=""
+                      autoFocus
+                      placeholder="Folder name"
+                      onCommit={commitAddName}
+                      onCancel={cancelAdd}
                     />
-                  </span>
-                </div>
-              </Link>
-            );
-          })}
-        </div>
+                  }
+                />
+              </div>
+            )}
+            {folders.map(folder => (
+              <FolderSection
+                key={folder.id}
+                folder={folder}
+                workflows={workflowsByFolder.get(folder.id) ?? []}
+                expanded={expandedFolders.has(folder.id)}
+                onExpandedChange={(exp) => toggleFolderExpanded(folder.id, exp)}
+                onToggleStatus={setStatus}
+                onRename={(next) => renameFolder(folder.id, next)}
+                onDelete={() => setDeleteTarget(folder)}
+                dragActive={dragActive}
+              />
+            ))}
+          </Accordion>
+
+          <DragOverlay>
+            {dragWorkflow ? (
+              <WorkflowCardInner
+                automation={dragWorkflow}
+                onToggleStatus={() => undefined}
+                asOverlay
+              />
+            ) : null}
+          </DragOverlay>
+        </DndContext>
       ) : (
         <div className={styles.tableWrap}>
           <Table size="md">
@@ -1346,10 +1520,6 @@ export function AutomationsPage() {
             </TableHeader>
             <TableBody>
               {filtered.map((automation) => {
-                // Whole row navigates to the read-only detail page.
-                // The name cell remains a link wrapper (no inner button) so
-                // keyboard / right-click both work natively. The legacy
-                // chevron toggle is gone.
                 const goToDetail = () => navigate(`/automations/${automation.id}`);
                 return (
                   <TableRow
@@ -1368,9 +1538,7 @@ export function AutomationsPage() {
                   >
                     <TableCell>
                       <CellStack
-                        primary={
-                          <span className={styles.nameLink}>{automation.name}</span>
-                        }
+                        primary={<span className={styles.nameLink}>{automation.name}</span>}
                       />
                     </TableCell>
                     <TableCell>
@@ -1401,6 +1569,29 @@ export function AutomationsPage() {
           </Table>
         </div>
       )}
+
+      <Dialog
+        open={deleteTarget !== null}
+        onClose={() => setDeleteTarget(null)}
+        size="sm"
+        aria-labelledby="delete-folder-title"
+      >
+        <DialogHeader onClose={() => setDeleteTarget(null)}>
+          <span id="delete-folder-title">Delete folder?</span>
+        </DialogHeader>
+        <DialogContent>
+          Workflows in this folder will be moved to Uncategorized. This cannot
+          be undone.
+        </DialogContent>
+        <DialogFooter>
+          <Button variant="tertiary" size="sm" onClick={() => setDeleteTarget(null)}>
+            Cancel
+          </Button>
+          <Button variant="destructive" size="sm" onClick={confirmDelete}>
+            Delete folder
+          </Button>
+        </DialogFooter>
+      </Dialog>
     </div>
   );
 }

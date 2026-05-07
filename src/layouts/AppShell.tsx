@@ -125,7 +125,12 @@ export function AppShell() {
 
         {/* ── Main area ── */}
         <div className={styles.main}>
-          <header className={styles.topBar}>
+          <header
+            className={clsx(
+              styles.topBar,
+              location.pathname.startsWith('/templates') && styles.topBarBorderless,
+            )}
+          >
             <div className={styles.topBarHeading}>
               {detailName ? (
                 <Breadcrumb
@@ -170,7 +175,16 @@ export function AppShell() {
           </header>
 
           <main className={styles.content}>
-            <ScrollArea className={styles.contentScroll}>
+            {/* Templates route uses a tinted bg-secondary scroll surface
+                with rounded top corners pinned to the viewport's top.
+                Other routes get a plain transparent scroll viewport so
+                their pages render against the AppShell's bg-primary. */}
+            <ScrollArea
+              className={clsx(
+                styles.contentScroll,
+                location.pathname.startsWith('/templates') && styles.contentScrollTinted,
+              )}
+            >
               <div className={styles.contentInner}>
                 <Outlet />
               </div>

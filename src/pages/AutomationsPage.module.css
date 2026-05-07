@@ -3,9 +3,12 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
-  /* Enable container queries so the card grid's breakpoints can respond to the
-     list's actual inline size (not the viewport width) — important because the
-     app has a left sidebar that shrinks the available content area. */
+  /* Page gutter — AppShell's `.contentInner` no longer carries side
+     padding, so each page owns its own breathing room. 24px matches
+     the prior global default. */
+  padding: var(--space-6);
+  /* Container queries drive the per-folder card grid breakpoints below so
+     the grid responds to its actual inline size, not the viewport. */
   container-type: inline-size;
 }
 
@@ -13,55 +16,10 @@
 .toolbar {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
-}
-
-.toolbarTop {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  /* Right-align the page-level actions (view toggle + new workflow) now
-     that the search input has moved out of this row and into the per-tab
-     filter row below the tabs. */
-  justify-content: flex-end;
-}
-
-/* Tabs row — status tabs on the left, "+ New workflow" pinned to the
-   right. The row owns the underline so it continues all the way across
-   the row (Tabs' own bottom border stops where the tab list ends). */
-.toolbarTabsRow {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  border-bottom: 1px solid var(--color-border-opaque);
-}
-
-/* Strip the Tabs component's own bottom border so it doesn't paint a
-   double line on top of the row-level underline above. The active-tab
-   sliding indicator inside Tabs still anchors to its own bottom (-1px)
-   which lines up exactly with the row's border-bottom — same Y, same
-   color reference, so the indicator reads cleanly atop the row line. */
-.toolbarTabs {
-  flex: 1;
-  border-bottom: none !important;
-}
-
-/* Per-tab filter rows — sits beneath the status tabs. Stacks the search
-   input + view toggle on top and the tag-filter pill group on the row
-   below it; both narrow the workflow list within whichever tab is
-   currently active. Vertical stacking keeps the row dedicated to query
-   input full-width and gives the pill row below it room to wrap as
-   more tag pills are added. */
-.toolbarFilterRow {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
   gap: var(--space-2);
 }
 
-/* Inner row that pairs the search input (flex:1) with the view-toggle
-   group at its trailing edge. The toggle buttons are fixed-size so the
-   search input grows to fill the remaining space. */
+/* Search input + view toggle on a shared row. */
 .toolbarSearchRow {
   display: flex;
   align-items: center;
@@ -114,36 +72,8 @@
   flex-shrink: 0;
 }
 
-/* ─── New button ────────────────────────────────────────────────────────────── */
-.newBtn {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  height: 32px;
-  padding: 0 var(--space-3);
-  background: var(--color-bg-inverse-primary);
-  color: var(--color-content-inverse-primary);
-  border: none;
-  border-radius: var(--radius-md);
-  font-family: var(--font-sans);
-  font-size: var(--text-sm);
-  font-weight: var(--font-weight-medium);
-  cursor: pointer;
-  white-space: nowrap;
-  flex-shrink: 0;
-  transition: opacity var(--duration-fast);
-}
-
-.newBtn:hover {
-  opacity: 0.88;
-}
-
-/* "+ Filter" ghost button sitting at the end of the tag-pill row. Alloy's
-   ghost variant has a hover fill + border by default; we suppress that so the
-   button reads as a quiet affordance matching the pills around it. Height is
-   forced to match the 22 px FilterPill `.sm` so the row doesn't jump as the
-   user toggles between the + button, the draft-input pill, and committed
-   filter pills. */
+/* "+ Filter" ghost button — height-matched to the FilterPill row so the
+   pill cluster doesn't jump when chips are added/removed. */
 .filterAddBtn,
 .filterAddBtn:hover,
 .filterAddBtn:hover:not(:disabled) {
@@ -154,65 +84,7 @@
   padding: 0 var(--space-2);
 }
 
-/* Editable pill — shown after clicking "+ Filter", before the user commits
-   the typed value. Matches FilterPill's sm active visual (22 px tall, full
-   radius, selected border) with an inline input instead of a static label. */
-.draftPill {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  height: 22px;
-  padding: 0 var(--space-2);
-  border-radius: var(--radius-full);
-  border: 1px solid var(--color-border-selected);
-  background: var(--color-bg-tertiary);
-  font-family: var(--font-sans);
-  font-size: var(--text-xs);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-content-primary);
-}
-
-.draftPillInput {
-  background: transparent;
-  border: none;
-  outline: none;
-  padding: 0;
-  font: inherit;
-  color: inherit;
-  width: 14ch;
-  min-width: 8ch;
-}
-
-.draftPillInput::placeholder {
-  color: var(--color-content-tertiary);
-  font-weight: var(--font-weight-regular);
-}
-
-/* ─── FilterPopover ───────────────────────────────────────────────────────────
-   Stacked condition rows anchored beneath the "+ Filter" button. Each row
-   carries a Field/Operator pair on the top line and a value control below.
-   Fixed-positioned via inline `top` / `left` from the trigger's bounding
-   rect; the parent stacks rows vertically with a tight gap and adds a
-   "+ Add Filter" button at the bottom. */
-/* ─── Tab context menu — anchors below a tab's "⋯" affordance. Wraps a
-   single Alloy ListItem (Remove) inside a card-shaped panel that matches
-   the FilterPopover chrome. */
-.tabMenu {
-  position: fixed;
-  z-index: 2000;
-  /* Hug the text content of the single ListItem inside (currently
-     "Remove") rather than reserving a 160px floor — the menu only ever
-     contains short tab-action labels, so a fixed min-width left a
-     visible empty gutter to the right of the label. `width: max-content`
-     sizes to the widest label naturally. */
-  width: max-content;
-  padding: var(--space-1);
-  background: var(--color-bg-primary);
-  border: 1px solid var(--color-border-opaque);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-above-md);
-}
-
+/* ─── FilterPopover ───────────────────────────────────────────────────────── */
 .filterPopover {
   position: fixed;
   z-index: 2000;
@@ -240,9 +112,6 @@
   gap: var(--space-2);
 }
 
-/* Layout-only — Alloy's SelectField / TextField / NumberField bring
-   their own outlined-shell chrome (height, border, focus ring). The
-   rule below just stretches them inside the row. */
 .filterSelect {
   flex: 1;
   min-width: 0;
@@ -252,9 +121,6 @@
   width: 100%;
 }
 
-/* Native date input still appears inline on date-typed filters since
-   Alloy has no DateField yet — match the field-shell metrics so it
-   visually lines up with the SelectField/TextField siblings. */
 input.filterValueInput[type="date"] {
   height: 32px;
   padding: 0 var(--space-3);
@@ -272,53 +138,172 @@ input.filterValueInput[type="date"]:focus-visible {
   box-shadow: 0 0 0 3px var(--color-bg-focus-ring);
 }
 
-/* ─── Metric cards ──────────────────────────────────────────────────────────── */
-.metrics {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: var(--space-3);
+/* ─── Folder section ──────────────────────────────────────────────────────────
+   Each folder is rendered as an Alloy AccordionItem; its body wraps the card
+   grid plus a transparent header-drop region for cross-folder DnD. */
+
+/* Trailing-slot cluster — count Badge + actions DropdownMenu. The wrapping
+   span re-enables pointer events (Accordion's headerContent disables them by
+   default so clicks fall through to the hit target) and stops propagation so
+   menu clicks don't toggle expand. */
+.folderTrailing {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  pointer-events: auto;
 }
 
-@media (max-width: 800px) {
-  .metrics {
-    grid-template-columns: repeat(2, 1fr);
-  }
+/* Folder section wrapper — wraps the AccordionItem and is the actual DnD
+   drop target. Highlight here so the cue covers both the header (when
+   collapsed) and the body (when expanded). The bottom margin gives each
+   folder breathing room from the next so the list reads as a stack of
+   distinct groups rather than a continuous run. */
+.folderSection {
+  position: relative;
+  border-radius: var(--radius-md);
+  outline: 1px solid transparent;
+  outline-offset: -1px;
+  margin-bottom: var(--space-4);
+  transition: background var(--duration-fast) var(--ease-default),
+              outline-color var(--duration-fast) var(--ease-default);
 }
 
-/* ─── Card list ─────────────────────────────────────────────────────────────── */
-/* Responsive grid, keyed off the LIST CONTAINER width via container queries
-   (the `.page` parent declares `container-type: inline-size`). Breakpoints
-   describe the grid's actual width — matching the product spec's intent of
-   "5 cols when the grid has room for 5" regardless of sidebar layouts.
-   Tracks use `minmax(280px, 1fr)` so cards stretch to fill the row width and
-   never shrink below 280 px. Column count caps at 5 — wider containers just
-   grow the columns rather than adding more. The expanded card uses
-   `grid-column: 1 / -1` so it always spans the full row regardless of the
-   current tier's column count. */
+.folderSection:last-child {
+  margin-bottom: 0;
+}
+
+/* Subtle hint that drop zones are live during a drag. */
+.folderSectionDropZone {
+  background: var(--color-bg-tertiary);
+}
+
+/* Active drop target — folder is being hovered with a card. */
+.folderSectionDropActive {
+  background: var(--color-info-bg);
+  outline-color: var(--color-border-selected);
+}
+
+/* Folder body — owns the card grid. Layout-only; drop styling is on
+   the section wrapper above. Trimmed bottom padding so folders sit
+   tighter against their stacking gap. The negative left/right margins
+   cancel Alloy `.bodyContent`'s 12px horizontal padding so the card
+   grid bleeds flush with the folder header above. */
+.folderBody {
+  padding: var(--space-3) 0 var(--space-1);
+  margin: 0 calc(var(--space-3) * -1);
+}
+
+/* ─── Folder name (system + editable) ────────────────────────────────────────
+   Inline-editable for user folders, plain text for the system folder. The
+   editable variant mirrors the builder TopBar's workflow-name field —
+   dotted underline on hover, solid underline on focus, no chrome at rest. */
+.folderName {
+  display: inline-block;
+  font: inherit;
+  color: inherit;
+}
+
+.folderNameEditable {
+  display: inline-block;
+  min-width: 48px;
+  max-width: 480px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: text;
+  border-bottom: 1.5px dotted transparent;
+  outline: none;
+  padding-bottom: 1px;
+  font: inherit;
+  color: inherit;
+  user-select: text;
+  vertical-align: baseline;
+  /* The accordion header's content wrapper sets pointer-events: none on
+     non-interactive children; opt this back in so the contenteditable
+     can receive focus. */
+  pointer-events: auto;
+  transition: border-color var(--duration-fast) var(--ease-default);
+}
+
+.folderNameEditable:hover {
+  border-bottom-color: var(--color-content-tertiary);
+}
+
+.folderNameEditable:focus,
+.folderNameEditable:focus-visible {
+  border-bottom-color: var(--color-border-selected);
+  border-bottom-style: solid;
+  outline: none;
+}
+
+/* Placeholder shown when the contenteditable is empty (used by the
+   draft folder row in the add-folder flow). The contenteditable can't
+   carry a real `placeholder`, so we render the hint via the
+   `data-placeholder` attribute. */
+.folderNameEditable:empty::before {
+  content: attr(data-placeholder);
+  color: var(--color-content-tertiary);
+  pointer-events: none;
+}
+
+/* Empty state inside a folder — shown when the folder has no workflows
+   (yet). Uses tertiary content + small text per spec. */
+.folderEmpty {
+  text-align: center;
+  padding: var(--space-6) var(--space-4);
+  color: var(--color-content-secondary);
+  font-size: var(--text-sm);
+}
+
+
+/* ─── Card list (per folder) ──────────────────────────────────────────────── */
 .list {
   display: grid;
-  gap: var(--space-4); /* 16px */
-  grid-template-columns: 1fr; /* <768 container: 1 column */
+  gap: var(--space-4);
+  grid-template-columns: 1fr;
 }
 
-/* ≥768 tablet: 2 cols */
 @container (min-width: 768px) {
   .list { grid-template-columns: repeat(2, minmax(280px, 1fr)); }
 }
 
-/* ≥1024 small desktop: 3 cols */
 @container (min-width: 1024px) {
   .list { grid-template-columns: repeat(3, minmax(280px, 1fr)); }
 }
 
-/* ≥1280 default desktop: 4 cols */
 @container (min-width: 1280px) {
   .list { grid-template-columns: repeat(4, minmax(280px, 1fr)); }
 }
 
-/* ≥1440 wide: 5 cols (cap — wider containers grow the columns, not the count) */
 @container (min-width: 1440px) {
   .list { grid-template-columns: repeat(5, minmax(280px, 1fr)); }
+}
+
+/* Drag wrapper — outer node that dnd-kit attaches its listeners to. The
+   inner <Link> remains a real anchor for keyboard / right-click. The
+   wrapper is a real flex box so dnd-kit can measure its collision rect;
+   `display: contents` removes the box and breaks rect-based collision
+   detection. */
+.cardDragWrap {
+  touch-action: none;
+  display: flex;
+}
+
+.cardDragWrap > a {
+  flex: 1;
+}
+
+/* While a card is being dragged, mute the source card so the floating
+   overlay reads as the canonical visual. */
+.cardDragging {
+  opacity: 0;
+}
+
+/* Floating overlay clone — slight elevation cue. */
+.cardOverlay {
+  cursor: grabbing;
+  box-shadow: var(--shadow-above-md);
+  background: var(--color-bg-primary);
 }
 
 .card {
@@ -334,9 +319,6 @@ input.filterValueInput[type="date"]:focus-visible {
   cursor: pointer;
   transition: border-color var(--duration-fast), box-shadow var(--duration-fast);
   font-family: var(--font-sans);
-  /* Card now renders as <a> (Link) — strip the default link chrome
-     and inherit page text colour so card markup keeps its previous
-     visual treatment. Focus + hover are handled by the rules below. */
   text-decoration: none;
   color: inherit;
 }
@@ -348,11 +330,10 @@ input.filterValueInput[type="date"]:focus-visible {
 
 .card:focus-visible {
   outline: none;
-  border-color: var(--color-blue-border-primary);
+  border-color: var(--color-border-focus);
   box-shadow: 0 0 0 2px var(--color-border-focus);
 }
 
-/* Subtle warning indicator — small dot in the top-right corner. */
 .cardWarningDot {
   position: absolute;
   top: var(--space-2);
@@ -364,7 +345,6 @@ input.filterValueInput[type="date"]:focus-visible {
   pointer-events: none;
 }
 
-/* ── Top row ── */
 .cardTop {
   display: flex;
   align-items: center;
@@ -384,7 +364,6 @@ input.filterValueInput[type="date"]:focus-visible {
   white-space: nowrap;
 }
 
-/* ── Icon cluster ── */
 .iconCluster {
   display: inline-flex;
   align-items: center;
@@ -403,7 +382,6 @@ input.filterValueInput[type="date"]:focus-visible {
   flex-shrink: 0;
 }
 
-/* Overlap subsequent icons ~8px so they read as a stack. */
 .iconDot + .iconDot {
   margin-left: -8px;
 }
@@ -419,7 +397,6 @@ input.filterValueInput[type="date"]:focus-visible {
   background: var(--color-bg-tertiary);
 }
 
-/* ── Body ── */
 .cardName {
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -432,9 +409,6 @@ input.filterValueInput[type="date"]:focus-visible {
   color: var(--color-content-primary);
 }
 
-/* ── Footer: stats + toggle ── */
-/* margin-top: auto pins the footer to the bottom of the card regardless of
-   how many lines the name occupies, so run stats / toggle align across a row. */
 .cardFooter {
   margin-top: auto;
   display: flex;
@@ -463,62 +437,11 @@ input.filterValueInput[type="date"]:focus-visible {
   color: var(--color-content-tertiary);
 }
 
-/* ─── Segmented stats bar ───────────────────────────────────────────────────── */
-
-.statsWrap {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2); /* 8px between bar and legend */
-  margin-bottom: var(--space-3);
-}
-
-.statsBar {
-  display: flex;
-  height: 5px;
-  border-radius: var(--radius-full);
-  overflow: hidden;
-  background: var(--color-bg-tertiary);
-}
-
-.barReached { background: var(--color-success-fill); }
-.barPending { background: var(--color-info-fill); }
-.barSkipped { background: var(--color-warning-fill); }
-
-.statsLegend {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-}
-
-.legendItem {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  font-size: 10px;
-  color: var(--color-content-tertiary);
-  font-weight: var(--font-weight-medium);
-  letter-spacing: 0.01em;
-}
-
-.legendDot {
-  width: 6px;
-  height: 6px;
-  border-radius: var(--radius-full);
-  flex-shrink: 0;
-}
-
-.dotReached { background: var(--color-success-fill); }
-.dotPending { background: var(--color-info-fill); }
-.dotSkipped { background: var(--color-warning-fill); }
-
 /* ─── Table view ────────────────────────────────────────────────────────────── */
 .tableWrap {
   overflow-x: auto;
 }
 
-/* ─── Name cell — link-styled label inside a row that's itself a navigation
-       target. Underlines on hover so the click affordance reads, but the
-       row's role="link" + cursor: pointer carry the actual click intent. */
 .nameLink {
   display: inline;
   font: inherit;
@@ -531,14 +454,7 @@ tr:hover .nameLink {
   text-underline-offset: 2px;
 }
 
-/* ─── Compact stats bar (table rows) ────────────────────────────────────────── */
-.statsWrapCompact {
-  margin-bottom: 0;
-  gap: 0;
-  min-width: 80px;
-}
-
-/* ─── Empty state ───────────────────────────────────────────────────────────── */
+/* ─── Empty state (no workflows at all) ────────────────────────────────────── */
 .empty {
   display: flex;
   flex-direction: column;
@@ -590,11 +506,4 @@ tr:hover .nameLink {
 
 .emptyBtn:hover {
   opacity: 0.88;
-}
-
-.cardTags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-1);
-  margin-top: var(--space-1);
 }

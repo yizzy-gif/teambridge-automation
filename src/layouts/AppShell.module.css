@@ -187,9 +187,17 @@
   min-height: 48px;
   flex-shrink: 0;
   padding: var(--space-1) var(--space-3);
-  border-bottom: 1px solid var(--color-border-opaque);
   background: var(--color-bg-primary);
+  border-bottom: 1px solid var(--color-border-opaque);
   gap: var(--space-2);
+}
+
+/* Borderless variant — used on routes whose page surface flows under
+   the top bar (e.g. the Templates landing's bg-secondary tinted
+   surface). Suppresses the default 1px divider so the surface and
+   top bar meet without a visible rule. */
+.topBarBorderless {
+  border-bottom: none;
 }
 
 .topBarHeading {
@@ -240,6 +248,27 @@
   height: 100%;
 }
 
+/* Tinted variant — applied only on routes that opt in (currently the
+   Templates landing). Adds:
+   - bg-secondary fading vertically to transparent so the tint reads
+     near the hero and dissolves into the chrome below
+   - rounded top corners pinned to the visible top of the scroll
+     viewport (the corners stay during scroll because this style sits
+     on the fixed scroll viewport, not the scrolled content)
+   - 12px side gutters exposing the underlying bg-primary chrome */
+.contentScrollTinted {
+  background: linear-gradient(
+    to bottom,
+    var(--color-bg-secondary) 0%,
+    transparent 100%
+  );
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  margin: 0 var(--space-3);
+}
+
 .contentInner {
-  padding: var(--space-6);
+  /* Edge-to-edge content surface — pages own their own gutter via
+     their own margin/padding so each page can decide whether to
+     bleed flush, sit with a small 12px gap, or fully indent. */
+  padding: 0;
 }
