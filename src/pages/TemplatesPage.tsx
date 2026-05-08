@@ -8,6 +8,7 @@ import type { TagColor } from '@alloy/components/Tag';
 import { SearchField, SelectField } from '@alloy/components/Input';
 import { Target04Icon } from '@alloy/components/icons/Target04Icon';
 import { Grid01Icon } from '@alloy/components/icons/Grid01Icon';
+import { ListItem } from '@alloy/components/ListItem';
 import { ChevronDownIcon } from '@alloy/components/icons/ChevronDownIcon';
 import { ArrowNarrowRightIcon } from '@alloy/components/icons/ArrowNarrowRightIcon';
 import { ClockIcon } from '@alloy/components/icons/ClockIcon';
@@ -459,6 +460,8 @@ function TemplateCard({
   isSelected,
   onToggleExpand,
   onToggleSelect,
+  saved,
+  onToggleSave,
   onUseTemplate,
   onEditTemplate,
 }: {
@@ -467,6 +470,8 @@ function TemplateCard({
   isSelected: boolean;
   onToggleExpand: () => void;
   onToggleSelect: () => void;
+  saved: boolean;
+  onToggleSave: () => void;
   onUseTemplate: () => void;
   onEditTemplate: () => void;
 }) {
@@ -506,35 +511,49 @@ function TemplateCard({
       onClick={handleCardClick}
       onKeyDown={handleKey}
     >
-      {/* ── Layout: thumb on the left, body column on the right.
-          The body column holds the name, the synthesized description,
-          and the tag chips — all aligned to the same left edge so
-          description/tags sit flush under the title rather than under
-          the thumb. */}
-      <div className={styles.cardHeader}>
+      {/* ── Top row: trigger thumb + Save/Saved button ── */}
+      <div className={styles.cardTop}>
         <div
           className={styles.cardThumb}
           data-accent={accent}
+          data-role="featured-icon"
           aria-hidden
         >
           <span className={styles.cardThumbIcon}>
             <triggerMeta.Icon />
           </span>
         </div>
-        <div className={styles.cardBody}>
-          <span className={styles.cardName}>{workflow.name}</span>
+        <Button
+          size="sm"
+          variant="secondary"
+          disabled={saved}
+          data-card-action
+          onClick={e => { e.stopPropagation(); if (!saved) onToggleSave(); }}
+        >
+          {saved ? 'Saved' : 'Save'}
+        </Button>
+      </div>
 
-          <p className={styles.cardDescription}>{description}</p>
-
-          {workflow.tags.length > 0 && (
-            <div className={styles.cardTags}>
-              {workflow.tags.map(t => (
-                <Tag key={t.label} variant="subtle" size="sm" color="neutral">
-                  {t.label}
-                </Tag>
-              ))}
-            </div>
-          )}
+      {/* ── Body: category eyebrow → name → paragraph-sm description →
+            outline tags → step-count footer pinned to the bottom. ── */}
+      <div className={styles.cardBody}>
+        <div className={styles.cardEyebrow}>
+          <strong>{triggerMeta.label}</strong>
+        </div>
+        <h3 className={styles.cardName}>{workflow.name}</h3>
+        <p className={styles.cardDescription}>{description}</p>
+        {workflow.tags.length > 0 && (
+          <div className={styles.cardTags}>
+            {workflow.tags.map(t => (
+              <Tag key={t.label} variant="outline" size="sm" color="neutral">
+                {t.label}
+              </Tag>
+            ))}
+          </div>
+        )}
+        <div className={styles.cardFooter}>
+          <ListBulletIcon size={14} />
+          {stepCount} {stepCount === 1 ? 'step' : 'steps'}
         </div>
       </div>
 
@@ -1091,6 +1110,8 @@ function CategorySection({
   onToggleSelect,
   expandedId,
   onToggleExpand,
+  savedIds,
+  onToggleSave,
   onUseTemplate,
   onEditTemplate,
 }: {
@@ -1099,6 +1120,8 @@ function CategorySection({
   onToggleSelect: (id: string) => void;
   expandedId: string | null;
   onToggleExpand: (id: string) => void;
+  savedIds: Set<string>;
+  onToggleSave: (id: string) => void;
   onUseTemplate: (id: string) => void;
   onEditTemplate: (id: string) => void;
 }) {
@@ -1124,6 +1147,8 @@ function CategorySection({
               onToggleSelect={() => onToggleSelect(w.id)}
               isExpanded={expandedId === w.id}
               onToggleExpand={() => onToggleExpand(w.id)}
+              saved={savedIds.has(w.id)}
+              onToggleSave={() => onToggleSave(w.id)}
               onUseTemplate={() => onUseTemplate(w.id)}
               onEditTemplate={() => onEditTemplate(w.id)}
             />
@@ -1137,14 +1162,32 @@ function CategorySection({
 
 // ─── Hero banner ──────────────────────────────────────────────────────────────
 
-function HeroBanner({ search, onSearch, onClear, filters }: {
+function HeroBanner({
+  search,
+  onSearch,
+  onClear,
+  filters,
+  searchResults,
+  onSelectResult,
+}: {
   search: string;
   onSearch: (v: string) => void;
   onClear: () => void;
   /** Optional filter row rendered directly below the search field
    *  inside the centered hero column. */
   filters?: ReactNode;
+  /** Templates matching the current search query. The hero owns
+   *  the dropdown UI; the parent decides what counts as a match. */
+  searchResults: TemplateWorkflow[];
+  /** Called when the user clicks a result row. */
+  onSelectResult: (id: string) => void;
 }) {
+  // Dropdown visibility — only show when the field is focused AND the
+  // user has typed something, mirroring the Marketplace search.
+  const [searchFocused, setSearchFocused] = useState(false);
+  const trimmed = search.trim();
+  const showDropdown = searchFocused && trimmed.length > 0;
+
   return (
     <div className={styles.hero}>
       <div className={styles.heroContent}>
@@ -1159,14 +1202,71 @@ function HeroBanner({ search, onSearch, onClear, filters }: {
           </p>
         </div>
 
-        <SearchField
-          placeholder="Search"
-          value={search}
-          onChange={e => onSearch(e.target.value)}
-          onClear={onClear}
-          size="md"
-          className={styles.heroSearch}
-        />
+        {/* Search field + dropdown panel. The wrap div is `position:
+            relative` so the panel anchors to the search field's
+            footprint regardless of where the hero sits. */}
+        <div className={styles.heroSearchWrap}>
+          <SearchField
+            placeholder="Search templates"
+            value={search}
+            onChange={e => onSearch(e.target.value)}
+            onClear={onClear}
+            size="md"
+            className={styles.heroSearch}
+            onFocus={() => setSearchFocused(true)}
+            // Defer blur slightly so the click handler on a result row
+            // can fire before the dropdown unmounts (mousedown on a
+            // result still beats this timeout).
+            onBlur={() => window.setTimeout(() => setSearchFocused(false), 150)}
+          />
+          {showDropdown && (
+            <div
+              className={styles.heroSearchDropdown}
+              // Keep focus on the field while the user clicks a row;
+              // mousedown that bubbles to the document would otherwise
+              // blur the input and unmount us before `onClick` runs.
+              onMouseDown={e => e.preventDefault()}
+              role="listbox"
+              aria-label="Template search results"
+            >
+              {searchResults.length === 0 ? (
+                <div className={styles.heroSearchEmpty}>
+                  No templates match &ldquo;{trimmed}&rdquo;
+                </div>
+              ) : (
+                searchResults.map(w => {
+                  const meta = TRIGGER_CATEGORY_META[w.triggerCategory];
+                  const accent = TRIGGER_ACCENT[w.triggerCategory];
+                  const tagText = w.tags.map(t => t.label).join(' · ');
+                  return (
+                    <ListItem
+                      key={w.id}
+                      size="md"
+                      divider={false}
+                      interactive
+                      label={w.name}
+                      description={`${meta.label}${tagText ? ` · ${tagText}` : ''}`}
+                      leadingSlot={
+                        <span
+                          className={styles.heroSearchResultIcon}
+                          data-accent={accent}
+                          aria-hidden
+                        >
+                          <meta.Icon />
+                        </span>
+                      }
+                      onClick={e => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onSelectResult(w.id);
+                      }}
+                    />
+                  );
+                })
+              )}
+            </div>
+          )}
+        </div>
 
         {filters}
       </div>
@@ -1304,6 +1404,16 @@ export function TemplatesPage() {
   const [selectedIds,    setSelectedIds]    = useState<Set<string>>(new Set());
   // Single-expand inline preview.
   const [expandedId,     setExpandedId]     = useState<string | null>(null);
+  // Saved templates — toggled via the Save/Saved button on each card.
+  const [savedIds,       setSavedIds]       = useState<Set<string>>(new Set());
+
+  const toggleSaved = useCallback((id: string) => {
+    setSavedIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }, []);
 
   const toggleSelected = useCallback((id: string) => {
     setSelectedIds(prev => {
@@ -1344,20 +1454,45 @@ export function TemplatesPage() {
   const useTemplate = openTemplate;
   const editTemplate = openTemplate;
 
+  // Section list is filtered ONLY by the category + trigger selects.
+  // The search field now drives a separate dropdown of matching
+  // templates (rendered inside the hero) and no longer narrows the
+  // sections below — so a user can browse the full catalog while a
+  // typed query surfaces direct hits in the dropdown.
   const visible = useMemo(() => {
-    const q = search.toLowerCase().trim();
     return CATEGORIES
       .map(c => ({
         ...c,
         workflows: c.workflows.filter(w => {
-          if (q && !w.name.toLowerCase().includes(q)) return false;
           if (categoryFilter !== 'all' && c.id !== categoryFilter) return false;
           if (triggerFilter !== 'all' && w.triggerCategory !== triggerFilter) return false;
           return true;
         }),
       }))
       .filter(c => c.workflows.length > 0);
-  }, [search, categoryFilter, triggerFilter]);
+  }, [categoryFilter, triggerFilter]);
+
+  // Live search results — name + tags + trigger label, capped at 8
+  // rows so the dropdown stays scannable without forcing internal
+  // scrolling on most viewports.
+  const searchResults = useMemo<TemplateWorkflow[]>(() => {
+    const q = search.toLowerCase().trim();
+    if (q.length === 0) return [];
+    const matches: TemplateWorkflow[] = [];
+    for (const cat of CATEGORIES) {
+      for (const w of cat.workflows) {
+        const haystack = [
+          w.name,
+          TRIGGER_CATEGORY_META[w.triggerCategory].label,
+          ...w.tags.map(t => t.label),
+        ].join(' ').toLowerCase();
+        if (haystack.includes(q)) matches.push(w);
+        if (matches.length >= 8) break;
+      }
+      if (matches.length >= 8) break;
+    }
+    return matches;
+  }, [search]);
 
   return (
     <div className={styles.page}>
@@ -1373,6 +1508,13 @@ export function TemplatesPage() {
         search={search}
         onSearch={setSearch}
         onClear={() => setSearch('')}
+        searchResults={searchResults}
+        onSelectResult={id => {
+          // Selecting a result clears the search field (closing the
+          // dropdown) and opens the template's preview dialog.
+          setSearch('');
+          toggleExpanded(id);
+        }}
         filters={
           /* Filter selects sit directly under the search bar inside
              the hero's centered column — Alloy SelectFields with `md`
@@ -1411,6 +1553,8 @@ export function TemplatesPage() {
             onToggleSelect={toggleSelected}
             expandedId={expandedId}
             onToggleExpand={toggleExpanded}
+            savedIds={savedIds}
+            onToggleSave={toggleSaved}
             onUseTemplate={useTemplate}
             onEditTemplate={editTemplate}
           />
