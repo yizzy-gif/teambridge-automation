@@ -1072,6 +1072,22 @@ const ALL_LIBRARY_ITEMS: LibraryItem[] = [
   { id: 'breaks_user_starts_break',                  type: 'trigger', label: 'User starts break',                         category: 'breaks'               },
   { id: 'breaks_user_ends_break',                    type: 'trigger', label: 'User ends break',                           category: 'breaks'               },
 
+  // ── Human Action triggers (mid-sequence gates) ───────────────────────────────
+  // These triggers fire on a user's in-app behaviour and act as gates between
+  // upstream steps and downstream branches — the workflow waits on the user
+  // until the action lands, then continues. Distinct from the data/scheduling
+  // triggers above which fire from system events.
+  { id: 'human_action_task_completed_gate',          type: 'trigger', label: 'User completes a task',                     category: 'human_action'         },
+  { id: 'human_action_user_logs_into_app',           type: 'trigger', label: 'User logs into app',                        category: 'human_action'         },
+  { id: 'human_action_user_views_page',              type: 'trigger', label: 'User views a page',                         category: 'human_action'         },
+
+  // ── Mobile Action triggers (blocking surfaces inside the mobile app) ────────
+  // Used when the next step shouldn't proceed until the user has acknowledged
+  // a blocking surface — e.g. a compliance modal that must be dismissed or a
+  // form that must be submitted.
+  { id: 'mobile_action_blocking_modal_dismissed',    type: 'trigger', label: 'User dismisses blocking modal',             category: 'mobile_action'        },
+  { id: 'mobile_action_form_submitted',              type: 'trigger', label: 'User submits form',                         category: 'mobile_action'        },
+
   // ── Conditions (Shift / Policy) ───────────────────────────────────────────────
   { id: 'shift_policy_main_credential',              type: 'condition', label: 'Main Credential',              category: 'policy'           },
   { id: 'shift_policy_regular_bill_rate',            type: 'condition', label: 'Regular Bill Rate',            category: 'policy'           },
@@ -7228,14 +7244,18 @@ function FlowNode({
             data-filled="true"
             data-branches="true"
           >
-            {/* Card-level filter icon — single leading badge sits above the
-                row list instead of repeating on every IF/ELSE row, so the
-                node reads as one container with stacked branches rather
-                than independent cards. */}
+            {/* Card-level filter icon + node-type label — single leading
+                strip sits above the row list instead of repeating on
+                every IF/ELSE row, so the node reads as one container
+                with stacked branches rather than independent cards.
+                Mirrors the policy card's "icon + type label" header,
+                with the label kept in the slate scale to match the
+                condition card's neutral palette. */}
             <div className={styles.conditionNodeHeader}>
               <span className={styles.conditionNodeIconBox} aria-label={cfg.label}>
                 <FilterLinesIcon size={14} />
               </span>
+              <span className={styles.nodeHeaderLabel}>Condition</span>
             </div>
             <div className={styles.conditionBranchRowList}>
               {branches.map(branch => (
@@ -7361,8 +7381,11 @@ function FlowNode({
             data-active={actionFocused ? 'true' : 'false'}
             data-filled={actionFilled ? 'true' : 'false'}
           >
-            {/* Card-level leading icon — mirrors the condition / policy
-                card layout (header above a single body row). */}
+            {/* Card-level leading icon + node-type label — mirrors the
+                condition / policy card layout (header above a single
+                body row). The label keeps the slate scale to match the
+                action card's neutral chrome (only policy uses the
+                rose-tinted variant). */}
             <div className={styles.conditionNodeHeader}>
               <span
                 className={clsx(
@@ -7378,6 +7401,7 @@ function FlowNode({
                     : <ArrowCircleBrokenRightIcon size={14} />;
                 })()}
               </span>
+              <span className={styles.nodeHeaderLabel}>Action</span>
             </div>
             <div className={styles.conditionBranchRowList}>
               <div className={styles.conditionBranchRow}>
@@ -7479,12 +7503,14 @@ function FlowNode({
             data-filled="true"
             data-branches="true"
           >
-            {/* Card header — single leading triangle/warning icon mirrors
-                the condition node's filter icon header. */}
+            {/* Card header — leading triangle/warning icon followed by
+                the node-type label so the policy card identifies its
+                type at a glance, mirroring the condition card layout. */}
             <div className={styles.conditionNodeHeader}>
               <span className={styles.policyNodeIconBox} aria-label={cfg.label}>
                 <TriangleUpIcon size={14} />
               </span>
+              <span className={styles.nodeHeaderLabel}>Policy</span>
             </div>
             <div className={styles.conditionBranchRowList}>
               {branches.map(branch => {
@@ -7513,7 +7539,7 @@ function FlowNode({
                               styles.conditionBranchExprLabel,
                               styles.conditionBranchExprPlaceholder,
                             )}>
-                              {step.placeholder ?? 'Select policies'}
+                              All policies selected
                             </span>
                           )}
                         </span>
@@ -8093,6 +8119,11 @@ function FlowCanvas({
   const draggingOverNodeIdRef  = useRef<string | null>(null);
   const reconnectingEdgeIdRef  = useRef<string | null>(null);
   const [draggingOverNodeId, setDraggingOverNodeId] = useState<string | null>(null);
+  /** Edge id currently under the pointer — set when the user hovers
+   *  either the SVG path's hit-stroke OR the midpoint minus button.
+   *  Drives the visual path's slate-300 → slate-800 hover swap so both
+   *  affordances share a unified hover state. */
+  const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
   const zoomRef        = useRef(zoom);
 
   // ── Marquee multi-selection ─────────────────────────────────────────────
@@ -8850,21 +8881,48 @@ function FlowCanvas({
 
   /** Resolve which branch anchor a given edge should originate from on a
    *  condition source node. Honors an explicit `edge.fromBranchId` first;
-   *  otherwise falls back to insertion-order distribution — the Nth outgoing
-   *  edge from a condition picks the Nth branch anchor (last branches map
-   *  to the ELSE row). Returns `null` for non-condition sources or when
-   *  there's nothing to distribute. */
+   *  legacy edges without a branchId fall back to insertion-order
+   *  distribution across the *unclaimed* branch anchors so two edges from
+   *  the same source don't collide on the same anchor (legacy edges that
+   *  predate the per-branch model used to share a single anchor — this
+   *  rule reattaches them onto whichever branches the explicit edges
+   *  haven't already taken). Returns `null` for non-condition sources or
+   *  when there's nothing to distribute. */
   const resolveBranchIdForEdge = (edge: GraphEdge): string | null => {
     if (edge.fromBranchId) return edge.fromBranchId;
     const src = nodes.find(n => n.id === edge.from);
-    if (!src || src.type !== 'condition') return null;
-    const branches = deriveConditionBranches(src);
-    if (countConditionsInBranches(branches) === 0) return null;
-    const branchIds = [...branches.map(b => b.id), 'else'];
+    if (!src) return null;
+    // Both condition and policy nodes render per-branch right anchors —
+    // resolve the edge against whichever branch model the source uses.
+    let branchIds: string[] | null = null;
+    if (src.type === 'condition') {
+      const branches = deriveConditionBranches(src);
+      if (countConditionsInBranches(branches) === 0) return null;
+      branchIds = [...branches.map(b => b.id), 'else'];
+    } else if (src.type === 'policy') {
+      const branches = derivePolicyBranches(src);
+      if (branches.length === 0) return null;
+      branchIds = [...branches.map(b => b.id), 'else'];
+    } else {
+      return null;
+    }
     const outgoing = edges.filter(e => e.from === edge.from);
-    const idx = outgoing.findIndex(e => e.id === edge.id);
+    // Branches already pinned by explicit fromBranchId edges — these are
+    // unavailable for the unbranded distribution below.
+    const claimed = new Set(
+      outgoing.map(e => e.fromBranchId).filter(Boolean) as string[],
+    );
+    // Unbranded edges, in the order they appear in the edges array.
+    const unbranded = outgoing.filter(e => !e.fromBranchId);
+    const idx = unbranded.findIndex(e => e.id === edge.id);
     if (idx < 0) return null;
-    return branchIds[Math.min(idx, branchIds.length - 1)] ?? null;
+    // Walk branchIds in order, picking the Nth unclaimed slot for the
+    // Nth unbranded edge. If unbranded edges outnumber unclaimed slots,
+    // the surplus pile up on the last branch (typically ELSE) — same
+    // behavior as the previous fallback.
+    const available = branchIds.filter(b => !claimed.has(b));
+    if (available.length === 0) return branchIds[branchIds.length - 1] ?? null;
+    return available[Math.min(idx, available.length - 1)] ?? null;
   };
 
   // ── Anchor position helper — reads DOM for pixel-accurate coordinates ──────────
@@ -8987,8 +9045,11 @@ function FlowCanvas({
                       Tip at (6.8, 3.7); wings at (3.5, 0.5) and (3.5, 6.9). */}
                   <path
                     d="M3.5 0.5 L6.8 3.7 L3.5 6.9"
-                    stroke="var(--Alloy-slate-200)"
-                    strokeWidth="1.5"
+                    /* `context-stroke` makes the marker pick up the
+                       referencing path's stroke colour so the chevron
+                       tracks the path's default / hover swap below. */
+                    stroke="context-stroke"
+                    strokeWidth="2"
                     fill="none"
                     strokeLinecap="round"
                     strokeLinejoin="round"
@@ -9011,11 +9072,41 @@ function FlowCanvas({
                 const d  = `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
 
                 return (
-                  <g key={edge.id}>
+                  <g
+                    key={edge.id}
+                    className={clsx(
+                      styles.edgeGroup,
+                      hoveredEdgeId === edge.id && styles.edgeGroupHovered,
+                    )}
+                    onMouseEnter={() => setHoveredEdgeId(edge.id)}
+                    onMouseLeave={() => setHoveredEdgeId(prev => prev === edge.id ? null : prev)}
+                  >
+                    {/* Per-edge fade gradient — slate-300 at the path's
+                        start point fades from 0% → 100% opacity along
+                        the path's tangent. `userSpaceOnUse` ties the
+                        gradient axis to the actual (x1,y1) → (x2,y2)
+                        endpoints so the fade tracks the path's direction
+                        even on diagonal connectors. The hover state's
+                        solid slate-800 stroke (set in CSS) overrides
+                        this gradient. */}
+                    <defs>
+                      <linearGradient
+                        id={`edge-fade-${edge.id}`}
+                        x1={x1} y1={y1} x2={x2} y2={y2}
+                        gradientUnits="userSpaceOnUse"
+                      >
+                        <stop offset="0%"   stopColor="var(--Alloy-slate-300)" stopOpacity="0" />
+                        <stop offset="100%" stopColor="var(--Alloy-slate-300)" stopOpacity="1" />
+                      </linearGradient>
+                    </defs>
                     {/* Visual path — chevron arrowhead attached at the end
-                        via <marker id="edge-arrow"> defined in <defs> above. */}
+                        via <marker id="edge-arrow"> defined in <defs> above.
+                        At rest the stroke uses the per-edge fade gradient;
+                        on hover, CSS swaps the stroke to a solid slate-800. */}
                     <path d={d}
-                      stroke="var(--Alloy-slate-200)" strokeWidth="1.5"
+                      className={styles.edgePath}
+                      stroke={`url(#edge-fade-${edge.id})`}
+                      strokeWidth="2"
                       fill="none" strokeLinecap="round"
                       markerEnd="url(#edge-arrow)"
                       style={{ pointerEvents: 'none' }}
@@ -9089,6 +9180,8 @@ function FlowCanvas({
                   className={styles.edgeMidpointArea}
                   style={{ left: midX - 60, top: midY - 25, width: 120, height: 50 }}
                   onMouseDown={e => e.stopPropagation()}
+                  onMouseEnter={() => setHoveredEdgeId(edge.id)}
+                  onMouseLeave={() => setHoveredEdgeId(prev => prev === edge.id ? null : prev)}
                 >
                   <button
                     type="button"

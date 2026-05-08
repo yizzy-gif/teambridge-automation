@@ -5,7 +5,7 @@
 // see `extract-readonly-flow-canvas` follow-up task. The Edit-workflow
 // CTA navigates into the builder at `/automations/:id/edit`.
 
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Button } from '@alloy/components/Button';
 import { Dialog, DialogHeader, DialogContent } from '@alloy/components/Dialog';
@@ -19,8 +19,6 @@ import { ValueChangeLabel } from '@alloy/components/ValueChangeLabel';
 import { SegmentedControl } from '@alloy/components/SegmentedControl';
 import { ChartCard } from '@alloy/components/Charts/ChartCard';
 import { BarChart } from '@alloy/components/Charts/BarChart';
-import { RatioBar } from '@alloy/components/Charts/RatioBar';
-import { Tabs } from '@alloy/components/Tabs';
 import { ListItem } from '@alloy/components/ListItem';
 import { Pagination } from '@alloy/components/Pagination';
 import {
@@ -42,11 +40,26 @@ import { PlayIcon } from '@alloy/components/icons/PlayIcon';
 import { PuzzlePiece01Icon } from '@alloy/components/icons/PuzzlePiece01Icon';
 import { SettingsGearIcon } from '@alloy/components/icons/SettingsGearIcon';
 import { LogIn01Icon } from '@alloy/components/icons/LogIn01Icon';
+import { ChevronDownIcon } from '@alloy/components/icons/ChevronDownIcon';
+import { ChevronRightIcon } from '@alloy/components/icons/ChevronRightIcon';
+import { ZapIcon } from '@alloy/components/icons/ZapIcon';
+import { Mail01Icon } from '@alloy/components/icons/Mail01Icon';
+import { MessageDotsSquareIcon } from '@alloy/components/icons/MessageDotsSquareIcon';
 import {
   MOCK_AUTOMATIONS,
   type Automation,
   type AutomationStatus,
+  type ActionIconKey,
 } from './AutomationsPage';
+import { Mail01Icon as MailIcon } from '@alloy/components/icons/Mail01Icon';
+import { Bell01Icon } from '@alloy/components/icons/Bell01Icon';
+import { ClipboardCheckIcon } from '@alloy/components/icons/ClipboardCheckIcon';
+import { MessageNotificationCircleIcon } from '@alloy/components/icons/MessageNotificationCircleIcon';
+import { RefreshCw04Icon } from '@alloy/components/icons/RefreshCw04Icon';
+import { Users03Icon } from '@alloy/components/icons/Users03Icon';
+import { BankIcon } from '@alloy/components/icons/BankIcon';
+import { PackageIcon } from '@alloy/components/icons/PackageIcon';
+import { TeambridgeAIIcon } from '@alloy/components/icons/TeambridgeAIIcon';
 import { AI_PERSONAS } from '@/features/ai/personas';
 import styles from './AutomationDetailPage.module.css';
 
@@ -111,7 +124,25 @@ interface UsageMetrics {
      *  in the period are still keyed (count = 0) so the chart can
      *  optionally surface idle specialists. */
     activationsByPersona: Record<string, number>;
+    /** Per-day per-persona invocation counts powering the
+     *  Specialists Activated dot-heatmap calendar. Each entry is
+     *  one calendar day; `total` is the sum of `byPersona` and
+     *  drives the dot size, while `byPersona` feeds the per-cell
+     *  hover tooltip. Walks back ~35 days so the heatmap always
+     *  fills its 7-column × 5-row grid regardless of which range
+     *  the user has selected. */
+    activationsHeatmap: HeatmapDay[];
   };
+}
+
+/** One day in the Specialists Activated heatmap. */
+interface HeatmapDay {
+  /** ISO date `YYYY-MM-DD` for the cell. */
+  date:      string;
+  /** Sum of `byPersona` for the day — drives dot size. */
+  total:     number;
+  /** Per-persona invocation count, keyed by `AiPersona.id`. */
+  byPersona: Record<string, number>;
 }
 
 interface RecentRun {
@@ -128,6 +159,31 @@ interface RecentEdit {
   /** Action sentence: "Alex renamed the workflow", "Sam added step …" */
   summary:   string;
   at:        string;           // ISO
+}
+
+/** Per-node activity event — mirrors the Recent runs feed on the global
+ *  Usage page but scoped to a specific node within this workflow.
+ *  `nodeId` lets the row link back to the canvas/builder. */
+type ActivityEventKind = 'email' | 'sms' | 'in_app' | 'edit' | 'node_action';
+interface WorkflowActivityEvent {
+  id:         string;
+  kind:       ActivityEventKind;
+  /** Display label for the row (e.g. workflow name, node label, editor). */
+  primary:    string;
+  /** Suffix appended after `primary` (e.g. "sent SMS message(s)"). */
+  suffix:     string;
+  /** ISO timestamp — drives the relative-time stamp + chronological sort. */
+  at:         string;
+  /** Optional node id — surfaced on `node_action` rows so the user can tie
+   *  the activity back to a specific step. */
+  nodeId?:    string;
+  /** Optional recipient label shown in the expanded body. */
+  recipient?: string;
+  /** Optional body / payload shown in the expanded body. */
+  body?:      string;
+  /** Optional pointer to the action-icon palette so the row can render
+   *  the workflow-specific icon instead of the generic kind icon. */
+  iconKey?:   ActionIconKey;
 }
 
 interface WorkflowPermissions {
@@ -156,6 +212,10 @@ export interface WorkflowDetail {
   metrics:      Record<UsageRange, UsageMetrics>;
   recentRuns:   RecentRun[];
   recentEdits:  RecentEdit[];
+  /** Unified per-node activity feed — runs, edits, and node-level
+   *  actions merged + sorted reverse-chronologically. Drives the
+   *  Activities section's Recent-runs-style list. */
+  recentActivities: WorkflowActivityEvent[];
 }
 
 // ─── Mock detail layer ────────────────────────────────────────────────────────
@@ -284,6 +344,50 @@ function synthMetrics(workflow: Automation, range: UsageRange): UsageMetrics {
     totalSpecialistsActivated += c;
   }
 
+  // Per-day heatmap series — fixed 35-day window walking back from
+  // today, with the window size driven by the selected segmented
+  // time control: 24h / 7d collapse to a single week row, 30d
+  // expands to 5 weeks, and `all` stretches across 12 weeks (~3
+  // months) so the heatmap always reflects the period the user
+  // is looking at. Each persona's daily count rolls a Bernoulli-ish
+  // distribution from a workflow-stable weight × per-day jitter so
+  // the dots ripple naturally instead of holding a uniform fill
+  // across the grid. ~15% of days are forced to zero (idle days)
+  // so the chart shows real silence alongside activity.
+  const HEATMAP_DAYS_BY_RANGE: Record<UsageRange, number> = {
+    '24h': 7,
+    '7d':  7,
+    '30d': 35,
+    'all': 84,
+  };
+  const HEATMAP_DAYS = HEATMAP_DAYS_BY_RANGE[range];
+  const hmRnd = seeded(`${workflow.id}|hm-specialists|${range}`);
+  const today = new Date();
+  const activationsHeatmap: HeatmapDay[] = [];
+  for (let i = HEATMAP_DAYS - 1; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(today.getDate() - i);
+    const r = hmRnd();
+    const idleDay = r < 0.15;
+    const byPersona: Record<string, number> = {};
+    let dayTotal = 0;
+    for (const p of AI_PERSONAS) {
+      const wRoll = hmRnd();
+      const personaBaseline =
+        Math.max(1, Math.round((activationsByPersona[p.id] ?? 0) / HEATMAP_DAYS));
+      const c = idleDay
+        ? 0
+        : Math.max(0, Math.round(personaBaseline * (0.4 + wRoll * 1.8)));
+      byPersona[p.id] = c;
+      dayTotal += c;
+    }
+    activationsHeatmap.push({
+      date:  d.toISOString().slice(0, 10),
+      total: dayTotal,
+      byPersona,
+    });
+  }
+
   // Prior-period totals — sit a little below current so the trend
   // delta has a non-zero direction more often than not.
   const triggeredPrior   = Math.max(1, Math.round(totalTriggered    * (0.85 + rnd() * 0.3)));
@@ -305,6 +409,7 @@ function synthMetrics(workflow: Automation, range: UsageRange): UsageMetrics {
       completed,
       actionsByType,
       activationsByPersona,
+      activationsHeatmap,
     },
   };
 }
@@ -356,6 +461,310 @@ function synthRecentEdits(workflow: Automation): RecentEdit[] {
   return out;
 }
 
+/** Action-icon → activity template. Each workflow's `actionIcons` array
+ *  is the source of truth for what action nodes the flow runs; the
+ *  detail-page activity feed picks templates by the workflow's icons so
+ *  the rows match the workflow's actual action surface (a notifications
+ *  flow won't show "created record" rows, etc.). `kind` drives the
+ *  leading icon + recipient label; `recipients` cycle so the feed reads
+ *  varied rather than repeating the same recipient over and over. */
+const ACTION_ICON_TEMPLATE: Record<ActionIconKey, {
+  kind:        ActivityEventKind;
+  /** Display label rendered as the action-type column primary value. */
+  label:       string;
+  /** Past-tense suffix for the secondary descriptor (e.g. "sent message"). */
+  suffix:      string;
+  /** Pool of plausible recipients — picked round-robin per row. */
+  recipients:  string[];
+  /** Pool of plausible message bodies — picked round-robin per row. */
+  bodies:      string[];
+}> = {
+  mail: {
+    kind:       'email',
+    label:      'Send email',
+    suffix:     'sent email(s)',
+    recipients: ['jordan.lee@company.com', 'priya.shah@company.com', 'maya.lin@company.com', 'sam.chen@company.com'],
+    bodies:     [
+      'Subject: Welcome to the team — first day checklist\n\nHi Jordan,\n\nWelcome aboard! Before your first day on Monday, please complete the following so we can hit the ground running:\n\n  • Review and sign the attached offer letter\n  • Set up your Teambridge account at https://app.teambridge.com\n  • Pick a workstation preference (laptop / monitor / accessories)\n  • Confirm your start-time window with your manager\n\nIf anything looks off, reply to this thread and the People-ops team will help. We\'re excited to have you join us.\n\n— Onboarding bot',
+      'Subject: Reminder — your shift starts soon\n\nHi Maya,\n\nThis is a friendly reminder that your shift starts at 8:00 AM tomorrow at the Mission Bay location. Please:\n\n  • Confirm you\'ve received this email by tapping the link below\n  • Bring your badge, water bottle, and updated availability sheet\n  • Arrive 10 minutes early for the brief stand-up\n\nConfirm shift: https://app.teambridge.com/shifts/confirm/SHF-9421\n\nReply STOP to opt out of shift reminders.',
+      'Subject: Your contract is ending — offboarding next steps\n\nHi Priya,\n\nYour contract with Teambridge ends on Friday. To wrap things up cleanly, please complete the offboarding checklist below by end of day Wednesday:\n\n  1. Submit final timesheet through the Shifts app\n  2. Return company equipment via the prepaid shipping label\n  3. Confirm your forwarding address for the final paystub\n  4. Schedule a 15-minute exit interview with your manager\n\nThanks for everything you\'ve contributed — it\'s been a pleasure working with you.',
+    ],
+  },
+  message: {
+    kind:       'sms',
+    label:      'Send SMS',
+    suffix:     'sent SMS message(s)',
+    recipients: ['Maya Lin', 'Jordan Lee', 'Priya Shah', 'Sam Chen'],
+    bodies:     [
+      'Teambridge: Reminder — your weekly timesheet is due today by 5pm. Tap to review your hours and approve: https://tb.app/ts/9421. Reply HELP for support, STOP to opt out.',
+      'Teambridge: Your shift starts in 30 min at Mission Bay. Confirm you\'re on the way: https://tb.app/sh/3318. Need to swap? Reply SWAP and we\'ll find coverage.',
+      'Teambridge: Please confirm your availability for next week (Mon–Sun). Open the app or reply with your preferred days. Replies after 8pm tonight may not be honored.',
+    ],
+  },
+  bell: {
+    kind:       'in_app',
+    label:      'Send notification',
+    suffix:     'sent in-app message(s)',
+    recipients: ['Matched coverage pool', 'Operations channel', 'Onboarding cohort', 'Manager channel'],
+    bodies:     [
+      'Title: Shift available — Mission Bay, 8a–4p\n\nA shift matching your saved filters has just been released. Tap to view the details, claim it, or pass to the next eligible teammate. First confirmation gets the slot. Pool size: 12.',
+      'Title: New applicant matches your filters\n\nAlex Park (3 yrs · barista · open weekends) just applied to your "Front-of-house openings" board. Review their profile and decide whether to advance them to a phone screen.',
+      'Title: Compliance alert — policy update\n\nThe overtime threshold for the Mission Bay location was bumped from 38 to 42.5 hrs/wk effective today. Please re-review any open schedules and acknowledge the policy on the Compliance tab.',
+    ],
+  },
+  task: {
+    kind:       'node_action',
+    label:      'Assign task',
+    suffix:     'assigned task',
+    recipients: ['Onboarding checklist · Maya Lin', 'Welcome packet · Jordan Lee', 'Equipment return · Priya Shah'],
+    bodies:     [
+      'Task assigned with default due date 7 days from now.',
+      'Task assigned to the onboarding queue with priority Normal.',
+      'Task assigned and notification sent to the assignee.',
+    ],
+  },
+  sync: {
+    kind:       'node_action',
+    label:      'Sync record',
+    suffix:     'synced record',
+    recipients: ['Workday · Employee #4821', 'BambooHR · Contractor #1102', 'ADP · Timesheet #5523'],
+    bodies:     [
+      'Record fields synced — 7 fields updated, 0 conflicts.',
+      'Sync completed. New status applied to the source system.',
+      'Sync queued — will retry if any downstream service is rate-limited.',
+    ],
+  },
+  people: {
+    kind:       'node_action',
+    label:      'Assign group',
+    suffix:     'assigned group',
+    recipients: ['Onboarding team', 'Compliance reviewers', 'People-ops channel'],
+    bodies:     [
+      'Group assigned to record. All group members notified.',
+      'Group membership updated — 3 members added, 0 removed.',
+      'Group permissions applied to the record per template.',
+    ],
+  },
+  finance: {
+    kind:       'node_action',
+    label:      'Update financial record',
+    suffix:     'updated record',
+    recipients: ['HR · Compliance', 'Finance · Payroll', 'Accounts payable'],
+    bodies:     [
+      'Record updated — type "Contract acceptance".',
+      'Payroll record posted for the current pay period.',
+      'Hours updated from 38 to 42.5 — overtime threshold crossed.',
+    ],
+  },
+  package: {
+    kind:       'node_action',
+    label:      'Create record',
+    suffix:     'created record',
+    recipients: ['HR · Compliance', 'IT · Equipment', 'Facilities · Access cards'],
+    bodies:     [
+      'New record created — ready for downstream review.',
+      'Record created with template "New hire packet".',
+      'Record created and assigned to the default reviewer.',
+    ],
+  },
+  ai: {
+    kind:       'node_action',
+    label:      'AI Specialist',
+    suffix:     'invoked specialist',
+    recipients: ['Onbi (Onboarding)', 'Sched (Scheduling)', 'Cassie (Compliance)'],
+    bodies:     [
+      'Specialist completed the requested action and returned a structured response.',
+      'Specialist generated a draft for downstream review.',
+      'Specialist routed the case to the correct assignee.',
+    ],
+  },
+};
+
+/** Pick the workflow's action-icon list, falling back to a sensible
+ *  default when the upstream record doesn't supply one. Used to drive
+ *  the activity-feed templates so each row matches one of the
+ *  workflow's actual action surfaces. */
+function workflowActionIcons(workflow: Automation): ActionIconKey[] {
+  return workflow.actionIcons && workflow.actionIcons.length > 0
+    ? workflow.actionIcons
+    : ['mail', 'bell', 'task'];
+}
+
+/** Internal node-type slug used in synthetic node ids. Mirrors the
+ *  builder's `nh-{type}-{idx}` / `co-{type}-{idx}` naming so the ids
+ *  read like real graph nodes rather than placeholder counters. */
+const ACTION_ICON_NODE_SLUG: Record<ActionIconKey, string> = {
+  mail:    'email',
+  message: 'sms',
+  bell:    'notify',
+  task:    'task',
+  sync:    'sync',
+  people:  'group',
+  finance: 'record',
+  package: 'create',
+  ai:      'ai',
+};
+
+/** Workflow id → short prefix used for all node ids in that flow. The
+ *  prefix mirrors the in-app convention (e.g. `nh-` for the New-hire
+ *  onboarding flow); falls back to a deterministic two-letter slug
+ *  derived from the workflow id so unmapped workflows still produce
+ *  stable, plausible-looking ids. */
+const WORKFLOW_NODE_PREFIX: Record<string, string> = {
+  wf_01HGXZ7K3QN4A2MB: 'nh',  // New hire onboarding
+  wf_01HGY2F9PW4VRJ8N: 'tr',  // Timesheet approval reminder
+  wf_01HGYH6CXD3TZ5QK: 'ssn', // Shift swap notification
+  wf_01HGZM4P8BKFYTR7: 'co',  // Contractor offboarding
+  wf_01HH01VQY7JN4E5M: 'pa',  // Premium shift dispatch
+};
+
+function nodePrefixFor(workflow: Automation): string {
+  const mapped = WORKFLOW_NODE_PREFIX[workflow.id];
+  if (mapped) return mapped;
+  // Fallback — pull two letters from the workflow id's tail so the
+  // value still feels like a slug instead of a generic placeholder.
+  const tail = workflow.id.replace(/^wf_/, '').slice(-4).toLowerCase();
+  return tail.replace(/[^a-z]/g, '').slice(0, 2) || 'wf';
+}
+
+/** Synthesised per-node activity stream — each row mirrors one of the
+ *  workflow's own action types (driven by `workflow.actionIcons`).
+ *  Node ids follow the builder's `{prefix}-{type}-{idx}` convention so
+ *  the expanded view shows a realistic graph node id (e.g.
+ *  `nh-email-1`) rather than a generic counter. */
+function synthNodeActivities(workflow: Automation): WorkflowActivityEvent[] {
+  const rnd = seeded(`${workflow.id}|node-acts`);
+  const now = Date.now();
+  const icons  = workflowActionIcons(workflow);
+  const prefix = nodePrefixFor(workflow);
+  // Stable per-action-icon node ids — each icon slot owns one node id
+  // for the workflow so repeat occurrences of the same action type
+  // share the same node id (matches how the builder reuses nodes when
+  // a flow runs multiple times).
+  const nodeIdByIcon: Record<string, string> = {};
+  icons.forEach((key, idx) => {
+    nodeIdByIcon[key] = `${prefix}-${ACTION_ICON_NODE_SLUG[key]}-${idx + 1}`;
+  });
+  const out: WorkflowActivityEvent[] = [];
+  for (let i = 0; i < 28; i++) {
+    const iconKey  = icons[i % icons.length];
+    const t        = ACTION_ICON_TEMPLATE[iconKey];
+    const hoursAgo = i * (0.6 + rnd() * 2.5);
+    const nodeId   = nodeIdByIcon[iconKey];
+    out.push({
+      id:          `${workflow.id}-act-${i}`,
+      kind:        t.kind,
+      primary:     t.label,
+      suffix:      t.suffix,
+      at:          new Date(now - hoursAgo * 3600_000).toISOString(),
+      nodeId,
+      iconKey,
+      recipient:   t.recipients[Math.floor(rnd() * t.recipients.length)],
+      body:        t.bodies[Math.floor(rnd() * t.bodies.length)],
+    });
+  }
+  return out;
+}
+
+const ACTIVITY_ICON: Record<ActivityEventKind, typeof Mail01Icon> = {
+  email:        Mail01Icon,
+  sms:          MessageDotsSquareIcon,
+  in_app:       MessageDotsSquareIcon,
+  edit:         Edit03Icon,
+  node_action:  ZapIcon,
+};
+
+/** Per-icon-key → Alloy icon component, mirroring the AutomationsPage
+ *  card-cluster mapping. When an event carries an `iconKey` the row
+ *  prefers this icon over the kind-keyed default so the activity
+ *  visually matches the workflow's own action surface. */
+const ACTION_ICON_COMPONENT: Record<ActionIconKey, typeof Mail01Icon> = {
+  mail:    MailIcon,
+  bell:    Bell01Icon,
+  task:    ClipboardCheckIcon,
+  message: MessageNotificationCircleIcon,
+  sync:    RefreshCw04Icon,
+  people:  Users03Icon,
+  finance: BankIcon,
+  package: PackageIcon,
+  ai:      TeambridgeAIIcon,
+};
+
+const ACTIVITY_RECIPIENT_LABEL: Record<ActivityEventKind, string> = {
+  email:        'Sent an email to',
+  sms:          'Sent an SMS to',
+  in_app:       'Sent an in-app message to',
+  edit:         'Edited',
+  node_action:  'Acted on',
+};
+
+function fmtActivityRelative(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const diffMs = Date.now() - d.getTime();
+  if (diffMs < 0) return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const min = Math.floor(diffMs / 60_000);
+  if (min < 1)   return 'just now';
+  if (min < 60)  return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24)   return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  if (day < 7)   return `${day}d ago`;
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+function ActivityFeedItem({ event }: { event: WorkflowActivityEvent }) {
+  const [open, setOpen] = useState(false);
+  const Icon = ACTIVITY_ICON[event.kind];
+  const hasDetail = !!event.recipient || !!event.body;
+  return (
+    <div className={styles.runFeedItem} data-open={open || undefined}>
+      <button
+        type="button"
+        className={styles.runFeedItemRow}
+        onClick={() => setOpen(v => !v)}
+        aria-expanded={open}
+      >
+        <span className={styles.runsFeedAvatar} aria-hidden>
+          <Icon size={14} />
+        </span>
+        <span className={styles.runFeedItemContent}>
+          <span className={styles.runFeedItemTitle}>
+            <span className={styles.runFeedItemWorkflow}>{event.primary}</span>{' '}
+            <span className={styles.runFeedItemSuffix}>{event.suffix}</span>
+          </span>
+          <span className={styles.runFeedItemTimestamp}>{fmtActivityRelative(event.at)}</span>
+        </span>
+        <span
+          className={styles.runFeedItemChevron}
+          data-open={open || undefined}
+          aria-hidden
+        >
+          <ChevronDownIcon size={14} />
+        </span>
+      </button>
+      {open && hasDetail && (
+        <div className={styles.runFeedItemBody}>
+          <div className={styles.runFeedItemDetail}>
+            <span className={styles.runFeedItemDetailMarker} aria-hidden />
+            <div className={styles.runFeedItemDetailContent}>
+              {event.recipient && (
+                <p className={styles.runFeedItemDetailRecipient}>
+                  {ACTIVITY_RECIPIENT_LABEL[event.kind]}{' '}
+                  <strong>{event.recipient}</strong>
+                </p>
+              )}
+              {event.body && (
+                <p className={styles.runFeedItemDetailBody}>{event.body}</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Replace this with the real workflow detail fetcher. Today returns a
  *  synthesised detail blob from the Manage page mock so the page can be
  *  developed end-to-end without backend wiring. */
@@ -394,6 +803,13 @@ function useWorkflowDetail(id: string | undefined): WorkflowDetail | null {
       },
       recentRuns:  synthRecentRuns(workflow),
       recentEdits: synthRecentEdits(workflow),
+      // Recent activities mirror the global Usage page's Recent runs
+      // feed but scoped to a single workflow — every row is a per-action
+      // run instance. Templates align with `workflow.actionIcons` so
+      // the action types in the table match the actions the workflow
+      // actually runs (no SMS rows for an email-only flow, etc.).
+      recentActivities: synthNodeActivities(workflow)
+        .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime()),
     };
   }, [id]);
 }
@@ -498,7 +914,7 @@ export function AutomationDetailPage() {
   const [actionTypeFilter, setActionTypeFilter] = useState<Set<ActionTypeKey>>(
     () => new Set(ACTION_TYPE_KEYS),
   );
-  const [activityTab, setActivityTab]   = useState<'runs' | 'edits'>('runs');
+  const [expandedActivityId, setExpandedActivityId] = useState<string | null>(null);
   const [summaryOpen, setSummaryOpen]   = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [page, setPage]                 = useState(1);
@@ -521,7 +937,7 @@ export function AutomationDetailPage() {
     );
   }
 
-  const { workflow, schedule, integrations, permissions, metrics, recentRuns, recentEdits } = detail;
+  const { workflow, schedule, integrations, permissions, metrics, recentActivities } = detail;
   const usage = metrics[usageRange];
   const statusTag = WORKFLOW_STATUS_TAG[workflow.status];
 
@@ -548,7 +964,10 @@ export function AutomationDetailPage() {
   ];
 
   // Activity feed pagination — drives whichever tab is active.
-  const activeList: (RecentRun | RecentEdit)[] = activityTab === 'runs' ? recentRuns : recentEdits;
+  // Single unified activity feed — runs / edits / per-node actions all
+  // sorted reverse-chronologically. Pagination drives the visible window
+  // through the same Recent-runs-style row component.
+  const activeList = recentActivities;
   const totalPages = Math.max(1, Math.ceil(activeList.length / PAGE_SIZE));
   const pageStart  = (page - 1) * PAGE_SIZE;
   const pageItems  = activeList.slice(pageStart, pageStart + PAGE_SIZE);
@@ -696,14 +1115,29 @@ export function AutomationDetailPage() {
                     title="Actions taken"
                     subtitle={`Actions executed by type — ${rangeLabel}`}
                   >
+                    {(() => {
+                      // Sum only the filtered action types' totals so the
+                      // hero number tracks the filter pills underneath. The
+                      // prior-period figure scales proportionally — we don't
+                      // have a per-type prior breakdown, so pin the change
+                      // indicator to the same delta ratio as the unfiltered
+                      // total.
+                      const filteredCurrent = ACTION_TYPE_KEYS
+                        .filter(k => actionTypeFilter.has(k))
+                        .reduce((sum, k) => sum + usage.series.actionsByType[k].reduce((a, b) => a + b, 0), 0);
+                      const total = usage.actionsTaken.current || 1;
+                      const filteredPrior = Math.round(
+                        usage.actionsTaken.prior * (filteredCurrent / total),
+                      );
+                      return (
                     <div className={styles.peopleReachedBody}>
                       <div className={styles.successRateHero}>
                         <span className={styles.successRateValue}>
-                          {fmtNum(usage.actionsTaken.current)}
+                          {fmtNum(filteredCurrent)}
                         </span>
                         <Change
-                          current={usage.actionsTaken.current}
-                          prior={usage.actionsTaken.prior}
+                          current={filteredCurrent}
+                          prior={filteredPrior}
                         />
                       </div>
 
@@ -758,16 +1192,24 @@ export function AutomationDetailPage() {
                         formatTooltipValue={(v) => fmtNum(v)}
                       />
                     </div>
+                      );
+                    })()}
                   </ChartCard>
 
-                  {/* Specialists Activated — RatioBar with one segment
-                      per persona. `aiGradient` paints each segment as a
-                      slice of the purple→blue AI gradient so the bar
-                      reads as one continuous brand ramp; `showLegend`
-                      surfaces the persona / count breakdown beneath. */}
+                  {/* Specialists Activated — dot-heatmap calendar. Each
+                      cell represents one calendar day; the window
+                      length is driven by the segmented time control
+                      above (7 / 35 / 84 days). Circle diameter +
+                      opacity scale with total specialist invocations
+                      for the day. Hovering a cell surfaces a tooltip
+                      listing the per-persona breakdown for that
+                      date — the chart itself stays single-tone so the
+                      visual reads as a pure activity-density heatmap. */}
                   <ChartCard
                     title="Specialists activated"
-                    subtitle={`AI persona invocations — ${rangeLabel}`}
+                    subtitle={`AI persona invocations — last ${
+                      usage.series.activationsHeatmap.length
+                    } days`}
                   >
                     <div className={styles.peopleReachedBody}>
                       <div className={styles.successRateHero}>
@@ -779,18 +1221,8 @@ export function AutomationDetailPage() {
                           prior={usage.specialistsActivated.prior}
                         />
                       </div>
-                      <RatioBar
-                        aiGradient
-                        height={32}
-                        segments={AI_PERSONAS.map(p => ({
-                          label: p.name,
-                          value: usage.series.activationsByPersona[p.id] ?? 0,
-                        }))}
-                        ariaLabel={`Specialist activations: ${
-                          AI_PERSONAS
-                            .map(p => `${p.name} ${usage.series.activationsByPersona[p.id] ?? 0}`)
-                            .join(', ')
-                        }`}
+                      <SpecialistsActivatedHeatmap
+                        days={usage.series.activationsHeatmap}
                       />
                     </div>
                   </ChartCard>
@@ -800,101 +1232,117 @@ export function AutomationDetailPage() {
 
           </section>
 
-          {/* ── Activity ──────────────────────────────────────────── */}
+          {/* ── Activities ──────────────────────────────────────────────
+              Unified per-node activity feed rendered through Alloy's
+              `Table` so the visual matches the rest of the page. The
+              underlying data still merges runs / edits / per-node
+              actions chronologically — each row shows the icon, primary
+              label + suffix, recipient/payload, and a relative
+              timestamp; node-action rows surface their node id inline
+              with the primary label so the user can tie the entry back
+              to a step on the canvas. */}
           <section className={styles.section} aria-label="Activities">
-            <h2 className={styles.sectionHeading}>Activities</h2>
-            <Tabs
-              variant="underline"
-              value={activityTab}
-              onChange={v => { setActivityTab(v as 'runs' | 'edits'); setPage(1); }}
-            >
-              <Tabs.Tab value="runs">Runs</Tabs.Tab>
-              <Tabs.Tab value="edits">Edits</Tabs.Tab>
-            </Tabs>
+            <header className={styles.runsFeedHeader}>
+              <h2 className={styles.sectionHeading}>Recent activities</h2>
+              <p className={styles.runsFeedSubtitle}>
+                {activeList.length === 0
+                  ? 'No activity yet'
+                  : `Showing ${pageItems.length} of ${activeList.length}`}
+              </p>
+            </header>
 
-            {/* Activity table — same column shape as the AI Specialist
-                page in TeambridgeCode (Time → context → action → outcome).
-                For Runs: Time → Trigger → Duration → Status. For Edits:
-                Time → Editor → Activity. We pre-format absolute
-                timestamps for the row title-tooltip so hovering surfaces
-                the exact time without taking extra column space. */}
             <div className={styles.activityTableWrap}>
               <Table size="sm">
                 <TableHeader>
-                  {activityTab === 'runs' ? (
-                    <TableRow hoverable={false}>
-                      <TableHead>Time</TableHead>
-                      <TableHead>Trigger</TableHead>
-                      <TableHead>Duration</TableHead>
-                      <TableHead align="right">Status</TableHead>
-                    </TableRow>
-                  ) : (
-                    <TableRow hoverable={false}>
-                      <TableHead>Time</TableHead>
-                      <TableHead>Editor</TableHead>
-                      <TableHead>Activity</TableHead>
-                    </TableRow>
-                  )}
+                  <TableRow hoverable={false}>
+                    <TableHead>Time</TableHead>
+                    <TableHead>Action type</TableHead>
+                    <TableHead>Recipients</TableHead>
+                  </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {activityTab === 'runs' ? (
-                    pageItems.map(item => {
-                      const r = item as RecentRun;
-                      const tag = RUN_STATUS_TAG[r.status];
-                      return (
-                        <TableRow key={r.id}>
+                  {pageItems.map(event => {
+                    const isExpanded = expandedActivityId === event.id;
+                    const hasDetail  = !!event.body || !!event.nodeId;
+                    const onToggle = () =>
+                      setExpandedActivityId(prev => (prev === event.id ? null : event.id));
+                    return (
+                      <Fragment key={event.id}>
+                        <TableRow
+                          onClick={hasDetail ? onToggle : undefined}
+                          aria-expanded={hasDetail ? isExpanded : undefined}
+                          style={hasDetail ? { cursor: 'pointer' } : undefined}
+                        >
                           <TableCell>
-                            <CellText
-                              variant="secondary"
-                              title={new Date(r.startedAt).toLocaleString()}
-                            >
-                              {fmtRelative(r.startedAt)}
-                            </CellText>
-                          </TableCell>
-                          <TableCell>
-                            <CellText>{r.trigger}</CellText>
-                          </TableCell>
-                          <TableCell>
-                            <CellText variant="secondary">
-                              {fmtDuration(r.durationSec)}
-                            </CellText>
-                          </TableCell>
-                          <TableCell align="right">
-                            <CellStatusTag status={tag.status}>
-                              {tag.label}
-                            </CellStatusTag>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })
-                  ) : (
-                    pageItems.map(item => {
-                      const e = item as RecentEdit;
-                      return (
-                        <TableRow key={e.id}>
-                          <TableCell>
-                            <CellText
-                              variant="secondary"
-                              title={new Date(e.at).toLocaleString()}
-                            >
-                              {fmtRelative(e.at)}
-                            </CellText>
-                          </TableCell>
-                          <TableCell>
-                            <div className={styles.editorCell}>
-                              <span className={styles.avatarSm} aria-hidden>
-                                {initialsOf(e.authorName)}
-                              </span>
-                              <CellText>{e.authorName}</CellText>
+                            <div className={styles.activityTimeCell}>
+                              <button
+                                type="button"
+                                className={styles.activityExpandToggle}
+                                onClick={e => { e.stopPropagation(); onToggle(); }}
+                                aria-label={isExpanded ? 'Collapse row' : 'Expand row'}
+                                aria-expanded={isExpanded}
+                                disabled={!hasDetail}
+                              >
+                                {isExpanded
+                                  ? <ChevronDownIcon size={14} />
+                                  : <ChevronRightIcon size={14} />}
+                              </button>
+                              <CellText
+                                variant="secondary"
+                                title={new Date(event.at).toLocaleString()}
+                              >
+                                {fmtActivityRelative(event.at)}
+                              </CellText>
                             </div>
                           </TableCell>
                           <TableCell>
-                            <CellText wrap>{e.summary}</CellText>
+                            <CellText wrap>
+                              <span style={{ fontWeight: 'var(--font-weight-medium)' }}>{event.primary}</span>
+                              {event.suffix ? (
+                                <>
+                                  {' '}
+                                  <span style={{ color: 'var(--color-content-secondary)' }}>
+                                    {event.suffix}
+                                  </span>
+                                </>
+                              ) : null}
+                            </CellText>
+                          </TableCell>
+                          <TableCell>
+                            {event.recipient ? (
+                              <CellText wrap>{event.recipient}</CellText>
+                            ) : (
+                              <CellText variant="secondary">—</CellText>
+                            )}
                           </TableCell>
                         </TableRow>
-                      );
-                    })
-                  )}
+                        {isExpanded && hasDetail && (
+                          <tr className={styles.activityExpandedRow}>
+                            <td className={styles.activityExpandedCell} colSpan={3}>
+                              <div className={styles.activityExpandedGrid}>
+                                {event.body && (
+                                  <div className={styles.activityExpandedSection}>
+                                    <Eyebrow>Message</Eyebrow>
+                                    <p className={styles.activityExpandedText}>
+                                      {event.body}
+                                    </p>
+                                  </div>
+                                )}
+                                {event.nodeId && (
+                                  <div className={styles.activityExpandedSection}>
+                                    <Eyebrow>Node</Eyebrow>
+                                    <p className={styles.activityExpandedTextMono}>
+                                      {event.nodeId}
+                                    </p>
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
                 </TableBody>
               </Table>
             </div>
@@ -1107,4 +1555,101 @@ function Sparkline({ values, color }: SparklineProps) {
   );
 }
 
+/* ── SpecialistsActivatedHeatmap ────────────────────────────────────────
+   Calendar-style dot heatmap. Renders one cell per day over the last 35
+   days laid out as a 7-column (Mon–Sun) × 5-row grid; each cell hosts a
+   single circular dot whose diameter scales linearly with that day's
+   total specialist invocations. The dot is monotone (purple AI accent)
+   so the chart stays a pure activity-density read; per-persona detail
+   surfaces only via the hover tooltip — same data, different attention
+   layer. ──────────────────────────────────────────────────────────── */
+const HEATMAP_DOT_MIN     = 4;   // px — diameter for an idle (zero) day
+const HEATMAP_DOT_MAX     = 30;  // px — diameter for the busiest day in window
+const HEATMAP_OPACITY_MIN = 0.18; // opacity for the quietest non-zero day
+const HEATMAP_OPACITY_MAX = 1.0;  // opacity for the busiest day in window
+
+function SpecialistsActivatedHeatmap({ days }: { days: HeatmapDay[] }) {
+  if (days.length === 0) return null;
+
+  // Max total over the window drives the dot-size scale; floor to 1 so a
+  // workflow that's never activated a specialist still renders cleanly
+  // without a divide-by-zero collapse.
+  const maxTotal = Math.max(1, ...days.map(d => d.total));
+
+  // Day-of-week of the first cell — used to compute leading empty
+  // placeholders so the first day lands in its real Mon-first column.
+  // `Date.getDay()` returns 0 (Sun) – 6 (Sat); rotate so Mon = 0.
+  const firstDate = new Date(days[0].date);
+  const firstDow  = firstDate.getDay();             // 0=Sun … 6=Sat
+  const firstCol  = (firstDow + 6) % 7;             // 0=Mon … 6=Sun
+  const leading   = firstCol;                       // empty cells before day 0
+
+  return (
+    <div className={styles.specialistsHeatmap}>
+      <div
+        className={styles.specialistsHeatmapGrid}
+        role="img"
+        aria-label="Specialist activations heatmap — last 35 days"
+      >
+        {/* Leading placeholder cells so the first calendar day lands in
+            its weekday column on the first row. */}
+        {Array.from({ length: leading }).map((_, i) => (
+          <div key={`pad-${i}`} className={styles.specialistsHeatmapCell} aria-hidden />
+        ))}
+        {days.map(day => {
+          const ratio = Math.min(1, day.total / maxTotal);
+          // Bigger size spread (4 → 30px) so quiet days look like
+          // pinpricks while busy days dominate the cell, with
+          // ratio² giving the distribution a non-linear curve so the
+          // top and bottom of the scale separate more dramatically.
+          const easedRatio = ratio * ratio;
+          const size  = day.total === 0
+            ? HEATMAP_DOT_MIN
+            : HEATMAP_DOT_MIN + Math.round(easedRatio * (HEATMAP_DOT_MAX - HEATMAP_DOT_MIN));
+          // Opacity tracks the same eased ratio — busy days render at
+          // full saturation; quiet days fade toward the canvas so the
+          // viewer's eye locks onto the dense regions of the grid.
+          const opacity = day.total === 0
+            ? HEATMAP_OPACITY_MIN
+            : HEATMAP_OPACITY_MIN + easedRatio * (HEATMAP_OPACITY_MAX - HEATMAP_OPACITY_MIN);
+          const dateLabel = new Date(day.date).toLocaleDateString(undefined, {
+            weekday: 'short',
+            month:   'short',
+            day:     'numeric',
+          });
+          return (
+            <div
+              key={day.date}
+              className={styles.specialistsHeatmapCell}
+              data-empty={day.total === 0 ? 'true' : 'false'}
+            >
+              <span
+                className={styles.specialistsHeatmapDot}
+                style={{ width: size, height: size, opacity }}
+                aria-hidden
+              />
+              <div className={styles.specialistsHeatmapTooltip} role="tooltip">
+                <div className={styles.specialistsHeatmapTooltipDate}>{dateLabel}</div>
+                <div className={styles.specialistsHeatmapTooltipTotal}>
+                  {day.total} {day.total === 1 ? 'invocation' : 'invocations'}
+                </div>
+                <ul className={styles.specialistsHeatmapTooltipList}>
+                  {AI_PERSONAS.map(p => {
+                    const c = day.byPersona[p.id] ?? 0;
+                    return (
+                      <li key={p.id} className={styles.specialistsHeatmapTooltipRow}>
+                        <span className={styles.specialistsHeatmapTooltipName}>{p.name}</span>
+                        <span className={styles.specialistsHeatmapTooltipCount}>{c}</span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 

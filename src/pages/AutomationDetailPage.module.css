@@ -231,6 +231,168 @@
   color: var(--color-content-primary);
 }
 
+/* ─── Recent activities feed — mirrors UsagePage's Recent runs sidebar
+   ──────────────────────────────────────────────────────────────────────
+   Each row is an expandable card with a gradient avatar, primary label
+   + suffix, relative timestamp, and chevron toggle. Expanded body
+   surfaces recipient + payload so the feed reads as an audit log. */
+.runsFeedHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+.runsFeedSubtitle {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  color: var(--color-content-tertiary);
+}
+.runsFeedList {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--color-bg-primary);
+}
+.runsFeedEmpty {
+  margin: 0;
+  padding: var(--space-4);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  color: var(--color-content-tertiary);
+  text-align: center;
+}
+.runsFeedAvatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  background: linear-gradient(
+    to bottom right,
+    rgba(176, 220, 53, 0.20),  /* matcha-400 */
+    rgba(79, 189, 90, 0.20)    /* green-400 */
+  );
+  color: var(--color-green-content-secondary);
+  flex-shrink: 0;
+}
+
+.runFeedItem {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--color-border-opaque);
+}
+.runFeedItem:last-child {
+  border-bottom: none;
+}
+
+.runFeedItemRow {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: 12px;
+  appearance: none;
+  background: transparent;
+  border: none;
+  text-align: left;
+  width: 100%;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  color: var(--color-content-primary);
+  transition: background var(--duration-fast) var(--ease-default);
+}
+.runFeedItemRow:hover {
+  background: var(--color-bg-secondary);
+}
+
+.runFeedItemContent {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.runFeedItemTitle {
+  font-size: var(--text-sm);
+  line-height: var(--line-height-snug);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-content-primary);
+  word-break: break-word;
+}
+.runFeedItemWorkflow {
+  font-weight: var(--font-weight-semibold);
+}
+.runFeedItemSuffix {
+  font-weight: var(--font-weight-regular);
+  color: var(--color-content-secondary);
+}
+
+.runFeedItemTimestamp {
+  font-size: var(--text-xs);
+  color: var(--color-content-tertiary);
+  margin-top: 2px;
+}
+
+.runFeedItemChevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  color: var(--color-content-tertiary);
+  flex-shrink: 0;
+  transition: transform var(--duration-fast) var(--ease-default);
+}
+.runFeedItemChevron[data-open] {
+  transform: rotate(180deg);
+}
+
+.runFeedItemBody {
+  padding: 0 12px 12px calc(12px + 32px + var(--space-3));
+}
+.runFeedItemDetail {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+.runFeedItemDetailMarker {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-top: 8px;
+  border-radius: var(--radius-full);
+  background: var(--color-content-tertiary);
+  flex-shrink: 0;
+}
+.runFeedItemDetailContent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.runFeedItemDetailRecipient {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-snug);
+  color: var(--color-content-primary);
+}
+.runFeedItemDetailBody {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-regular);
+  line-height: var(--line-height-relaxed);
+  color: var(--color-content-secondary);
+  white-space: pre-wrap;
+}
+
 /* Success-rate ratio chart — hero value sits above the ratio bar
    in the ChartCard body. Big primary value + inline
    ValueChangeLabel so the headline reads at a glance, then the
@@ -435,6 +597,141 @@
   align-self: stretch;
 }
 
+/* ─── Specialists Activated dot heatmap ──────────────────────────────────
+   7-column (Mon–Sun) × 5-row calendar of cells. Each cell hosts a single
+   purple dot whose diameter scales with the total persona invocations on
+   that day; per-persona breakdown only surfaces in the on-hover tooltip
+   so the chart itself reads as a single-tone density map. */
+.specialistsHeatmap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* 7 fixed-width 40px tracks distributed across the card body via
+   `justify-content: space-between` — the first / last cells land flush
+   against the card's left / right padding edges, and the middle five
+   tracks distribute evenly into the remaining space. Used by both the
+   header row and the cell grid so headers stay centred over their
+   columns. */
+.specialistsHeatmapHeader {
+  display: grid;
+  grid-template-columns: repeat(7, 40px);
+  justify-content: space-between;
+  row-gap: var(--space-2);
+}
+
+.specialistsHeatmapHeaderCell {
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: var(--tracking-wide);
+  color: var(--color-content-tertiary);
+  text-align: center;
+}
+
+.specialistsHeatmapGrid {
+  display: grid;
+  grid-template-columns: repeat(7, 40px);
+  justify-content: space-between;
+  row-gap: var(--space-2);
+}
+
+.specialistsHeatmapCell {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.specialistsHeatmapDot {
+  display: block;
+  border-radius: 50%;
+  /* AI gradient (purple → blue) so each dot reads as branded AI
+     activity rather than a flat purple chip. The gradient runs
+     left-to-right inside every dot. */
+  background: var(--gradient-ai);
+  transition:
+    transform var(--duration-fast) var(--ease-default),
+    opacity   var(--duration-fast) var(--ease-default);
+}
+
+/* Idle days fall back to a quiet tertiary tone so the eye registers
+   "nothing happened" without confusing the user with a saturated dot.
+   Opacity is set inline by the call site so this rule only swaps the
+   base colour. */
+.specialistsHeatmapCell[data-empty="true"] .specialistsHeatmapDot {
+  background: var(--color-content-tertiary);
+}
+
+/* Slight pop on hover — visual confirmation that the cell is interactive. */
+.specialistsHeatmapCell:hover .specialistsHeatmapDot {
+  transform: scale(1.1);
+}
+
+/* Tooltip — absolute positioned above the cell, faded in on hover.
+   Lists the date, total, and per-persona breakdown. Pointer events
+   stay disabled so the tooltip never traps the cursor mid-grid. */
+.specialistsHeatmapTooltip {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + var(--space-1));
+  transform: translateX(-50%);
+  min-width: 160px;
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-bg-inverse-primary);
+  color: var(--color-content-inverse-primary);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-above-md);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  line-height: var(--line-height-snug);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--duration-fast) var(--ease-default);
+  z-index: 5;
+  white-space: nowrap;
+}
+.specialistsHeatmapCell:hover .specialistsHeatmapTooltip {
+  opacity: 1;
+}
+
+.specialistsHeatmapTooltipDate {
+  font-weight: var(--font-weight-semibold);
+  margin-bottom: 2px;
+}
+
+.specialistsHeatmapTooltipTotal {
+  color: var(--color-content-inverse-secondary);
+  margin-bottom: var(--space-2);
+}
+
+.specialistsHeatmapTooltipList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.specialistsHeatmapTooltipRow {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.specialistsHeatmapTooltipName {
+  color: var(--color-content-inverse-secondary);
+}
+
+.specialistsHeatmapTooltipCount {
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--font-weight-medium);
+}
+
 
 /* ─── Activity table ─────────────────────────────────────────────────────── */
 /* Mirrors the Teambridge Specialist activity table wrapper — no outer
@@ -482,6 +779,108 @@
   align-items: center;
   gap: var(--space-2);
   min-width: 0;
+}
+
+/* Bare action icon — no badge surface, just the glyph in the secondary
+   tone so the row reads as iconified text rather than an icon chip. */
+.activityActionIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--color-content-secondary);
+  flex-shrink: 0;
+}
+
+/* ─── Activity row expand toggle ─────────────────────────────────────────
+   Mirrors the TeambridgeCode SpecialistActivityTable's `ExpandToggle` —
+   a 20px chevron button leading the Time cell that flips between the
+   right-pointing collapsed glyph and the down-pointing expanded glyph.
+   Disabled state grays out + drops the cursor when the row has no
+   detail to show (defensive — every event today has either a recipient
+   or a body, but we keep the affordance honest if that ever changes). */
+.activityTimeCell {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.activityExpandToggle {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-content-tertiary);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color var(--duration-fast) var(--ease-default);
+}
+.activityExpandToggle:hover:not([disabled]) {
+  color: var(--color-content-primary);
+}
+.activityExpandToggle:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+}
+.activityExpandToggle[disabled] {
+  cursor: default;
+  opacity: 0.4;
+}
+
+/* ─── Activity row expanded body ─────────────────────────────────────────
+   The expanded `<tr>` carries a quiet secondary surface so it reads as
+   a callout under the parent row. Inside, sections stack with eyebrow
+   labels above each value — matching the Engage / Engage-less detail
+   layout in TeambridgeCode's SpecialistActivityTable. */
+.activityExpandedRow {
+  background: var(--color-bg-secondary);
+}
+.activityExpandedRow > td {
+  background: var(--color-bg-secondary);
+}
+.activityExpandedCell {
+  padding: var(--space-5) var(--space-6) var(--space-6);
+  background: var(--color-bg-secondary);
+  border-top: 1px solid var(--color-border-opaque);
+}
+.activityExpandedGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-5);
+  align-items: start;
+}
+.activityExpandedSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.activityExpandedText {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  line-height: var(--line-height-relaxed);
+  color: var(--color-content-secondary);
+  word-break: break-word;
+  /* Preserve newlines + leading whitespace from the source body so
+     email subjects, body paragraphs, and bullet indents render the
+     way the message was composed. */
+  white-space: pre-wrap;
+}
+.activityExpandedTextMono {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: var(--line-height-snug);
+  color: var(--color-content-primary);
+  word-break: break-word;
 }
 
 /* ─── Settings ───────────────────────────────────────────────────────────── */

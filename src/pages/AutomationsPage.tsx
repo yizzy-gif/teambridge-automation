@@ -93,7 +93,10 @@ interface AutomationStats {
   skipped: number;
 }
 
-type ActionIconKey =
+/** Keys for the action-node icons shown in the card cluster. Each maps to an
+ * Alloy icon in ACTION_ICON_MAP below. Derive this list from the workflow's
+ * action nodes once the graph is wired to the backend. */
+export type ActionIconKey =
   | 'mail' | 'bell' | 'task' | 'message' | 'sync' | 'people'
   | 'finance' | 'package' | 'ai';
 

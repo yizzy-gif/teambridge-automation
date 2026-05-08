@@ -495,12 +495,20 @@
   gap: var(--space-3);
   flex: 1 1 0;
   min-height: 0;
-  /* Alloy ComposerActions ships a tiny 8–10px attach glyph by default,
-     which reads as undersized inside our 28px button. Bump the icon
-     up to 14px so it visually matches the voice mic icon next to it
-     and lines up with the size of every other 14px icon in the
-     surrounding chrome. */
-  --composer-btn-icon-attach: 14px;
+}
+
+/* Alloy ComposerActions sets `--composer-btn-size` etc. on its own
+   `.root` element, so a single declaration on `.aiComposer` (the
+   ancestor) is overridden by the cascade. Re-declare on each composer
+   action button so the larger button + icon sizes stick. Picks up the
+   five button kinds Alloy ships (voice / attach / send / stop / retry). */
+.aiComposer [data-composer-action] {
+  --composer-btn-size: 32px;
+  --composer-btn-icon-voice: 18px;
+  --composer-btn-icon-attach: 18px;
+  --composer-btn-icon-send: 14px;
+  --composer-btn-icon-stop: 14px;
+  --composer-btn-icon-retry: 14px;
 }
 
 /* Shell: layout-only wrapper — chrome (border/bg/shadow/radius) removed so
@@ -806,11 +814,12 @@
    which is now pinned to the left side of the thread. */
 .threadContextRow {
   align-self: flex-start;
-  padding: 0 var(--space-2);
+  padding: 0;
+  margin-bottom: var(--space-1);
   font-family: var(--font-sans);
   font-size: var(--text-xs);
   font-weight: var(--font-weight-regular);
-  line-height: var(--line-height-relaxed);
+  line-height: var(--line-height-tight);
   letter-spacing: var(--tracking-normal);
   color: var(--color-content-tertiary);
 }
@@ -4311,6 +4320,30 @@
   user-select: none;
 }
 
+/* Edge path between two node anchors — slate-300 at rest, slate-800 on
+   hover. The hit-stroke sibling (transparent, strokeWidth 12) catches
+   the pointer; the visual path is `pointer-events: none` so its colour
+   is driven via the parent `<g>`'s :hover state. The chevron marker
+   uses `stroke="context-stroke"` so it tracks the path colour
+   automatically. */
+.edgePath {
+  /* Default stroke comes from the inline `stroke="url(#edge-fade-...)"`
+     attribute — a per-edge gradient that fades the slate-300 colour
+     from 0% → 100% opacity along the path's tangent. The hover swap
+     below replaces the gradient with a solid slate-800 stroke. */
+  transition: stroke var(--duration-fast) var(--ease-default);
+}
+/* Hover swap fires when the user hovers either the SVG hit-stroke
+   (native :hover on the <g>) OR the HTML midpoint minus button
+   (`.edgeGroupHovered` class set via React state from the midpoint's
+   mouseenter handler). Both surfaces share one visual response so
+   approaching the minus button never feels disconnected from its
+   path. */
+.edgeGroup:hover .edgePath,
+.edgeGroupHovered .edgePath {
+  stroke: var(--Alloy-slate-800);
+}
+
 .edgeMidpointArea {
   position: absolute;
   display: flex;
@@ -6422,10 +6455,11 @@
    keeps the same blue stroke so the card still reads as part of the
    blue palette. Dark-mode counterparts use the navy-tinted blue-900
    surface + blue-700 stroke. */
-/* Resting state — pale-blue surface with the same tertiary blue stroke
-   as the trigger pill (just on the blue side of the palette). No drop
-   shadow at rest; the glow only shows on hover / active so the card
-   reads quietly until the user interacts with it. */
+/* Resting state — neutral slate-200 stroke on the pale-blue surface so
+   the card reads as a quiet container at rest. The blue identity still
+   carries through the bg + the blue-scale hover/active states below;
+   only the default border drops back to slate so resting cards don't
+   compete visually with the configured/active variants. */
 .actionNodeCard {
   background: var(--color-blue-bg-tertiary);
   border: 1px solid var(--color-blue-border-tertiary);
@@ -6456,12 +6490,10 @@
   border-color: var(--Alloy-blue-700);
 }
 
-/* Hover — same blue glow halo the trigger pill uses on its focused
-   state, applied here on hover so the card lifts as soon as the cursor
-   enters it. */
-.flowNodeOuter:hover .actionNodeCard:not([data-active="true"]) {
-  box-shadow: 0 0 7px 0 var(--color-blue-bg-secondary);
-}
+/* Hover — no glow halo on action cards. The active state below carries
+   its own border + shadow treatment, but at rest / hover the card stays
+   visually quiet so the canvas reads as a neutral surface until the
+   user clicks into a step. */
 
 /* Active (selected / focused) state — vibrant blue-500 fill with the
    primary blue stroke, mirroring the trigger pill's focused palette
@@ -6469,6 +6501,32 @@
 .actionNodeCard[data-active="true"] {
   border-color: var(--color-blue-border-primary);
   box-shadow: 0 0 7px 0 var(--color-blue-bg-secondary);
+}
+
+/* Dark mode active — saturated blue-bg-secondary fill on the outer card
+   + primary blue stroke, mirroring the trigger pill's focused palette.
+   The inner `.conditionBranchRow` keeps its existing dark slate-900
+   surface (no override) so the body row reads as an inset dark chip
+   on top of the saturated blue band. Only the header label flips to
+   white so "ACTION" reads against the blue header strip; body text
+   stays in its normal dark-mode tone since the row surface is dark. */
+@media (prefers-color-scheme: dark) {
+  :root:not(:global(.light)) .actionNodeCard[data-active="true"] {
+    background: var(--color-blue-bg-secondary);
+    border-color: var(--color-blue-border-primary);
+    box-shadow: 0 0 7px 0 var(--color-blue-bg-secondary);
+  }
+  :root:not(:global(.light)) .actionNodeCard[data-active="true"] .nodeHeaderLabel {
+    color: var(--Alloy-white);
+  }
+}
+:global(.dark) .actionNodeCard[data-active="true"] {
+  background: var(--color-blue-bg-secondary);
+  border-color: var(--color-blue-border-primary);
+  box-shadow: 0 0 7px 0 var(--color-blue-bg-secondary);
+}
+:global(.dark) .actionNodeCard[data-active="true"] .nodeHeaderLabel {
+  color: var(--Alloy-white);
 }
 
 /* 32×32 leading icon badge — same geometry as the condition card's
@@ -6615,42 +6673,45 @@
   text-align: center;
 }
 
-/* Hover / active glow — same `0 0 7px 0` geometry as the trigger pill so
-   the AI step picks up its focus affordance with the same blur radius as
-   sibling nodes. Uses the AI's purple accent. */
-.flowNodeOuter:hover .aiNodeCard,
+/* Active-only glow — same `0 0 7px 0` geometry as the trigger pill,
+   tinted with the AI's purple accent. Hover no longer triggers the
+   shadow; the active state alone carries the focus affordance. */
 .aiNodeCard[data-active="true"] {
   box-shadow: 0 0 7px 0 var(--color-purple-bg-secondary);
 }
 
-/* Centered card body — stacks the sparkle circle above the text block.
-   Tight padding + small gap keeps the card compact (no excess whitespace
-   above/below the content). */
+/* Centered card body — stacks the sparkle banner above the text block.
+   8px padding around the wrapper inset the banner from the card edges
+   so the gradient bg shows as a thin frame on every side. */
 .aiNodeCardBody {
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: stretch;
   justify-content: center;
   gap: 6px;
-  padding: 10px 12px;
+  padding: 8px;
 }
 
-/* Translucent sparkle halo — `rgba(246, 247, 249, 0.2)` matches the
-   Figma fill (#F6F7F9 @ 0.2). Sized to read as a halo around the 20px
-   sparkle without dominating the compact card. */
+/* Translucent sparkle banner — same `rgba(246, 247, 249, 0.2)` Figma
+   fill, rendered as a full-width rectangle inset 8px from each card
+   edge by the card body's padding. 6px corners soften the rectangle so
+   it reads as a chip rather than a hard slab. */
 .aiNodeSparkleCircle {
-  width: 40px;
+  width: 100%;
   height: 40px;
-  border-radius: 50%;
+  border-radius: 6px;
   background: rgba(246, 247, 249, 0.2);
-  display: inline-flex;
+  display: flex;
   align-items: center;
   justify-content: center;
   color: var(--Alloy-white);
   flex-shrink: 0;
 }
 
-/* Stacked text block — eyebrow ("AI Specialist") above the persona name. */
+/* Stacked text block — eyebrow ("AI Specialist") above the persona name.
+   Horizontal padding restores the breathing room the previous card-body
+   padding used to give it (the body is now padding-free at the sides so
+   the sparkle banner can stretch edge-to-edge). */
 .aiNodeText {
   display: flex;
   flex-direction: column;
@@ -6658,6 +6719,7 @@
   gap: 2px;
   min-width: 0;
   max-width: 100%;
+  padding: 0 16px;
 }
 
 .aiNodeEyebrow {
@@ -6672,7 +6734,7 @@
 .aiNodeName {
   font-family: var(--font-sans);
   font-size: var(--text-base);
-  font-weight: var(--font-weight-semibold);
+  font-weight: var(--font-weight-medium);
   color: var(--Alloy-white);
   line-height: var(--line-height-tight);
   word-break: break-word;
@@ -7258,20 +7320,9 @@
   box-shadow: 0 0 7px 0 var(--Alloy-slate-150);
 }
 
-/* Hover — match the active state treatment: no bg / border swap, just
-   the same outer glow. Keeps the condition card chrome quiet regardless
-   of whether the user is hovering or has the node selected. */
-.flowNodeOuter:hover .conditionNodeCard:not([data-active="true"]) {
-  box-shadow: 0 0 7px 0 var(--color-slate-bg-primary);
-}
-@media (prefers-color-scheme: dark) {
-  :root:not(:global(.light)) .flowNodeOuter:hover .conditionNodeCard:not([data-active="true"]) {
-    box-shadow: 0 0 7px 0 var(--Alloy-slate-150);
-  }
-}
-:global(.dark) .flowNodeOuter:hover .conditionNodeCard:not([data-active="true"]) {
-  box-shadow: 0 0 7px 0 var(--Alloy-slate-150);
-}
+/* Hover — no glow halo on condition cards. The active state's bg /
+   border swap carries the selection signal on its own; resting + hover
+   stay visually quiet so the canvas reads as a neutral surface. */
 .conditionNodeTopRow {
   display: flex;
   /* Top-align the leading badge with the first line of label text so the
@@ -7460,7 +7511,48 @@
 .conditionNodeHeader {
   display: flex;
   align-items: center;
+  gap: 6px;
   padding: 8px 8px 0 8px;
+}
+
+/* Node-type label sitting next to the leading icon — small uppercase
+   eyebrow so the card identifies its node type at a glance. Used by the
+   policy card today; available to other condition-card-style nodes.
+   `line-height: 1` strips the cap-to-line padding so the label sits on
+   the same vertical centre as the leading 14×14 icon. */
+.nodeHeaderLabel {
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--color-content-tertiary);
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  height: 14px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not(:global(.light)) .nodeHeaderLabel {
+    color: var(--Alloy-slate-300);
+  }
+}
+:global(.dark) .nodeHeaderLabel {
+  color: var(--Alloy-slate-300);
+}
+
+/* Policy card variant — rose/pink accent matches the card's pink
+   gradient border + the leading triangle's pink content tone. */
+.policyNodeCard .nodeHeaderLabel {
+  color: var(--color-pink-content-primary);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not(:global(.light)) .policyNodeCard .nodeHeaderLabel {
+    color: var(--color-pink-content-primary);
+  }
+}
+:global(.dark) .policyNodeCard .nodeHeaderLabel {
+  color: var(--color-pink-content-primary);
 }
 /* Boost specificity past `.conditionNodeCard[data-filled="true"]
    .conditionNodeIconBox` (the rule that paints the per-row badge in
@@ -7528,11 +7620,15 @@
 }
 
 /* Policy header icon — picks up the policy gradient's warm hue via the
-   pink content tone (closest semantic match for "rose" in Alloy). */
+   pink content tone (closest semantic match for "rose" in Alloy).
+   `translateY(-1px)` nudges the triangle glyph up by 1px so the
+   bottom-heavy geometry (wide base, pointed apex) reads as visually
+   centred against the POLICY label sitting beside it. */
 .policyNodeCard .conditionNodeHeader .policyNodeIconBox,
 .policyNodeCard[data-filled="true"] .conditionNodeHeader .policyNodeIconBox,
 .policyNodeCard[data-active="true"] .conditionNodeHeader .policyNodeIconBox {
   color: var(--color-pink-content-primary) !important;
+  transform: translateY(-1px);
 }
 @media (prefers-color-scheme: dark) {
   :root:not(:global(.light)) .conditionNodeCard .conditionNodeHeader .conditionNodeIconBox,
