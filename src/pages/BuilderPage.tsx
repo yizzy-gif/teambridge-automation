@@ -52,7 +52,7 @@ import { Divider } from '@alloy/components/Divider';
 import { Dialog, DialogHeader, DialogContent } from '@alloy/components/Dialog';
 import { AILoader } from '@alloy/components/ai/AILoader';
 import { AIComposer, AIComposerInput } from '@alloy/components/ai/AIComposer';
-import { AIThread, AIAssistantMessage, AIUserMessage, AILabel, AITimestamp } from '@alloy/components/ai/AIThread';
+import { AIAssistantMessage, AIUserMessage, AILabel, AITimestamp } from '@alloy/components/ai/AIThread';
 import { AIActivityTrail, AIActivityStep } from '@alloy/components/ai/AIActivityTrail';
 import { AIMessageActions } from '@alloy/components/ai/AIMessageActions';
 import { Copy01Icon } from '@alloy/components/icons/Copy01Icon';
@@ -6633,6 +6633,37 @@ function LeftPanel({
   const leftHandleRef = useRef<HTMLDivElement>(null);
   const chatBottomRef = useRef<HTMLDivElement>(null);
   const promptTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const chatScrollRootRef = useRef<HTMLDivElement>(null);
+  // Hide the scroll-to-bottom button when the thread is already pinned to
+  // the bottom — the button only fires when there's content out of view.
+  const [isChatAtBottom, setIsChatAtBottom] = useState(true);
+
+  useEffect(() => {
+    const root = chatScrollRootRef.current;
+    if (!root) return;
+    const viewport = root.querySelector('[class*="_viewport_"]') as HTMLElement | null;
+    if (!viewport) return;
+
+    const update = (): void => {
+      const { scrollTop, scrollHeight, clientHeight } = viewport;
+      // 4px threshold absorbs sub-pixel rounding so the button still hides
+      // when the user has visually reached the bottom.
+      setIsChatAtBottom(scrollHeight - scrollTop - clientHeight < 4);
+    };
+
+    update();
+    viewport.addEventListener('scroll', update, { passive: true });
+    // Recompute when content grows (new messages) or the viewport resizes
+    // (panel drag) — both can flip the at-bottom state without a scroll.
+    const ro = new ResizeObserver(update);
+    ro.observe(viewport);
+    if (viewport.firstElementChild) ro.observe(viewport.firstElementChild);
+
+    return () => {
+      viewport.removeEventListener('scroll', update);
+      ro.disconnect();
+    };
+  }, []);
 
   // Keep the prompt textarea's height in sync with its content up to the
   // CSS-defined max-height (5 lines via --line-height-loose). Runs on every
@@ -6721,14 +6752,9 @@ function LeftPanel({
       />
       <div className={styles.leftPanelInner}>
 
-        {/* ── Node Palette ── (floats at bottom-center, always expanded) */}
-        <NodePaletteCard
-          onDragStart={onLibNodeDragStart}
-          onDragEnd={onLibNodeDragEnd}
-          onNodeSelect={onLibNodeSelect}
-        />
-
-
+        {/* Node palette moved to FlowCanvas — it now lives as an absolute
+            child of the canvas card so it floats along the canvas bottom
+            edge rather than the viewport bottom. */}
 
         {/* ── AI Composer ── */}
         {(
@@ -6737,9 +6763,17 @@ function LeftPanel({
           {/* ── Shell: Alloy AIComposer wraps the thread + input card ── */}
           <AIComposer className={styles.aiComposerShell}>
 
-            {/* Activity feed + AI conversation thread — Alloy AIThread
-                handles scrolling/auto-follow + edge fades. */}
-            <AIThread className={styles.aiChatWindow} padding="md" density="comfortable">
+            {/* Activity feed + AI conversation thread — Alloy ScrollArea
+                gives us the styled overlay scrollbar; the inner div carries
+                the chat-window flex/gap/padding rules previously applied
+                to AIThread. Auto-scroll-to-bottom is driven by the
+                `chatBottomRef.scrollIntoView()` effect in this component
+                (a ScrollArea ancestor scrolls naturally). The wrapper
+                gives the scroll-to-bottom button a positioning context
+                that matches the scroll viewport's bounds. */}
+            <div className={styles.aiChatBox}>
+            <ScrollArea ref={chatScrollRootRef} className={styles.aiChatScroller}>
+              <div className={styles.aiChatWindow}>
               {(() => {
                 // Identify the most recent AI entry so only it can run the
                 // live trail animation; older AI responses always render
@@ -6916,7 +6950,27 @@ function LeftPanel({
               )}
 
               <div ref={chatBottomRef} aria-hidden="true" />
-            </AIThread>
+              </div>
+            </ScrollArea>
+
+            {/* Scroll-to-bottom — square 24px secondary button anchored
+                center-bottom of the chat thread. Stays put while the
+                thread scrolls and jumps the viewport to the latest
+                message on click. */}
+            <Button
+              variant="secondary"
+              size="xs"
+              iconOnly
+              className={styles.aiChatScrollToBottom}
+              data-visible={isChatAtBottom ? undefined : 'true'}
+              aria-label="Scroll to latest message"
+              aria-hidden={isChatAtBottom ? 'true' : undefined}
+              tabIndex={isChatAtBottom ? -1 : 0}
+              onClick={() => chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' })}
+            >
+              <ChevronDownIcon size={12} />
+            </Button>
+            </div>
 
             <AIComposerInput
               ref={promptTextareaRef}
@@ -8042,6 +8096,12 @@ interface FlowCanvasProps {
   /** Commits the right-panel Save for a given node — emits a single activity
    *  entry summarizing the node's saved configuration. */
   onSaveNodePopover?: (nodeId: string) => void;
+  /** Library palette handlers — wired through so the floating palette can
+   *  live inside the canvas card while still emitting drag/select events
+   *  back to BuilderPage's draggingLibNode state. */
+  onLibNodeDragStart: (item: LibraryItem) => void;
+  onLibNodeDragEnd: () => void;
+  onLibNodeSelect: (item: LibraryItem) => void;
 }
 
 function FlowCanvas({
@@ -8058,6 +8118,9 @@ function FlowCanvas({
   fitToken,
   onNodeAiSubmit,
   onSaveNodePopover,
+  onLibNodeDragStart,
+  onLibNodeDragEnd,
+  onLibNodeSelect,
 }: FlowCanvasProps) {
 
   const canvasRef      = useRef<HTMLDivElement>(null);
@@ -9335,6 +9398,15 @@ function FlowCanvas({
           {invalidConnection.msg}
         </div>
       )}
+
+      {/* ── Node palette — centered along the canvas's bottom edge with
+            12px padding. Lives inside the canvas card so it tracks the
+            card's bounds rather than the viewport. */}
+      <NodePaletteCard
+        onDragStart={onLibNodeDragStart}
+        onDragEnd={onLibNodeDragEnd}
+        onNodeSelect={onLibNodeSelect}
+      />
 
       {/* ── Bottom controls ── */}
       <div className={styles.canvasBottomBar}>
@@ -11762,34 +11834,49 @@ export function BuilderPage() {
         onSave={handleSettingsSave}
       />
 
-      {/* Unified topbar — spans the full width of the page above both
-          the LeftPanel and the right column. Hoisted out of the right
-          column so the workflow chrome is one continuous bar across
-          the screen. */}
-      <TopBar
-        onBack={() => navigate('/automations')}
-        onTest={() => {}}
-        onPublish={() => {}}
-        saveState={saveState}
-        name={name}
-        onNameChange={setName}
-        status={status}
-        onSettingsOpen={() => setSettingsOpen(true)}
-        isTemplate={!!routerTemplate}
-        aiPanelCollapsed={aiPanelCollapsed}
-        onToggleAiPanel={() => setAiPanelCollapsed(c => !c)}
-      />
+      {/* When the AI panel is collapsed the LeftPanel column unmounts, so
+          we render the TopBar at the page level to keep Run test/Publish
+          accessible. When expanded the TopBar moves into the leftColumn
+          card below so it reads as the header of the chat panel. */}
+      {aiPanelCollapsed && (
+        <TopBar
+          onBack={() => navigate('/automations')}
+          onTest={() => {}}
+          onPublish={() => {}}
+          saveState={saveState}
+          name={name}
+          onNameChange={setName}
+          status={status}
+          onSettingsOpen={() => setSettingsOpen(true)}
+          isTemplate={!!routerTemplate}
+          aiPanelCollapsed={aiPanelCollapsed}
+          onToggleAiPanel={() => setAiPanelCollapsed(c => !c)}
+        />
+      )}
 
       <div
         className={styles.body}
         data-ai-collapsed={aiPanelCollapsed}
-        style={!aiPanelCollapsed ? { gridTemplateColumns: `${aiPanelWidth}px 1px 1fr` } : undefined}
+        style={!aiPanelCollapsed ? { gridTemplateColumns: `${aiPanelWidth}px 1fr` } : undefined}
       >
-        {/* LeftPanel + body divider unmount entirely when the AI panel is
+        {/* LeftPanel column unmounts entirely when the AI panel is
             collapsed. The re-open affordance lives in the right column
             (see `expandAiBtn` below the top bar). */}
         {!aiPanelCollapsed && (
-          <>
+          <div className={styles.leftColumn}>
+            <TopBar
+              onBack={() => navigate('/automations')}
+              onTest={() => {}}
+              onPublish={() => {}}
+              saveState={saveState}
+              name={name}
+              onNameChange={setName}
+              status={status}
+              onSettingsOpen={() => setSettingsOpen(true)}
+              isTemplate={!!routerTemplate}
+              aiPanelCollapsed={aiPanelCollapsed}
+              onToggleAiPanel={() => setAiPanelCollapsed(c => !c)}
+            />
             <LeftPanel
               onLibNodeDragStart={(item) => setDraggingLibNode(item)}
               onLibNodeDragEnd={() => setDraggingLibNode(null)}
@@ -11804,9 +11891,7 @@ export function BuilderPage() {
               panelWidth={aiPanelWidth}
               onPanelWidthChange={setAiPanelWidth}
             />
-
-            <div className={styles.bodyDivider} aria-hidden />
-          </>
+          </div>
         )}
 
         <div className={styles.rightColumn}>
@@ -11835,6 +11920,9 @@ export function BuilderPage() {
           onCreateNodeAt={createNodeAt}
           onCreateNodeAndConnect={createNodeAndConnect}
           onCanvasDropAtPos={handleCanvasDropAtPos}
+          onLibNodeDragStart={(item) => setDraggingLibNode(item)}
+          onLibNodeDragEnd={() => setDraggingLibNode(null)}
+          onLibNodeSelect={(item) => { handleCanvasDropAtPos(item, 0, CANVAS_TOP); setSelectedId(null); }}
           editNodeMode={editNodeMode}
           editingNodeIds={editingNodeIds}
           onEditNodeToggle={handleEditNodeToggle}

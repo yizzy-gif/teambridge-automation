@@ -410,6 +410,29 @@ const CATEGORIES: TemplateCategory[] = [
   },
 ];
 
+// ─── Popular templates ───────────────────────────────────────────────────────
+// Hand-picked top 6 — a curated cross-section of the catalog (one or two
+// per category, intentionally diverse trigger types). The `uses` count
+// drives the byline and mirrors the App Marketplace "installs" flavor;
+// fabricated until template telemetry lands. Keep this list short — the
+// section uses a 3-column grid so multiples of 3 fill cleanly.
+const POPULAR_TEMPLATE_REFS: { id: string; uses: string }[] = [
+  { id: 'tt-1',    uses: '12.4k' },
+  { id: 'sched-1', uses: '9.8k'  },
+  { id: 'perf-1',  uses: '8.6k'  },
+  { id: 'tt-5',    uses: '7.1k'  },
+  { id: 'pay-1',   uses: '5.9k'  },
+  { id: 'train-5', uses: '4.3k'  },
+];
+
+const POPULAR_TEMPLATES: { workflow: TemplateWorkflow; category: TemplateCategory; uses: string }[] =
+  POPULAR_TEMPLATE_REFS.flatMap(({ id, uses }) => {
+    for (const cat of CATEGORIES) {
+      for (const w of cat.workflows) if (w.id === id) return [{ workflow: w, category: cat, uses }];
+    }
+    return [];
+  });
+
 // ─── Derived options ──────────────────────────────────────────────────────────
 
 const ALL_TAGS = Array.from(
@@ -903,8 +926,17 @@ function TemplatePreviewDialog({
     if (!renderedWorkflow) return;
     setClosing(true);
     const t = window.setTimeout(() => {
+      // Drop the rendered workflow so Alloy's Dialog unmounts. We
+      // intentionally do NOT clear `closing` here — clearing it would
+      // remove the `body[data-template-dialog-closing]` attribute one
+      // frame before the portal unmounts, the OUT rule would stop
+      // matching, the default IN rule would re-fire, and the panel
+      // would snap to its IN keyframe `from` state (opacity 0, scale
+      // 0.96, translateY 4px) for that final frame — the visible
+      // "glitch line" on close. `closing` is reset on the next open
+      // (the `if (workflow)` branch above) which is the only point
+      // we actually need it cleared.
       setRenderedWorkflow(null);
-      setClosing(false);
     }, TEMPLATE_DIALOG_CLOSE_MS);
     return () => window.clearTimeout(t);
   }, [workflow, renderedWorkflow]);
@@ -1540,6 +1572,64 @@ export function TemplatesPage() {
           </div>
         }
       />
+
+      {/* ── Popular templates ── Mirrors the App Marketplace "Popular"
+            grid: rank number + 48px icon tile + 2-line description with
+            a usage byline. Sits below the hero (which already contains
+            search + filters) and above the category accordions. Always
+            renders — the search dropdown overlays without disturbing
+            this row, same as on Marketplace. */}
+      {POPULAR_TEMPLATES.length > 0 && (
+        <section className={styles.popularSection}>
+          <header className={styles.popularHeader}>
+            <h2 className={styles.popularTitle}>Popular</h2>
+            <span className={styles.popularCaption}>
+              Most used templates across teams like yours
+            </span>
+          </header>
+          <div className={styles.popularGrid}>
+            {POPULAR_TEMPLATES.map(({ workflow, category, uses }, i) => {
+              const meta = TRIGGER_CATEGORY_META[workflow.triggerCategory];
+              const accent = TRIGGER_ACCENT[workflow.triggerCategory];
+              return (
+                <ListItem
+                  key={workflow.id}
+                  className={styles.popularItem}
+                  size="md"
+                  divider={false}
+                  interactive
+                  onClick={() => toggleExpanded(workflow.id)}
+                  label={workflow.name}
+                  description={
+                    <span className={styles.popularDesc}>
+                      <span className={styles.popularDescLine}>
+                        {category.name} · {meta.label}
+                      </span>
+                      <span className={styles.popularByline}>
+                        <Users03Icon size={12} />
+                        {uses} uses
+                      </span>
+                    </span>
+                  }
+                  leadingSlot={
+                    <span className={styles.popularLeading}>
+                      <span className={styles.popularRank}>{i + 1}</span>
+                      <span
+                        className={styles.popularIconTile}
+                        data-accent={accent}
+                        data-role="popular-icon"
+                        aria-hidden
+                      >
+                        <meta.Icon />
+                      </span>
+                    </span>
+                  }
+                />
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       {/* ── Sections ── */}
       {visible.length === 0 ? (

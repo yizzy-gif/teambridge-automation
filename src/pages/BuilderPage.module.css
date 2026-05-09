@@ -23,7 +23,10 @@
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 360px 1px 1fr;
+  /* The legacy 1px middle column hosted .bodyDivider; we drop it now
+     that the left/right cards are visually separated by their own
+     margin instead of a shared stroke. */
+  grid-template-columns: 360px 1fr;
 }
 
 /* When the AI panel is collapsed, the LeftPanel + bodyDivider unmount
@@ -76,28 +79,43 @@
 
 /* Vertical divider between the two columns */
 .bodyDivider {
-  background: var(--color-border-opaque);
-  width: 1px;
-  height: 100%;
+  display: none;
 }
 
 /* ─── Top bar — floating, transparent ────────────────────────────────────────── */
 
 .topBar {
-  flex: 0 0 48px;
-  height: 48px;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  /* Asymmetric padding — 12px on the left aligns the workflow name with
-     the content column beneath, while the right side keeps its 8px so
-     the trailing action cluster (Run test / Publish) hugs the panel
-     edge. */
-  padding: 0 8px 0 12px;
+  /* 12px top/bottom so the bar hugs the action button height with even
+     vertical breathing room. Asymmetric horizontal padding — 12px left
+     aligns the workflow name with the content column beneath; 8px right
+     lets the trailing actions hug the panel edge. */
+  padding: 12px 8px 12px 12px;
   background: var(--color-bg-primary);
-  border-bottom: 1px solid var(--color-border-opaque);
   z-index: var(--z-sticky);
   gap: var(--space-3);
+}
+
+/* When the AI panel is collapsed the TopBar is rendered as a direct
+   child of `.page` (above the body). In that layout the canvas card
+   sits immediately below with its own 12px margin, so the TopBar's
+   bottom padding becomes redundant — drop it so the bar reads tight
+   against the canvas. The right edge gets a matching 12px gutter so
+   the trailing actions align with the canvas's right margin instead
+   of the original 8px tight-hug from the panel-mode layout. */
+.page > .topBar {
+  padding-bottom: 0;
+  padding-right: 12px;
+}
+
+/* When the AI panel is expanded the TopBar sits as the header of the
+   leftColumn card. Drop the left padding so the workflow name aligns
+   flush with the chat content's left edge below it. */
+.leftColumn > .topBar {
+  padding-left: 0;
 }
 
 /* Re-enable pointer events for all direct children (buttons) */
@@ -198,12 +216,26 @@
 .leftPanel {
   position: relative;
   width: auto;
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   background: var(--color-bg-primary);
   display: flex;
   flex-direction: column;
   overflow: hidden;
   pointer-events: auto;
+}
+
+/* Wrapper for the TopBar + LeftPanel — gives the entire left column the
+   inset card treatment (12px left margin, 12px rounded corners) so the
+   TopBar reads as the header of the same card as the chat below. */
+.leftColumn {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  margin-left: var(--space-3);
+  border-radius: 12px;
+  background: var(--color-bg-primary);
 }
 
 /* Collapse no longer applies in the fixed-ratio grid; preserve attribute
@@ -285,8 +317,11 @@
 .leftPanelHandle {
   position: absolute;
   top: 0;
-  right: -3px;
-  width: 6px;
+  /* Sit fully inside the panel — the parent leftColumn has
+     `overflow: hidden` for its rounded corners, which would clip half
+     the handle if it straddled the panel's right edge. */
+  right: 0;
+  width: 8px;
   height: 100%;
   cursor: col-resize;
   z-index: 3;
@@ -296,19 +331,22 @@
 .leftPanelHandle::after {
   content: '';
   position: absolute;
-  top: 0;
+  top: 50%;
   left: 50%;
-  transform: translateX(-50%);
-  width: 1px;
-  height: 100%;
+  transform: translate(-50%, -50%);
+  width: 4px;
+  height: 60px;
   background: transparent;
-  transition: background var(--duration-fast);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  transition: background var(--duration-fast), border-color var(--duration-fast);
   pointer-events: none;
 }
 
 .leftPanelHandle:hover::after,
 .leftPanelHandle:active::after {
-  background: var(--color-border-focus);
+  background: var(--color-bg-primary-inverse, #ffffff);
+  border-color: var(--color-border-opaque);
 }
 
 .leftPanel[data-collapsed="true"] .leftPanelHandle {
@@ -541,6 +579,10 @@
   border-radius: 12px;
 }
 
+.aiComposerInputWrapper {
+  padding: var(--space-3);
+}
+
 /* Inner card — the visible "input box" with 6px radius; secondary bg so it
    reads as a recessed surface against the shell's primary bg */
 .aiComposerCard {
@@ -727,11 +769,77 @@
 .aiComposerSendBtn:not(:disabled):hover { opacity: 0.82; }
 .aiComposerSendBtn:disabled { cursor: not-allowed; }
 
-/* ── Chat window — scrollable thread above the input card ── */
-.aiChatWindow {
+/* ── Chat window — scrollable thread above the input card ──
+   Sizing/scroll behavior lives on `.aiChatScroller` (the Alloy ScrollArea
+   root); `.aiChatWindow` is the inner content column laid out as a flex
+   stack of message blocks. `.aiChatBox` is a relative wrapper around the
+   ScrollArea + scroll-to-bottom affordance so the button can anchor to
+   the scroll viewport's bounds without joining the flex layout. */
+.aiChatBox {
+  position: relative;
   flex: 1 1 0;
   min-height: 0;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.aiChatScroller {
+  flex: 1 1 0;
+  min-height: 0;
+  position: relative;
+}
+
+/* Scroll-to-bottom button — square, anchored to the bottom-center of the
+   chat box, hovering above any thread content. Sits above the bottom
+   edge fade so the chevron stays legible. Hidden by default; toggled
+   on by a `data-visible="true"` attribute when the thread is scrolled
+   away from the bottom (LeftPanel watches the viewport and flips the
+   attribute on scroll / resize). */
+.aiChatScrollToBottom {
+  position: absolute;
+  bottom: var(--space-2);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  z-index: 2;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+
+.aiChatScrollToBottom[data-visible="true"] {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Edge fades — 32px overlays at the top + bottom that ramp from the
+   panel background to transparent. Content scrolling past either edge
+   dissolves into the panel surface instead of butting against the
+   topBar (above) or composer (below). */
+.aiChatScroller::before,
+.aiChatScroller::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 32px;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.aiChatScroller::before {
+  top: 0;
+  background: linear-gradient(to bottom, var(--color-bg-primary), transparent);
+}
+
+.aiChatScroller::after {
+  bottom: 0;
+  background: linear-gradient(to top, var(--color-bg-primary), transparent);
+}
+
+.aiChatWindow {
   display: flex;
   flex-direction: column;
   /* Gap sized to leave room for the hover-reveal timestamp beneath each bubble
@@ -1448,31 +1556,18 @@
    the bottom-center of the canvas. The wrapper itself is layout-only; the
    pill's visual chrome lives on `.toolbar`. */
 .paletteRoot {
-  position: fixed;
-  /* Centered within the right column. Left column is a fixed 360px + 1px
-     divider, so the right column starts at 361px. */
-  left: calc(361px + (100vw - 361px) / 2);
-  bottom: var(--space-4);
+  /* Absolute-positioned inside .canvas (which is `position: relative`).
+     Anchored to the canvas's bottom-center with 12px breathing room. */
+  position: absolute;
+  left: 50%;
+  bottom: var(--space-3);
   transform: translateX(-50%);
   z-index: 20;
-  max-width: calc(100vw - 361px - var(--space-6) * 2);
+  max-width: calc(100% - var(--space-6) * 2);
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: var(--space-2);
-}
-
-/* Narrow viewports: the right column is too tight to center the toolbar
-   without it bumping into the zoom controls on the right edge. Anchor to
-   the left of the right column with a 16px inset instead. The same rule
-   applies to the search popup so its panel + toolbar both align left. */
-@media (max-width: 1200px) {
-  .paletteRoot {
-    left: calc(361px + var(--space-4));
-    transform: none;
-    align-items: flex-start;
-    max-width: calc(100vw - 361px - var(--space-4) * 2);
-  }
 }
 
 /* Toolbar: width hugs content, hugs button height, 8px corner radius. */
@@ -2089,6 +2184,13 @@
   overflow: hidden;
   cursor: default;
   user-select: none;
+  /* Inset the dotted canvas from the right column edges and round its
+     corners so it reads as a card on the page surface rather than a
+     full-bleed working area. The 1px opaque border defines the card's
+     edge against the surrounding chrome. */
+  margin: var(--space-3);
+  border-radius: 12px;
+  border: 1px solid var(--color-border-opaque);
 }
 
 .canvas[data-panning="true"] { cursor: grabbing; }
@@ -3976,8 +4078,8 @@
 
 .canvasBottomBar {
   position: absolute;
-  bottom: var(--space-4);
-  right: var(--space-4);
+  bottom: var(--space-3);
+  right: var(--space-3);
   pointer-events: none;
 }
 

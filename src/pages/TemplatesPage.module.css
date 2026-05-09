@@ -1041,3 +1041,170 @@
   padding: var(--space-10) 0;
   text-align: center;
 }
+
+/* ─── Popular Section ───────────────────────────────────────────────────────── */
+/* Mirrors the App Marketplace "Popular" block: 70%-wide centered column,
+   2xl section title, then a 3-up grid of ListItem rows. Each row leads
+   with a rank number + accent-colored 48px icon tile and a 2-line
+   description that ends in a usage byline. */
+
+.popularSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: var(--space-8) auto 0;
+  width: 70%;
+  max-width: 1280px;
+}
+
+.popularHeader {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.popularTitle {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-2xl);
+  line-height: var(--line-height-snug, 1.2);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: var(--tracking-tight, -0.01em);
+  color: var(--color-content-primary);
+}
+
+.popularCaption {
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-regular);
+  line-height: var(--line-height-relaxed, 1.5);
+  color: var(--color-content-secondary);
+}
+
+.popularGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-1) var(--space-2);
+  margin-top: var(--space-3);
+}
+
+/* Use container queries (not media queries) so the breakpoints fire on
+   the page's inline-size, identical to `.section` / `.grid` below.
+   Otherwise the Popular block collapses at a different width than the
+   category sections when the AppShell sidebar resizes. */
+@container (max-width: 1100px) {
+  .popularGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@container (max-width: 900px) {
+  .popularSection { width: 100%; }
+}
+
+@container (max-width: 700px) {
+  .popularGrid { grid-template-columns: 1fr; }
+}
+
+.popularItem {
+  border-radius: 12px;
+  --li-hover-bg: var(--color-bg-tertiary);
+}
+
+.popularItem :global([class*='_description_']) {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+/* Single-line label with ellipsis — keeps every row at the same height
+   so the rank column stays aligned across the grid. */
+.popularItem :global([class*='_label_']) {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.popularItem:hover [data-role='popular-icon'] > * {
+  transform: scale(1.12);
+}
+
+.popularLeading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.popularRank {
+  font-family: var(--font-sans);
+  font-size: var(--text-xl);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-tertiary);
+  text-align: center;
+  min-width: 24px;
+}
+
+.popularIconTile {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-opaque);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.popularIconTile svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* The trigger glyphs are authored in a 14×14 viewBox with stroke-width=1.3,
+   which renders ~2.2px when scaled into the 48px tile. Override the stroke
+   on the leaf nodes so the icon reads as a thin line at the larger size. */
+.popularIconTile svg :global(circle),
+.popularIconTile svg :global(rect),
+.popularIconTile svg :global(path) {
+  stroke-width: 0.9;
+}
+
+.popularIconTile > * {
+  transition: transform var(--duration-slow) var(--ease-out);
+}
+
+.popularIconTile[data-accent="green"]   { color: var(--color-green-fill,   var(--color-content-primary)); }
+.popularIconTile[data-accent="blue"]    { color: var(--color-blue-fill,    var(--color-content-primary)); }
+.popularIconTile[data-accent="azure"]   { color: var(--color-azure-fill,   var(--color-content-primary)); }
+.popularIconTile[data-accent="purple"]  { color: var(--color-purple-fill,  var(--color-content-primary)); }
+.popularIconTile[data-accent="pink"]    { color: var(--color-pink-fill,    var(--color-content-primary)); }
+.popularIconTile[data-accent="red"]     { color: var(--color-red-fill,     var(--color-content-primary)); }
+.popularIconTile[data-accent="orange"]  { color: var(--color-orange-fill,  var(--color-content-primary)); }
+.popularIconTile[data-accent="yellow"]  { color: var(--color-yellow-fill,  var(--color-content-primary)); }
+.popularIconTile[data-accent="matcha"]  { color: var(--color-matcha-fill,  var(--color-content-primary)); }
+
+.popularDesc {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.popularDescLine {
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  line-height: var(--line-height-relaxed, 1.45);
+  color: var(--color-content-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.popularByline {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  color: var(--color-content-tertiary);
+}
