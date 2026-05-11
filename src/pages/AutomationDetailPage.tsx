@@ -5,7 +5,7 @@
 // see `extract-readonly-flow-canvas` follow-up task. The Edit-workflow
 // CTA navigates into the builder at `/automations/:id/edit`.
 
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Button } from '@alloy/components/Button';
 import { Dialog, DialogHeader, DialogContent } from '@alloy/components/Dialog';
@@ -1556,62 +1556,90 @@ function Sparkline({ values, color }: SparklineProps) {
 }
 
 /* ── SpecialistsActivatedHeatmap ────────────────────────────────────────
-   Calendar-style dot heatmap. Renders one cell per day over the last 35
-   days laid out as a 7-column (Mon–Sun) × 5-row grid; each cell hosts a
-   single circular dot whose diameter scales linearly with that day's
-   total specialist invocations. The dot is monotone (purple AI accent)
-   so the chart stays a pure activity-density read; per-persona detail
-   surfaces only via the hover tooltip — same data, different attention
-   layer. ──────────────────────────────────────────────────────────── */
-const HEATMAP_DOT_MIN     = 4;   // px — diameter for an idle (zero) day
-const HEATMAP_DOT_MAX     = 30;  // px — diameter for the busiest day in window
-const HEATMAP_OPACITY_MIN = 0.18; // opacity for the quietest non-zero day
-const HEATMAP_OPACITY_MAX = 1.0;  // opacity for the busiest day in window
+   GitHub-style contributions heatmap. Renders one rounded-square cell per
+   day over the last 35 days laid out as a 7-column (Mon–Sun) × 5-row
+   grid. Each cell's saturation maps to that day's total specialist
+   invocations bucketed into five discrete intensity levels (0 = idle,
+   1–4 = quartiles up to the busiest day in window). Per-persona detail
+   still surfaces via the hover tooltip. ─────────────────────────────── */
+
+// Cell pitch — keep in sync with `.specialistsHeatmapGrid` CSS:
+// 16px cell + 4px gap = 20px between column starts.
+const HEATMAP_CELL_PITCH = 20;
 
 function SpecialistsActivatedHeatmap({ days }: { days: HeatmapDay[] }) {
+  // Track the heatmap container's width so we can backfill enough prior
+  // dates to fill the chart card — the heatmap reads as a continuous
+  // calendar instead of a fixed-width block sitting in empty space.
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [containerWidth, setContainerWidth] = useState(0);
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const update = (): void => setContainerWidth(el.clientWidth);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   if (days.length === 0) return null;
 
-  // Max total over the window drives the dot-size scale; floor to 1 so a
-  // workflow that's never activated a specialist still renders cleanly
-  // without a divide-by-zero collapse.
+  // Max total over the window drives the intensity bucketing; floor to 1
+  // so a workflow that's never activated a specialist still renders
+  // cleanly without a divide-by-zero collapse.
   const maxTotal = Math.max(1, ...days.map(d => d.total));
 
-  // Day-of-week of the first cell — used to compute leading empty
-  // placeholders so the first day lands in its real Mon-first column.
-  // `Date.getDay()` returns 0 (Sun) – 6 (Sat); rotate so Mon = 0.
+  // Day-of-week of the first cell — Mon=0…Sun=6 — used to compute the
+  // number of prior dates needed to align the data window's start with
+  // its real weekday row (cells flow top-to-bottom within a column).
   const firstDate = new Date(days[0].date);
   const firstDow  = firstDate.getDay();             // 0=Sun … 6=Sat
   const firstCol  = (firstDow + 6) % 7;             // 0=Mon … 6=Sun
-  const leading   = firstCol;                       // empty cells before day 0
+  const leadingForAlignment = firstCol;
+
+  // Total columns the card can host given its measured width, then
+  // derive how many cells (7 × columns) the heatmap should hold. If the
+  // measurement hasn't landed yet, fall back to the natural data length
+  // so the first paint isn't blank.
+  const naturalCells   = days.length + leadingForAlignment;
+  const cardColumns    = containerWidth > 0
+    ? Math.max(1, Math.floor((containerWidth + 4) / HEATMAP_CELL_PITCH))
+    : Math.ceil(naturalCells / 7);
+  const targetCells    = Math.max(naturalCells, cardColumns * 7);
+  const totalLeading   = targetCells - days.length;
+
+  // Backfill leading cells with real prior dates (idle / zero activity)
+  // instead of blank placeholders so the heatmap reads as a continuous
+  // calendar that always fills the card.
+  const leadingDays: HeatmapDay[] = [];
+  for (let i = totalLeading; i > 0; i--) {
+    const d = new Date(firstDate);
+    d.setDate(firstDate.getDate() - i);
+    leadingDays.push({
+      date:      d.toISOString().slice(0, 10),
+      total:     0,
+      byPersona: Object.fromEntries(AI_PERSONAS.map(p => [p.id, 0])),
+    });
+  }
+  const allDays = [...leadingDays, ...days];
 
   return (
-    <div className={styles.specialistsHeatmap}>
+    <div ref={containerRef} className={styles.specialistsHeatmap}>
       <div
         className={styles.specialistsHeatmapGrid}
         role="img"
         aria-label="Specialist activations heatmap — last 35 days"
       >
-        {/* Leading placeholder cells so the first calendar day lands in
-            its weekday column on the first row. */}
-        {Array.from({ length: leading }).map((_, i) => (
-          <div key={`pad-${i}`} className={styles.specialistsHeatmapCell} aria-hidden />
-        ))}
-        {days.map(day => {
+        {allDays.map(day => {
+          // Bucket the day's total into 5 GitHub-style intensity levels:
+          // 0 = idle, 1–4 = quartiles of the window's busiest day. Empty
+          // days render as the neutral surface tone (level 0); every
+          // other cell steps up through the AI accent saturation scale.
           const ratio = Math.min(1, day.total / maxTotal);
-          // Bigger size spread (4 → 30px) so quiet days look like
-          // pinpricks while busy days dominate the cell, with
-          // ratio² giving the distribution a non-linear curve so the
-          // top and bottom of the scale separate more dramatically.
-          const easedRatio = ratio * ratio;
-          const size  = day.total === 0
-            ? HEATMAP_DOT_MIN
-            : HEATMAP_DOT_MIN + Math.round(easedRatio * (HEATMAP_DOT_MAX - HEATMAP_DOT_MIN));
-          // Opacity tracks the same eased ratio — busy days render at
-          // full saturation; quiet days fade toward the canvas so the
-          // viewer's eye locks onto the dense regions of the grid.
-          const opacity = day.total === 0
-            ? HEATMAP_OPACITY_MIN
-            : HEATMAP_OPACITY_MIN + easedRatio * (HEATMAP_OPACITY_MAX - HEATMAP_OPACITY_MIN);
+          const level = day.total === 0
+            ? 0
+            : Math.min(4, 1 + Math.floor(ratio * 4));
           const dateLabel = new Date(day.date).toLocaleDateString(undefined, {
             weekday: 'short',
             month:   'short',
@@ -1625,7 +1653,7 @@ function SpecialistsActivatedHeatmap({ days }: { days: HeatmapDay[] }) {
             >
               <span
                 className={styles.specialistsHeatmapDot}
-                style={{ width: size, height: size, opacity }}
+                data-level={level}
                 aria-hidden
               />
               <div className={styles.specialistsHeatmapTooltip} role="tooltip">

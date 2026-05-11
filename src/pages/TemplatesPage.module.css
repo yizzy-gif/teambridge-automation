@@ -248,7 +248,7 @@
   height: 32px;
   flex-shrink: 0;
   border-radius: var(--radius-sm);
-  background: var(--color-bg-secondary);
+  background: var(--color-bg-tertiary);
   border: 1px solid var(--color-border-opaque);
   color: var(--color-content-primary);
 }
@@ -402,7 +402,7 @@
 }
 
 .card:hover {
-  background: var(--color-bg-secondary);
+  background: var(--color-bg-tertiary);
   box-shadow: var(--shadow-below-high);
 }
 
@@ -558,19 +558,8 @@
   border-radius: var(--radius-lg);
   background: var(--color-bg-secondary);
   border: 1px solid var(--color-border-opaque);
-  color: var(--color-content-primary);
+  color: var(--color-content-tertiary);
 }
-
-.cardThumb[data-accent="green"]   { color: var(--color-green-fill,   var(--color-content-primary)); }
-.cardThumb[data-accent="blue"]    { color: var(--color-blue-fill,    var(--color-content-primary)); }
-.cardThumb[data-accent="azure"]   { color: var(--color-azure-fill,   var(--color-content-primary)); }
-.cardThumb[data-accent="purple"]  { color: var(--color-purple-fill,  var(--color-content-primary)); }
-.cardThumb[data-accent="pink"]    { color: var(--color-pink-fill,    var(--color-content-primary)); }
-.cardThumb[data-accent="red"]     { color: var(--color-red-fill,     var(--color-content-primary)); }
-.cardThumb[data-accent="orange"]  { color: var(--color-orange-fill,  var(--color-content-primary)); }
-.cardThumb[data-accent="yellow"]  { color: var(--color-yellow-fill,  var(--color-content-primary)); }
-.cardThumb[data-accent="matcha"]  { color: var(--color-matcha-fill,  var(--color-content-primary)); }
-.cardThumb[data-accent="neutral"] { color: var(--color-content-secondary); }
 
 .cardThumbIcon {
   display: inline-flex;
@@ -663,7 +652,7 @@
      the `.card` flex gap already supplies the breathing room. */
   margin: 0 calc(-1 * var(--space-4)) calc(-1 * var(--space-3));
   padding: var(--space-4);
-  background: var(--color-bg-secondary);
+  background: var(--color-bg-tertiary);
   border-top: 1px solid var(--color-border-opaque);
   border-bottom-left-radius: var(--radius-lg);
   border-bottom-right-radius: var(--radius-lg);
@@ -848,7 +837,7 @@
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-md);
-  background: var(--color-bg-secondary);
+  background: var(--color-bg-tertiary);
   color: var(--color-content-primary);
 }
 
@@ -1153,6 +1142,7 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  color: var(--color-content-tertiary);
 }
 
 .popularIconTile svg {
@@ -1173,15 +1163,9 @@
   transition: transform var(--duration-slow) var(--ease-out);
 }
 
-.popularIconTile[data-accent="green"]   { color: var(--color-green-fill,   var(--color-content-primary)); }
-.popularIconTile[data-accent="blue"]    { color: var(--color-blue-fill,    var(--color-content-primary)); }
-.popularIconTile[data-accent="azure"]   { color: var(--color-azure-fill,   var(--color-content-primary)); }
-.popularIconTile[data-accent="purple"]  { color: var(--color-purple-fill,  var(--color-content-primary)); }
-.popularIconTile[data-accent="pink"]    { color: var(--color-pink-fill,    var(--color-content-primary)); }
-.popularIconTile[data-accent="red"]     { color: var(--color-red-fill,     var(--color-content-primary)); }
-.popularIconTile[data-accent="orange"]  { color: var(--color-orange-fill,  var(--color-content-primary)); }
-.popularIconTile[data-accent="yellow"]  { color: var(--color-yellow-fill,  var(--color-content-primary)); }
-.popularIconTile[data-accent="matcha"]  { color: var(--color-matcha-fill,  var(--color-content-primary)); }
+/* All icon strokes use the slate `content-tertiary` from the base rule
+   above — accent attributes still drive other affordances (tags, etc.)
+   but the badge itself is neutral. */
 
 .popularDesc {
   display: flex;

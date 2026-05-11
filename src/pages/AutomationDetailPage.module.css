@@ -631,44 +631,51 @@
 }
 
 .specialistsHeatmapGrid {
-  display: grid;
-  grid-template-columns: repeat(7, 40px);
-  justify-content: space-between;
-  row-gap: var(--space-2);
+  display: inline-grid;
+  /* GitHub-contributions layout: 7 rows (Mon–Sun) × N columns where each
+     column is a single week. Cells flow top-to-bottom then left-to-right,
+     so the column count grows naturally with the data window. Standard
+     Alloy sizing — 16px tiles (--space-4) with 4px (--space-1) gutters. */
+  grid-auto-flow: column;
+  grid-template-rows: repeat(7, var(--space-4));
+  grid-auto-columns: var(--space-4);
+  gap: var(--space-1);
 }
 
 .specialistsHeatmapCell {
   position: relative;
-  width: 40px;
-  height: 40px;
+  width: var(--space-4);
+  height: var(--space-4);
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
+/* GitHub-style intensity tile — fills the cell with a small radius and
+   a flat AI-accent colour stepped through 5 levels via `data-level`. */
 .specialistsHeatmapDot {
-  display: block;
-  border-radius: 50%;
-  /* AI gradient (purple → blue) so each dot reads as branded AI
-     activity rather than a flat purple chip. The gradient runs
-     left-to-right inside every dot. */
-  background: var(--gradient-ai);
-  transition:
-    transform var(--duration-fast) var(--ease-default),
-    opacity   var(--duration-fast) var(--ease-default);
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-tertiary);
+  transition: transform var(--duration-fast) var(--ease-default);
 }
 
-/* Idle days fall back to a quiet tertiary tone so the eye registers
-   "nothing happened" without confusing the user with a saturated dot.
-   Opacity is set inline by the call site so this rule only swaps the
-   base colour. */
+.specialistsHeatmapDot[data-level="0"] { background: var(--color-bg-tertiary); }
+.specialistsHeatmapDot[data-level="1"] { background: color-mix(in srgb, var(--color-purple-content-tertiary) 25%, var(--color-bg-tertiary)); }
+.specialistsHeatmapDot[data-level="2"] { background: color-mix(in srgb, var(--color-purple-content-tertiary) 50%, var(--color-bg-tertiary)); }
+.specialistsHeatmapDot[data-level="3"] { background: color-mix(in srgb, var(--color-purple-content-tertiary) 75%, var(--color-bg-tertiary)); }
+.specialistsHeatmapDot[data-level="4"] { background: var(--color-purple-content-tertiary); }
+
+/* Pre-existing data-empty hook kept for callers that still set it; the
+   data-level=0 path above is the new canonical idle styling. */
 .specialistsHeatmapCell[data-empty="true"] .specialistsHeatmapDot {
-  background: var(--color-content-tertiary);
+  background: var(--color-bg-tertiary);
 }
 
-/* Slight pop on hover — visual confirmation that the cell is interactive. */
+/* Subtle scale on hover so the cell still feels interactive. */
 .specialistsHeatmapCell:hover .specialistsHeatmapDot {
-  transform: scale(1.1);
+  transform: scale(1.08);
 }
 
 /* Tooltip — absolute positioned above the cell, faded in on hover.
