@@ -307,7 +307,10 @@
 .paletteRoot,
 .aiComposer {
   pointer-events: auto;
+  position: relative;
+  isolation: isolate;
 }
+
 
 /* Drag-to-resize handle pinned to the panel's right edge. 6px-wide hit
    strip straddling the column divider; an inner 1px hairline tracks the
@@ -541,12 +544,12 @@
    action button so the larger button + icon sizes stick. Picks up the
    five button kinds Alloy ships (voice / attach / send / stop / retry). */
 .aiComposer [data-composer-action] {
-  --composer-btn-size: 32px;
-  --composer-btn-icon-voice: 18px;
-  --composer-btn-icon-attach: 18px;
-  --composer-btn-icon-send: 14px;
-  --composer-btn-icon-stop: 14px;
-  --composer-btn-icon-retry: 14px;
+  --composer-btn-size: 24px;
+  --composer-btn-icon-voice: 14px;
+  --composer-btn-icon-attach: 14px;
+  --composer-btn-icon-send: 12px;
+  --composer-btn-icon-stop: 12px;
+  --composer-btn-icon-retry: 12px;
 }
 
 /* Shell: layout-only wrapper — chrome (border/bg/shadow/radius) removed so

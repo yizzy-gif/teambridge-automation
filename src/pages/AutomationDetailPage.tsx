@@ -18,7 +18,6 @@ import { Divider } from '@alloy/components/Divider';
 import { ValueChangeLabel } from '@alloy/components/ValueChangeLabel';
 import { SegmentedControl } from '@alloy/components/SegmentedControl';
 import { ChartCard } from '@alloy/components/Charts/ChartCard';
-import { BarChart } from '@alloy/components/Charts/BarChart';
 import { ListItem } from '@alloy/components/ListItem';
 import { Pagination } from '@alloy/components/Pagination';
 import {
@@ -65,7 +64,7 @@ import styles from './AutomationDetailPage.module.css';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type UsageRange = 'all' | '24h' | '7d' | '30d';
+export type UsageRange = 'all' | '24h' | '7d' | '30d';
 
 /** Action-type taxonomy surfaced in the "Actions Taken" filterable
  *  chart. Mirrors the action-node library on the canvas. Swap to a
@@ -103,7 +102,7 @@ export const ACTION_TYPE_COLORS: Record<ActionTypeKey, string> = {
   chat_message:  'var(--Alloy-pink-500)',
 };
 
-interface UsageMetrics {
+export interface UsageMetrics {
   totalTriggered:       { current: number; prior: number };
   totalActive:          { current: number; prior: number };
   totalCompleted:       { current: number; prior: number };
@@ -136,7 +135,7 @@ interface UsageMetrics {
 }
 
 /** One day in the Specialists Activated heatmap. */
-interface HeatmapDay {
+export interface HeatmapDay {
   /** ISO date `YYYY-MM-DD` for the cell. */
   date:      string;
   /** Sum of `byPersona` for the day — drives dot size. */
@@ -247,7 +246,7 @@ function bucketsForRange(range: UsageRange): { count: number; labelFor: (i: numb
   }
 }
 
-function synthMetrics(workflow: Automation, range: UsageRange): UsageMetrics {
+export function synthMetrics(workflow: Automation, range: UsageRange): UsageMetrics {
   const { count, labelFor } = bucketsForRange(range);
   const rnd = seeded(`${workflow.id}|${range}`);
   // Daily trigger baseline scales off the workflow's lifetime total.
@@ -881,7 +880,7 @@ interface ChangeProps {
 }
 
 /** Inline change badge using ValueChangeLabel — mirrors the Usage page treatment. */
-function Change({ current, prior, invertDirection = false }: ChangeProps) {
+export function Change({ current, prior, invertDirection = false }: ChangeProps) {
   const delta = pctChange(current, prior);
   if (delta === null) return null;
   const isUp = delta > 0;
@@ -911,9 +910,6 @@ export function AutomationDetailPage() {
   const detail = useWorkflowDetail(id);
 
   const [usageRange, setUsageRange]     = useState<UsageRange>('30d');
-  const [actionTypeFilter, setActionTypeFilter] = useState<Set<ActionTypeKey>>(
-    () => new Set(ACTION_TYPE_KEYS),
-  );
   const [expandedActivityId, setExpandedActivityId] = useState<string | null>(null);
   const [summaryOpen, setSummaryOpen]   = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -1107,104 +1103,62 @@ export function AutomationDetailPage() {
                     />
                   </div>
 
-                  {/* Actions Taken — stacked BarChart with a filter pill
-                      row that toggles which action types are visible.
-                      Each segment carries the action type's semantic
-                      colour so the stack reads as a named breakdown. */}
+                  <div className={styles.chartRow}>
+                  {/* Actions Taken — horizontal gradient bar chart,
+                      ranked by total count, matching UsagePage style. */}
                   <ChartCard
                     title="Actions taken"
                     subtitle={`Actions executed by type — ${rangeLabel}`}
                   >
                     {(() => {
-                      // Sum only the filtered action types' totals so the
-                      // hero number tracks the filter pills underneath. The
-                      // prior-period figure scales proportionally — we don't
-                      // have a per-type prior breakdown, so pin the change
-                      // indicator to the same delta ratio as the unfiltered
-                      // total.
-                      const filteredCurrent = ACTION_TYPE_KEYS
-                        .filter(k => actionTypeFilter.has(k))
-                        .reduce((sum, k) => sum + usage.series.actionsByType[k].reduce((a, b) => a + b, 0), 0);
-                      const total = usage.actionsTaken.current || 1;
-                      const filteredPrior = Math.round(
-                        usage.actionsTaken.prior * (filteredCurrent / total),
+                      const actionTotals = ACTION_TYPE_KEYS
+                        .map(k => ({
+                          key:   k,
+                          label: ACTION_TYPE_LABELS[k],
+                          color: ACTION_TYPE_COLORS[k],
+                          count: usage.series.actionsByType[k].reduce((a, b) => a + b, 0),
+                        }))
+                        .sort((a, b) => b.count - a.count);
+                      const maxCount    = Math.max(...actionTotals.map(r => r.count), 1);
+                      const total       = actionTotals.reduce((s, r) => s + r.count, 0);
+                      const priorTotal  = Math.round(
+                        usage.actionsTaken.prior * (total / (usage.actionsTaken.current || 1)),
                       );
                       return (
-                    <div className={styles.peopleReachedBody}>
-                      <div className={styles.successRateHero}>
-                        <span className={styles.successRateValue}>
-                          {fmtNum(filteredCurrent)}
-                        </span>
-                        <Change
-                          current={filteredCurrent}
-                          prior={filteredPrior}
-                        />
-                      </div>
-
-                      {/* Filter pills — toggle each action type in/out
-                          of the stacked bar. At least one type stays
-                          on so the chart never empties out. */}
-                      <div className={styles.actionFilterRow} role="group" aria-label="Filter actions by type">
-                        {ACTION_TYPE_KEYS.map(key => {
-                          const active = actionTypeFilter.has(key);
-                          return (
-                            <button
-                              key={key}
-                              type="button"
-                              className={styles.actionFilterPill}
-                              data-active={active ? 'true' : 'false'}
-                              onClick={() => {
-                                setActionTypeFilter(prev => {
-                                  const next = new Set(prev);
-                                  if (next.has(key)) {
-                                    if (next.size > 1) next.delete(key);
-                                  } else {
-                                    next.add(key);
-                                  }
-                                  return next;
-                                });
-                              }}
-                              aria-pressed={active}
-                            >
-                              <span
-                                className={styles.actionFilterDot}
-                                style={{ background: ACTION_TYPE_COLORS[key] }}
-                                aria-hidden
-                              />
-                              {ACTION_TYPE_LABELS[key]}
-                            </button>
-                          );
-                        })}
-                      </div>
-
-                      <BarChart
-                        variant="stacked"
-                        height={200}
-                        showLegend={false}
-                        labels={usage.series.labels}
-                        series={ACTION_TYPE_KEYS
-                          .filter(k => actionTypeFilter.has(k))
-                          .map(k => ({
-                            label: ACTION_TYPE_LABELS[k],
-                            data:  usage.series.actionsByType[k],
-                            color: ACTION_TYPE_COLORS[k],
-                          }))}
-                        formatTooltipValue={(v) => fmtNum(v)}
-                      />
-                    </div>
+                        <div className={styles.peopleReachedBody}>
+                          <div className={styles.successRateHero}>
+                            <span className={styles.successRateValue}>{fmtNum(total)}</span>
+                            <Change current={total} prior={priorTotal} />
+                          </div>
+                          <div className={styles.hbarList}>
+                            {actionTotals.map(row => (
+                              <div key={row.key} className={styles.hbarRow}>
+                                <span className={styles.hbarLabel}>{row.label}</span>
+                                <div className={styles.hbarTrack} role="presentation">
+                                  <div
+                                    className={styles.hbarFill}
+                                    style={{
+                                      width: `${(row.count / maxCount) * 100}%`,
+                                      background: `linear-gradient(to right, color-mix(in srgb, ${row.color} 10%, transparent), color-mix(in srgb, ${row.color} 30%, transparent))`,
+                                      boxShadow: `inset -2px 0 0 0 ${row.color}`,
+                                    }}
+                                  />
+                                </div>
+                                <span className={styles.hbarCount}>
+                                  {fmtNum(row.count)}{' '}
+                                  <span className={styles.hbarPct}>
+                                    · {Math.round((row.count / (total || 1)) * 100)}%
+                                  </span>
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
                       );
                     })()}
                   </ChartCard>
 
-                  {/* Specialists Activated — dot-heatmap calendar. Each
-                      cell represents one calendar day; the window
-                      length is driven by the segmented time control
-                      above (7 / 35 / 84 days). Circle diameter +
-                      opacity scale with total specialist invocations
-                      for the day. Hovering a cell surfaces a tooltip
-                      listing the per-persona breakdown for that
-                      date — the chart itself stays single-tone so the
-                      visual reads as a pure activity-density heatmap. */}
+                  {/* Specialists Activated — dot-heatmap calendar */}
                   <ChartCard
                     title="Specialists activated"
                     subtitle={`AI persona invocations — last ${
@@ -1226,6 +1180,7 @@ export function AutomationDetailPage() {
                       />
                     </div>
                   </ChartCard>
+                  </div>
                 </>
               );
             })()}
@@ -1477,7 +1432,7 @@ interface MetricCardProps {
  *  automatic header so the heading sits inside the body. Title /
  *  subtitle typography mirrors Alloy's ChartCard tokens (text-sm
  *  medium / text-xs tertiary). */
-function MetricCard({ title, subtitle, value, change, chart }: MetricCardProps) {
+export function MetricCard({ title, subtitle, value, change, chart }: MetricCardProps) {
   return (
     // Pass an empty title so ChartCard's required prop is satisfied;
     // the empty header is hidden by CSS (`.metricCardEmptyHeader`)
@@ -1565,9 +1520,9 @@ function Sparkline({ values, color }: SparklineProps) {
 
 // Cell pitch — keep in sync with `.specialistsHeatmapGrid` CSS:
 // 16px cell + 4px gap = 20px between column starts.
-const HEATMAP_CELL_PITCH = 20;
+export const HEATMAP_CELL_PITCH = 20;
 
-function SpecialistsActivatedHeatmap({ days }: { days: HeatmapDay[] }) {
+export function SpecialistsActivatedHeatmap({ days }: { days: HeatmapDay[] }) {
   // Track the heatmap container's width so we can backfill enough prior
   // dates to fill the chart card — the heatmap reads as a continuous
   // calendar instead of a fixed-width block sitting in empty space.
@@ -1676,6 +1631,18 @@ function SpecialistsActivatedHeatmap({ days }: { days: HeatmapDay[] }) {
             </div>
           );
         })}
+      </div>
+      <div className={styles.specialistsHeatmapLegend} aria-hidden>
+        <span className={styles.specialistsHeatmapLegendLabel}>Less</span>
+        {([0, 1, 2, 3, 4] as const).map(level => (
+          <span
+            key={level}
+            className={styles.specialistsHeatmapDot}
+            data-level={level}
+            style={{ position: 'static', inset: 'unset', width: 12, height: 12, flexShrink: 0 }}
+          />
+        ))}
+        <span className={styles.specialistsHeatmapLegendLabel}>More</span>
       </div>
     </div>
   );

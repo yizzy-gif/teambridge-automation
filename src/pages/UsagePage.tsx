@@ -1,32 +1,37 @@
 import { useMemo, useState } from 'react';
-import { DataCard } from '@alloy/components/DataCard';
 import { SegmentedControl } from '@alloy/components/SegmentedControl';
 import { SelectField } from '@alloy/components/Input';
 import { ValueChangeLabel } from '@alloy/components/ValueChangeLabel';
-import { BarChart02Icon } from '@alloy/components/icons/BarChart02Icon';
-import { CheckCircleIcon } from '@alloy/components/icons/CheckCircleIcon';
-import { Users03Icon } from '@alloy/components/icons/Users03Icon';
+import { ChartCard } from '@alloy/components/Charts/ChartCard';
 import { ZapIcon } from '@alloy/components/icons/ZapIcon';
 import { Mail01Icon } from '@alloy/components/icons/Mail01Icon';
 import { MessageDotsSquareIcon } from '@alloy/components/icons/MessageDotsSquareIcon';
 import { Edit03Icon } from '@alloy/components/icons/Edit03Icon';
 import { ChevronDownIcon } from '@alloy/components/icons/ChevronDownIcon';
-import { RunsRangeChart } from '@/components/RunsRangeChart';
-import type { RunsRangePoint } from '@/components/RunsRangeChart';
 import {
   USAGE_WORKFLOWS,
   MOCK_RUNS,
   getWindow,
-  getPriorWindow,
   filterByWindow,
   pctChange,
-  bucketFor,
-  bucketKey,
-  bucketLabel,
-  eachBucketInRange,
   workflowById,
 } from '@/features/usage/data';
 import type { TimeRange, RunStatus, UsageRun } from '@/features/usage/data';
+import { MOCK_AUTOMATIONS } from './AutomationsPage';
+import type { Automation } from './AutomationsPage';
+import {
+  ACTION_TYPE_KEYS,
+  ACTION_TYPE_LABELS,
+  ACTION_TYPE_COLORS,
+  synthMetrics,
+  MetricCard,
+  SpecialistsActivatedHeatmap,
+} from './AutomationDetailPage';
+import type {
+  ActionTypeKey,
+  UsageMetrics,
+  UsageRange,
+} from './AutomationDetailPage';
 import styles from './UsagePage.module.css';
 
 // ── Formatting helpers ───────────────────────────────────────────────────────
@@ -246,6 +251,103 @@ function UsageGradientDefs() {
   );
 }
 
+// ── Metric aggregation ───────────────────────────────────────────────────────
+
+/** Empty UsageMetrics surface used as the seed for element-wise
+ *  aggregation across workflows (and as a safe zeroed fallback when the
+ *  filtered workflow set is empty). */
+function emptyMetrics(): UsageMetrics {
+  const actionsByType = Object.fromEntries(
+    ACTION_TYPE_KEYS.map(k => [k, [] as number[]]),
+  ) as Record<ActionTypeKey, number[]>;
+  return {
+    totalTriggered:       { current: 0, prior: 0 },
+    totalActive:          { current: 0, prior: 0 },
+    totalCompleted:       { current: 0, prior: 0 },
+    actionsTaken:         { current: 0, prior: 0 },
+    specialistsActivated: { current: 0, prior: 0 },
+    series: {
+      labels:               [],
+      triggered:            [],
+      active:               [],
+      completed:            [],
+      actionsByType,
+      activationsByPersona: {},
+      activationsHeatmap:   [],
+    },
+  };
+}
+
+/** Element-wise sum across a list of per-workflow UsageMetrics. The
+ *  series arrays from `synthMetrics` are parallel within a range (same
+ *  bucket count + same heatmap day count), so adding by index is
+ *  well-defined; per-persona / per-action-type maps merge by key. */
+function aggregateMetrics(list: UsageMetrics[]): UsageMetrics {
+  if (list.length === 0) return emptyMetrics();
+  const first = list[0];
+  const out: UsageMetrics = {
+    totalTriggered:       { current: 0, prior: 0 },
+    totalActive:          { current: 0, prior: 0 },
+    totalCompleted:       { current: 0, prior: 0 },
+    actionsTaken:         { current: 0, prior: 0 },
+    specialistsActivated: { current: 0, prior: 0 },
+    series: {
+      labels:               first.series.labels.slice(),
+      triggered:            new Array(first.series.triggered.length).fill(0),
+      active:               new Array(first.series.active.length).fill(0),
+      completed:            new Array(first.series.completed.length).fill(0),
+      actionsByType:        Object.fromEntries(
+        ACTION_TYPE_KEYS.map(k => [k, new Array(first.series.labels.length).fill(0)]),
+      ) as Record<ActionTypeKey, number[]>,
+      activationsByPersona: {},
+      activationsHeatmap:   first.series.activationsHeatmap.map(d => ({
+        date:      d.date,
+        total:     0,
+        byPersona: {},
+      })),
+    },
+  };
+
+  for (const m of list) {
+    out.totalTriggered.current       += m.totalTriggered.current;
+    out.totalTriggered.prior         += m.totalTriggered.prior;
+    out.totalActive.current          += m.totalActive.current;
+    out.totalActive.prior            += m.totalActive.prior;
+    out.totalCompleted.current       += m.totalCompleted.current;
+    out.totalCompleted.prior         += m.totalCompleted.prior;
+    out.actionsTaken.current         += m.actionsTaken.current;
+    out.actionsTaken.prior           += m.actionsTaken.prior;
+    out.specialistsActivated.current += m.specialistsActivated.current;
+    out.specialistsActivated.prior   += m.specialistsActivated.prior;
+
+    for (let i = 0; i < out.series.triggered.length; i++) {
+      out.series.triggered[i] += m.series.triggered[i] ?? 0;
+      out.series.active[i]    += m.series.active[i]    ?? 0;
+      out.series.completed[i] += m.series.completed[i] ?? 0;
+      for (const k of ACTION_TYPE_KEYS) {
+        out.series.actionsByType[k][i] += m.series.actionsByType[k][i] ?? 0;
+      }
+    }
+
+    for (const [pid, count] of Object.entries(m.series.activationsByPersona)) {
+      out.series.activationsByPersona[pid] =
+        (out.series.activationsByPersona[pid] ?? 0) + count;
+    }
+
+    for (let i = 0; i < out.series.activationsHeatmap.length; i++) {
+      const src = m.series.activationsHeatmap[i];
+      if (!src) continue;
+      const dst = out.series.activationsHeatmap[i];
+      dst.total += src.total;
+      for (const [pid, count] of Object.entries(src.byPersona)) {
+        dst.byPersona[pid] = (dst.byPersona[pid] ?? 0) + count;
+      }
+    }
+  }
+
+  return out;
+}
+
 // ── Component ────────────────────────────────────────────────────────────────
 
 export function UsagePage() {
@@ -268,53 +370,42 @@ export function UsagePage() {
   }, [workflowFilter, categoryFilter, statusFilter]);
 
   const currentWindow = useMemo(() => getWindow(timeRange), [timeRange]);
-  const priorWindow   = useMemo(() => getPriorWindow(timeRange), [timeRange]);
   const currentRuns   = useMemo(() => filterByWindow(filteredRuns, currentWindow), [filteredRuns, currentWindow]);
-  const priorRuns     = useMemo(() => filterByWindow(filteredRuns, priorWindow), [filteredRuns, priorWindow]);
 
-  // ── Aggregate metrics ──────────────────────────────────────────────────────
-  const totalRuns        = currentRuns.length;
-  const priorTotalRuns   = priorRuns.length;
-
-  const successfulRuns   = currentRuns.filter(r => r.status === 'completed').length;
-  const priorSuccessful  = priorRuns.filter(r => r.status === 'completed').length;
-
-  const successRate      = totalRuns > 0 ? (successfulRuns / totalRuns) * 100 : 0;
-  const priorSuccessRate = priorTotalRuns > 0 ? (priorSuccessful / priorTotalRuns) * 100 : 0;
-
-  const peopleReached      = currentRuns.reduce((s, r) => s + r.reached, 0);
-  const priorPeopleReached = priorRuns.reduce((s, r) => s + r.reached, 0);
-
-  // ── Chart data ─────────────────────────────────────────────────────────────
-  const { chartData, activeBuckets } = useMemo(() => {
-    const bucket = bucketFor(timeRange);
-    const byBucket: Record<string, { runs: number; success: number }> = {};
-    for (const r of currentRuns) {
-      const k = bucketKey(new Date(r.timestamp), bucket);
-      if (!byBucket[k]) byBucket[k] = { runs: 0, success: 0 };
-      byBucket[k].runs++;
-      if (r.status === 'completed') byBucket[k].success++;
-    }
-    const buckets = eachBucketInRange(currentWindow.from, currentWindow.to, bucket);
-    const data: RunsRangePoint[] = buckets.map(d => {
-      const k = bucketKey(d, bucket);
-      const cell = byBucket[k];
-      if (!cell) return { label: bucketLabel(d, bucket), runs: 0, success: 0, hasData: false };
-      return {
-        label:   bucketLabel(d, bucket),
-        runs:    cell.runs,
-        success: cell.success,
-        hasData: true,
-      };
+  // ── Aggregated UsageMetrics across filtered workflows ─────────────────────
+  // The single-workflow detail page renders its tiles + charts from a
+  // per-workflow `UsageMetrics`. To reuse the same surface here we
+  // synth-per-workflow then element-wise aggregate across whichever
+  // workflows survive the current filter row.
+  const filteredAutomations = useMemo<Automation[]>(() => {
+    const allowedIds = new Set(USAGE_WORKFLOWS.map(w => w.id));
+    return MOCK_AUTOMATIONS.filter(a => {
+      if (!allowedIds.has(a.id)) return false;
+      if (workflowFilter !== 'all' && a.id !== workflowFilter) return false;
+      if (categoryFilter !== 'all' && a.category !== categoryFilter) return false;
+      return true;
     });
-    return { chartData: data, activeBuckets: data.filter(d => d.hasData).length };
-  }, [currentRuns, timeRange, currentWindow]);
+  }, [workflowFilter, categoryFilter]);
 
-  const chartSubtitle = timeRange === '24h'
-    ? 'Runs triggered per hour'
-    : timeRange === 'all'
-      ? 'Runs triggered per month'
-      : 'Runs triggered per day';
+  // Status filter doesn't have a direct match on the synth metrics
+  // (which expose aggregate triggered/active/completed totals, not
+  // per-run rows). It still scopes the runs feed below; the metric
+  // tiles + charts are scoped by workflow + category only.
+  const [actionTypeFilter, setActionTypeFilter] = useState<Set<ActionTypeKey>>(
+    () => new Set(ACTION_TYPE_KEYS),
+  );
+
+  const usage = useMemo<UsageMetrics>(() => {
+    const range = timeRange as UsageRange;
+    const perWorkflow = filteredAutomations.map(wf => synthMetrics(wf, range));
+    return aggregateMetrics(perWorkflow);
+  }, [filteredAutomations, timeRange]);
+
+  const rangeLabel =
+    timeRange === '24h' ? 'past 24 hours' :
+    timeRange === '7d'  ? 'past 7 days'   :
+    timeRange === '30d' ? 'past 30 days'  :
+                          'all time';
 
   // Recent runs feed for the right sidebar — newest first, capped at 50
   // so the column stays readable. Honours the same filter row as the
@@ -376,81 +467,111 @@ export function UsagePage() {
             column with the feed below the chart. ─────────────────── */}
       <div className={styles.body}>
         <div className={styles.bodyMain}>
-          {/* ── Stat cards ────────────────────────────────────────────── */}
-          <div className={styles.stats}>
-            <DataCard
-              className={styles.gradientBadge}
-              color="matcha"
-              icon={<BarChart02Icon size={24} />}
-              label="Total runs"
-              value={fmtNum(totalRuns)}
-              tag={<Change current={totalRuns} prior={priorTotalRuns} />}
+          {/* ── Triggered / Active / Completed tiles ──────────────────── */}
+          <div className={styles.metricRow}>
+            <MetricCard
+              title="Total triggered"
+              subtitle={`Trigger fires — ${rangeLabel}`}
+              value={fmtNum(usage.totalTriggered.current)}
+              change={<Change current={usage.totalTriggered.current} prior={usage.totalTriggered.prior} />}
             />
-            <DataCard
-              className={styles.gradientBadge}
-              color="matcha"
-              icon={<CheckCircleIcon size={24} />}
-              label="Success rate"
-              value={`${Math.round(successRate)}%`}
-              tag={<Change current={successRate} prior={priorSuccessRate} />}
+            <MetricCard
+              title="Total active"
+              subtitle={`In-progress runs — ${rangeLabel}`}
+              value={fmtNum(usage.totalActive.current)}
+              change={<Change current={usage.totalActive.current} prior={usage.totalActive.prior} />}
             />
-            <DataCard
-              className={styles.gradientBadge}
-              color="matcha"
-              icon={<Users03Icon size={24} />}
-              label="People reached"
-              value={fmtNum(peopleReached)}
-              tag={<Change current={peopleReached} prior={priorPeopleReached} />}
+            <MetricCard
+              title="Total completed"
+              subtitle={`Successfully finished — ${rangeLabel}`}
+              value={fmtNum(usage.totalCompleted.current)}
+              change={<Change current={usage.totalCompleted.current} prior={usage.totalCompleted.prior} />}
             />
           </div>
 
-          {/* ── Runs over time ────────────────────────────────────────── */}
-          <section className={styles.chartCard}>
-            <div>
-              <p className={styles.chartTitle}>Runs over time</p>
-              <p className={styles.chartSubtitle}>{chartSubtitle}</p>
+          {/* ── Actions taken + Specialists activated — side-by-side ──── */}
+          <div className={styles.chartRow}>
+          {/* ── Actions taken — horizontal gradient ranking bars ──────── */}
+          <ChartCard
+            title="Actions taken"
+            subtitle={`Actions executed by type — ${rangeLabel}`}
+          >
+            {(() => {
+              const actionTotals = ACTION_TYPE_KEYS
+                .filter(k => actionTypeFilter.has(k))
+                .map(k => ({
+                  key:   k,
+                  label: ACTION_TYPE_LABELS[k],
+                  color: ACTION_TYPE_COLORS[k],
+                  count: usage.series.actionsByType[k].reduce((a, b) => a + b, 0),
+                }))
+                .sort((a, b) => b.count - a.count);
+
+              const maxCount     = Math.max(...actionTotals.map(r => r.count), 1);
+              const filteredTotal = actionTotals.reduce((s, r) => s + r.count, 0);
+              const allTotal     = usage.actionsTaken.current || 1;
+              const filteredPrior = Math.round(
+                usage.actionsTaken.prior * (filteredTotal / allTotal),
+              );
+
+              return (
+                <div className={styles.peopleReachedBody}>
+                  <div className={styles.successRateHero}>
+                    <span className={styles.successRateValue}>
+                      {fmtNum(filteredTotal)}
+                    </span>
+                    <Change current={filteredTotal} prior={filteredPrior} />
+                  </div>
+
+                  <div className={styles.hbarList}>
+                    {actionTotals.map(row => (
+                      <div key={row.key} className={styles.hbarRow}>
+                        <span className={styles.hbarLabel}>{row.label}</span>
+                        <div className={styles.hbarTrack} role="presentation">
+                          <div
+                            className={styles.hbarFill}
+                            style={{
+                              width: `${(row.count / maxCount) * 100}%`,
+                              background: `linear-gradient(to right, color-mix(in srgb, ${row.color} 10%, transparent), color-mix(in srgb, ${row.color} 30%, transparent))`,
+                              boxShadow: `inset -2px 0 0 0 ${row.color}`,
+                            }}
+                          />
+                        </div>
+                        <span className={styles.hbarCount}>
+                          {fmtNum(row.count)}{' '}
+                          <span className={styles.hbarPct}>
+                            · {Math.round((row.count / (filteredTotal || 1)) * 100)}%
+                          </span>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+          </ChartCard>
+
+          {/* ── Specialists activated — dot-heatmap calendar ──────────── */}
+          <ChartCard
+            title="Specialists activated"
+            subtitle={`AI persona invocations — last ${usage.series.activationsHeatmap.length} days`}
+          >
+            <div className={styles.peopleReachedBody}>
+              <div className={styles.successRateHero}>
+                <span className={styles.successRateValue}>
+                  {fmtNum(usage.specialistsActivated.current)}
+                </span>
+                <Change
+                  current={usage.specialistsActivated.current}
+                  prior={usage.specialistsActivated.prior}
+                />
+              </div>
+              <SpecialistsActivatedHeatmap days={usage.series.activationsHeatmap} />
             </div>
-            {activeBuckets < (timeRange === 'all' ? 1 : 3) ? (
-              <div className={styles.empty}>Not enough activity yet to show trends</div>
-            ) : (
-              <RunsRangeChart data={chartData} />
-            )}
-          </section>
+          </ChartCard>
+          </div>
         </div>
 
-        {/* ── Recent runs feed (right column) ────────────────────────────
-              Alloy ListItem rows — workflow name as primary label,
-              status as the description line, and a relative timestamp
-              in the trailing slot. Honours the page's filter / time-
-              range scope so the feed stays in sync with the metrics on
-              the left. */}
-        <aside className={styles.runsFeed} aria-label="Recent automation runs">
-          <header className={styles.runsFeedHeader}>
-            <p className={styles.runsFeedTitle}>Recent runs</p>
-            <p className={styles.runsFeedSubtitle}>
-              {recentRuns.length === 0
-                ? 'No runs in this window'
-                : `Showing ${recentRuns.length} of ${currentRuns.length}`}
-            </p>
-          </header>
-          <div className={styles.runsFeedList}>
-            {recentRuns.length === 0 ? (
-              <p className={styles.runsFeedEmpty}>
-                Adjust filters or pick a wider time range to see runs.
-              </p>
-            ) : recentRuns.map(run => {
-              const wf = workflowById(run.workflowId);
-              return (
-                <RunFeedItem
-                  key={run.id}
-                  run={run}
-                  workflowName={wf?.name ?? 'Unknown workflow'}
-                  template={RUN_EVENT_TEMPLATES[run.workflowId]}
-                />
-              );
-            })}
-          </div>
-        </aside>
       </div>
 
     </div>

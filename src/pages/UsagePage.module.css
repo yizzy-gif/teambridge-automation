@@ -2,6 +2,11 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-6);
+  /* Match the other pages' gutter — AppShell's `.contentInner` has no
+     global padding, so each page owns its own breathing room. 24px on
+     the sides + 48px floor at the bottom so the last section never
+     butts against the scroll viewport edge. */
+  padding: var(--space-6) var(--space-6) var(--space-12);
 }
 
 /* ─── Top bar ──────────────────────────────────────────────────────────────── */
@@ -92,13 +97,8 @@
 /* ─── Body — two-column grid, runs feed on the right ─────────────────────── */
 .body {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-columns: 1fr;
   gap: var(--space-6);
-  /* `align-items: stretch` (grid's default) makes both columns share the
-     same row height — the runs-feed aside on the right fills the same
-     vertical space as the chart/cards column on the left, instead of
-     hugging its own content with a gap below. */
-  align-items: stretch;
 }
 
 .bodyMain {
@@ -322,5 +322,170 @@
   line-height: var(--line-height-relaxed);
   color: var(--color-content-secondary);
   white-space: pre-wrap;
+}
+
+/* ─── Metric row — Triggered / Active / Completed KPI tiles ─────────────── */
+.metricRow {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+@media (max-width: 1180px) {
+  .metricRow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 720px) {
+  .metricRow {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Body wrapper used inside the Actions-taken + Specialists-activated
+   ChartCards — stacks the hero value, optional filter row, and chart. */
+.peopleReachedBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.successRateHero {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+
+.successRateValue {
+  font-family: var(--font-sans);
+  font-size: var(--text-3xl);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-tight);
+  color: var(--color-content-primary);
+  letter-spacing: var(--tracking-tight);
+}
+
+/* Action-type filter pill row. */
+.actionFilterRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.actionFilterPill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--color-border-opaque);
+  background: var(--color-bg-primary);
+  border-radius: var(--radius-full);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-secondary);
+  cursor: pointer;
+  transition:
+    background var(--duration-fast) var(--ease-default),
+    border-color var(--duration-fast) var(--ease-default),
+    color var(--duration-fast) var(--ease-default),
+    opacity var(--duration-fast) var(--ease-default);
+}
+.actionFilterPill:hover {
+  background: var(--color-bg-secondary);
+  color: var(--color-content-primary);
+}
+.actionFilterPill[data-active="false"] {
+  opacity: 0.5;
+}
+.actionFilterPill[data-active="true"] {
+  background: var(--color-bg-secondary);
+  border-color: var(--color-border-secondary);
+  color: var(--color-content-primary);
+}
+.actionFilterPill:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+}
+
+.actionFilterDot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* ─── Chart row — two cards side-by-side ────────────────────────────────── */
+.chartRow {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+  align-items: stretch;
+}
+@media (max-width: 960px) {
+  .chartRow {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ─── Horizontal ranking bar chart ──────────────────────────────────────── */
+.hbarList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.hbarRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: 28px;
+}
+
+.hbarDot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.hbarLabel {
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-content-primary);
+  flex: 0 0 100px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hbarCount {
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-content-primary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.hbarPct {
+  font-weight: var(--font-weight-regular);
+  color: var(--color-content-tertiary);
+}
+
+.hbarTrack {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+  background: transparent;
+  overflow: visible;
+}
+
+.hbarFill {
+  height: 100%;
+  min-width: 6px;
+  transition: width var(--duration-base) var(--ease-default);
 }
 
