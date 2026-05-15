@@ -685,21 +685,18 @@
 
 .specialistsHeatmapGrid {
   display: inline-grid;
-  /* GitHub-contributions layout: 7 rows (Mon–Sun) × N columns where each
-     column is a single week. Cells flow top-to-bottom then left-to-right,
-     so the column count grows naturally with the data window. Standard
-     Alloy sizing — 16px tiles (--space-4) with 4px (--space-1) gutters. */
+  /* Matches Alloy ActivityHeatMap defaults: 14px cells, 3px gutters. */
   grid-auto-flow: column;
-  grid-template-rows: repeat(7, var(--space-4));
-  grid-auto-columns: var(--space-4);
-  gap: var(--space-1);
+  grid-template-rows: repeat(7, 14px);
+  grid-auto-columns: 14px;
+  gap: 3px;
   align-self: flex-end;
 }
 
 .specialistsHeatmapCell {
   position: relative;
-  width: var(--space-4);
-  height: var(--space-4);
+  width: 14px;
+  height: 14px;
   display: flex;
   align-items: center;
   justify-content: center;

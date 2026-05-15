@@ -1519,8 +1519,8 @@ function Sparkline({ values, color }: SparklineProps) {
    still surfaces via the hover tooltip. ─────────────────────────────── */
 
 // Cell pitch — keep in sync with `.specialistsHeatmapGrid` CSS:
-// 16px cell + 4px gap = 20px between column starts.
-export const HEATMAP_CELL_PITCH = 20;
+// 14px cell + 3px gap = 17px between column starts (matches Alloy ActivityHeatMap defaults).
+export const HEATMAP_CELL_PITCH = 17;
 
 export function SpecialistsActivatedHeatmap({ days }: { days: HeatmapDay[] }) {
   // Track the heatmap container's width so we can backfill enough prior
@@ -1559,7 +1559,7 @@ export function SpecialistsActivatedHeatmap({ days }: { days: HeatmapDay[] }) {
   // so the first paint isn't blank.
   const naturalCells   = days.length + leadingForAlignment;
   const cardColumns    = containerWidth > 0
-    ? Math.max(1, Math.floor((containerWidth + 4) / HEATMAP_CELL_PITCH))
+    ? Math.max(1, Math.floor((containerWidth + 3) / HEATMAP_CELL_PITCH))
     : Math.ceil(naturalCells / 7);
   const targetCells    = Math.max(naturalCells, cardColumns * 7);
   const totalLeading   = targetCells - days.length;
