@@ -414,6 +414,10 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+  /* Inline-size container so the metric-card-style header row inside
+     these chart cards can react to the same 360px wrap threshold as
+     the metricCardLeft container above. */
+  container-type: inline-size;
 }
 
 .successRateHero {
@@ -546,7 +550,28 @@
   flex-direction: column;
   gap: var(--space-1);
   min-width: 0;
-  flex: 0 0 auto;
+  /* Fill the available body width so the header row inside has the full
+     card width to lay out against — without this, the column hugs its
+     content and the trailing hero floats short of the card's right
+     edge (or even overflows past it on narrow widths). */
+  flex: 1 1 auto;
+  /* Inline-size container so the wrap threshold below can react to the
+     card's actual rendered width regardless of viewport breakpoints. */
+  container-type: inline-size;
+}
+
+/* Wrap threshold — once the metric card's left column drops to ~360px
+   the heading is forced to claim a full row, pushing the trailing hero
+   onto a second row via the parent's `flex-wrap: wrap`. Below that
+   width, side-by-side reads as cramped; the stacked layout gives the
+   number room to breathe. */
+@container (max-width: 360px) {
+  /* Specificity bump (`.metricCardHeaderRow .metricCardHeading`) so this
+     rule wins against the base `.metricCardHeading { flex: 1 1 0 }`
+     defined later in the file. */
+  .metricCardHeaderRow .metricCardHeading {
+    flex-basis: 100%;
+  }
 }
 
 .metricCardRight {
@@ -580,6 +605,37 @@
   font-weight: var(--font-weight-regular);
   line-height: var(--line-height-normal);
   color: var(--color-content-tertiary);
+}
+
+/* Header row — title + subtitle stack as one column on the leading edge,
+   hero value sits on the trailing edge. `flex-wrap: wrap` lets the hero
+   drop to a second row when heading + hero can't both fit on one line
+   (narrow card widths). Neither item is allowed to shrink below its
+   content size (`flex-shrink: 0` via `flex: ... 0 ...`), so wrap is
+   what gives way first instead of squashing the heading text. */
+.metricCardHeaderRow {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  min-width: 0;
+}
+.metricCardHeading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  /* `flex-basis: 0` lets the heading start from zero and grow into the
+     row, so it never forces a wrap on its own. Combined with the hero's
+     `flex: 0 0 auto`, this puts heading + hero side-by-side with the
+     hero pinned to the trailing edge; the row only wraps when the hero
+     itself can't fit. The title/subtitle wrap to multiple lines as the
+     column narrows. */
+  flex: 1 1 0;
+}
+.metricCardHeaderRow .successRateHero {
+  flex: 0 0 auto;
 }
 
 /* ── Horizontal gradient bar chart — matches UsagePage hbar style ───────── */

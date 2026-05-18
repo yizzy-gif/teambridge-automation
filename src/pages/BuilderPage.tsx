@@ -6543,31 +6543,13 @@ function AssistantActivityTrail({ isLive }: { isLive: boolean }) {
   const allDone = activeIdx >= totalSteps;
   const trailState: 'live' | 'done' = isLive && !allDone ? 'live' : 'done';
 
-  // Replicate the trail's default summary copy ("Working · N steps" while
-  // live; "Thought for 6s · 5 steps" once done) so we can prepend a
-  // leading loader to mark this as AI-side activity while it's running.
-  //
-  // While the trail is `live` (AI is actively streaming), the animated
-  // AILoader pulses at the leading edge — the agreed signal that work
-  // is in flight. Once the trail flips to `done`, the leading icon is
-  // dropped entirely so the settled summary reads as plain text — the
-  // sparkle no longer carries any meaning at that point and would
-  // otherwise compete with the message body that lands beneath it.
-  const summaryText =
-    trailState === 'live'
-      ? `Working · ${totalSteps} steps`
-      : `Thought for 6s · ${totalSteps} steps`;
-  const summaryNode = (
-    <span className={styles.activityTrailSummary}>
-      {trailState === 'live' && (
-        <AILoader size={14} state="loading" aria-label="Streaming" />
-      )}
-      <span>{summaryText}</span>
-    </span>
-  );
+  // Defer entirely to the trail's own summary now that Alloy renders a
+  // typewriter-shimmered current-step label while `live` and expands to
+  // the full activity sequence on `done`. The previous AILoader prefix is
+  // redundant — the shimmer is the canonical in-flight signal.
 
   return (
-    <AIActivityTrail state={trailState} duration="6s" summary={summaryNode}>
+    <AIActivityTrail state={trailState} duration="6s">
       {ASSISTANT_TRAIL_STEPS.map((step, i) => {
         const status: 'pending' | 'active' | 'done' =
           allDone || i < activeIdx

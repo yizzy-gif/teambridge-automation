@@ -1106,10 +1106,7 @@ export function AutomationDetailPage() {
                   <div className={styles.chartRow}>
                   {/* Actions Taken — horizontal gradient bar chart,
                       ranked by total count, matching UsagePage style. */}
-                  <ChartCard
-                    title="Actions taken"
-                    subtitle={`Actions executed by type — ${rangeLabel}`}
-                  >
+                  <ChartCard title="" className={styles.metricCardEmptyHeader}>
                     {(() => {
                       const actionTotals = ACTION_TYPE_KEYS
                         .map(k => ({
@@ -1126,9 +1123,17 @@ export function AutomationDetailPage() {
                       );
                       return (
                         <div className={styles.peopleReachedBody}>
-                          <div className={styles.successRateHero}>
-                            <span className={styles.successRateValue}>{fmtNum(total)}</span>
-                            <Change current={total} prior={priorTotal} />
+                          <div className={styles.metricCardHeaderRow}>
+                            <div className={styles.metricCardHeading}>
+                              <h3 className={styles.metricCardTitle}>Actions taken</h3>
+                              <p className={styles.metricCardSubtitle}>
+                                {`Actions executed by type — ${rangeLabel}`}
+                              </p>
+                            </div>
+                            <div className={styles.successRateHero}>
+                              <span className={styles.successRateValue}>{fmtNum(total)}</span>
+                              <Change current={total} prior={priorTotal} />
+                            </div>
                           </div>
                           <div className={styles.hbarList}>
                             {actionTotals.map(row => (
@@ -1159,21 +1164,26 @@ export function AutomationDetailPage() {
                   </ChartCard>
 
                   {/* Specialists Activated — dot-heatmap calendar */}
-                  <ChartCard
-                    title="Specialists activated"
-                    subtitle={`AI persona invocations — last ${
-                      usage.series.activationsHeatmap.length
-                    } days`}
-                  >
+                  <ChartCard title="" className={styles.metricCardEmptyHeader}>
                     <div className={styles.peopleReachedBody}>
-                      <div className={styles.successRateHero}>
-                        <span className={styles.successRateValue}>
-                          {fmtNum(usage.specialistsActivated.current)}
-                        </span>
-                        <Change
-                          current={usage.specialistsActivated.current}
-                          prior={usage.specialistsActivated.prior}
-                        />
+                      <div className={styles.metricCardHeaderRow}>
+                        <div className={styles.metricCardHeading}>
+                          <h3 className={styles.metricCardTitle}>Specialists activated</h3>
+                          <p className={styles.metricCardSubtitle}>
+                            {`AI persona invocations — last ${
+                              usage.series.activationsHeatmap.length
+                            } days`}
+                          </p>
+                        </div>
+                        <div className={styles.successRateHero}>
+                          <span className={styles.successRateValue}>
+                            {fmtNum(usage.specialistsActivated.current)}
+                          </span>
+                          <Change
+                            current={usage.specialistsActivated.current}
+                            prior={usage.specialistsActivated.prior}
+                          />
+                        </div>
                       </div>
                       <SpecialistsActivatedHeatmap
                         days={usage.series.activationsHeatmap}
@@ -1440,11 +1450,15 @@ export function MetricCard({ title, subtitle, value, change, chart }: MetricCard
     <ChartCard title="" className={styles.metricCardEmptyHeader}>
       <div className={styles.metricCardBody}>
         <div className={styles.metricCardLeft}>
-          <h3 className={styles.metricCardTitle}>{title}</h3>
-          <p className={styles.metricCardSubtitle}>{subtitle}</p>
-          <div className={styles.successRateHero}>
-            <span className={styles.successRateValue}>{value}</span>
-            {change}
+          <div className={styles.metricCardHeaderRow}>
+            <div className={styles.metricCardHeading}>
+              <h3 className={styles.metricCardTitle}>{title}</h3>
+              <p className={styles.metricCardSubtitle}>{subtitle}</p>
+            </div>
+            <div className={styles.successRateHero}>
+              <span className={styles.successRateValue}>{value}</span>
+              {change}
+            </div>
           </div>
         </div>
         {chart && <div className={styles.metricCardRight}>{chart}</div>}
