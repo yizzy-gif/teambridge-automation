@@ -160,7 +160,6 @@ input.filterValueInput[type="date"]:focus-visible {
    distinct groups rather than a continuous run. */
 .folderSection {
   position: relative;
-  border-radius: var(--radius-md);
   outline: 1px solid transparent;
   outline-offset: -1px;
   margin-bottom: var(--space-4);
@@ -170,6 +169,18 @@ input.filterValueInput[type="date"]:focus-visible {
 
 .folderSection:last-child {
   margin-bottom: 0;
+}
+
+/* When a folder's actions DropdownMenu is open, lift the whole section
+   into its own stacking context above sibling folders. Each Alloy
+   AccordionItem header creates an internal `z-index: 1` stacking
+   context for its `.headerContent`, so a dropdown panel rendered
+   inside one folder is otherwise paint-ordered below the next sibling
+   folder's badge/header content (whichever paints later wins). Bumping
+   the open folder's section to `z-index: 2` ensures the dropdown sits
+   above neighbouring folders regardless of DOM order. */
+.folderSection:has([aria-expanded="true"][aria-haspopup="menu"]) {
+  z-index: 2;
 }
 
 /* Subtle hint that drop zones are live during a drag. */

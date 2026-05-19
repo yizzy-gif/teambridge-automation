@@ -1231,6 +1231,22 @@ export function AutomationsPage() {
   };
   const cancelAdd = () => { setAdding(false); };
 
+  // Default name for a new folder — first integer N that isn't already
+  // used by an existing "Folder N" so consecutive adds (without renaming)
+  // don't collide. System folder is ignored. Recomputed every render so
+  // the draft input always reflects the current state.
+  const nextDefaultFolderName = useMemo(() => {
+    const used = new Set<number>();
+    folders.forEach(f => {
+      if (f.isSystem) return;
+      const match = /^Folder\s+(\d+)$/.exec(f.name.trim());
+      if (match) used.add(parseInt(match[1], 10));
+    });
+    let n = 1;
+    while (used.has(n)) n += 1;
+    return `Folder ${n}`;
+  }, [folders]);
+
   // ── Delete confirmation dialog ───────────────────────────────────────────
   const [deleteTarget, setDeleteTarget] = useState<WorkflowFolder | null>(null);
   const confirmDelete = () => {
@@ -1473,7 +1489,7 @@ export function AutomationsPage() {
                   value="__draft__"
                   label={
                     <EditableFolderName
-                      name=""
+                      name={nextDefaultFolderName}
                       autoFocus
                       placeholder="Folder name"
                       onCommit={commitAddName}

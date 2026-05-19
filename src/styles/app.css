@@ -158,3 +158,13 @@ body {
 .dark button[data-variant="primary"]:active:not(:disabled) {
   background-color: var(--Alloy-slate-200);
 }
+
+/* Primary button disabled state — `--color-bg-disabled` resolves to the
+   same slate-800 in dark mode as `--color-bg-inverse-primary` (the
+   enabled primary fill), so without further treatment the enabled and
+   disabled buttons render indistinguishably. Dim with opacity so the
+   "no, you can't click this" affordance reads at a glance across both
+   themes. */
+button[data-variant="primary"]:disabled {
+  opacity: 0.45;
+}

@@ -205,11 +205,17 @@ function makePolicyBranchId(): string {
 }
 
 function makeEmptyPolicyBranch(): PolicyBranch {
+  // Default to "all selected" so a freshly-added policy IF branch reads
+  // as the broadest possible match out of the gate — users typically
+  // narrow down from the full library rather than building up from an
+  // empty selection.
   return {
     id: makePolicyBranchId(),
-    folders: [],
-    policies: [],
-    subPolicies: [],
+    folders:     POLICY_LIBRARY.map(f => f.id),
+    policies:    POLICY_LIBRARY.flatMap(f => f.policies.map(p => p.id)),
+    subPolicies: POLICY_LIBRARY.flatMap(f =>
+      f.policies.flatMap(p => p.subPolicies.map(s => s.id)),
+    ),
     thresholdValue: '50',
     thresholdMode: 'score',
   };
@@ -4362,8 +4368,9 @@ function PolicyBranchesEditor({
           return (
             <Fragment key={branch.id}>
               {/* IF branch header — chevron toggle + IF keyword + remove
-                  X. Mirrors `ConditionGroupsEditor`'s branch label so the
-                  policy panel reads with the same chrome. */}
+                  X sits OUTSIDE the card chrome, mirroring the condition
+                  node's `conditionBranchLabel` row. The card below
+                  collapses entirely when the chevron is closed. */}
               <div className={styles.conditionBranchLabel}>
                 <button
                   type="button"
@@ -4387,7 +4394,7 @@ function PolicyBranchesEditor({
                 </button>
               </div>
               {!isCollapsed && (
-                <div className={styles.conditionBranchBody}>
+                <div className={styles.policyBranchBody}>
                   <p className={styles.popoverSectionLabel}>SELECTED POLICIES</p>
                   <div className={styles.policySummaryRow}>
                     <span
@@ -4398,8 +4405,14 @@ function PolicyBranchesEditor({
                     >
                       {summaryText}
                     </span>
-                    <Button variant="secondary" size="sm" onClick={() => openConfigure(bIdx)}>
-                      Configure
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      iconOnly
+                      aria-label="Configure"
+                      onClick={() => openConfigure(bIdx)}
+                    >
+                      <FilterLinesIcon />
                     </Button>
                   </div>
                   <p className={clsx(styles.popoverSectionLabel, styles.popoverSectionLabelInline)}>MATCHING THRESHOLD</p>
@@ -5307,6 +5320,11 @@ interface TopBarProps {
   name: string;
   onNameChange: (v: string) => void;
   status: AutomationStatus;
+  /** True after the user has edited the workflow without publishing yet.
+   *  When the workflow's `status` is `'live'`, the Publish CTA stays
+   *  disabled until this flips true — there's nothing to push out on a
+   *  clean Live workflow. */
+  hasUnpublishedChanges?: boolean;
   onSettingsOpen: () => void;
   /** True when this builder was opened from the Templates library (the
    *  workflow doesn't exist in the user's manage list yet). In template
@@ -5331,6 +5349,7 @@ function TopBar({
   name,
   onNameChange,
   status,
+  hasUnpublishedChanges = false,
   onSettingsOpen,
   isTemplate = false,
   onToggleAiPanel,
@@ -5482,7 +5501,18 @@ function TopBar({
         ) : (
           <>
             <Button variant="tertiary" size="sm" onClick={onTest}>Run test</Button>
-            <Button variant="primary"   size="sm" onClick={onPublish}>Publish</Button>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={onPublish}
+              /* Live workflows only have something to publish once the
+                 user makes an edit. Clean Live state → disabled; any
+                 other status (draft / archived) or pending edits →
+                 enabled. */
+              disabled={status === 'live' && !hasUnpublishedChanges}
+            >
+              Publish
+            </Button>
           </>
         )}
       </div>
@@ -7659,7 +7689,11 @@ function FlowNode({
       </div>
       )}
 
-      {/* Config popover — fixed to right side of screen */}
+      {/* Config popover — anchored to the canvas root so it lives
+          inside the canvas card rather than free-floating over the page
+          chrome. Falls back to `document.body` until the canvas element
+          has mounted. The rightPanel uses `position: absolute` so its
+          top/right offsets resolve against the canvas. */}
       {showPopover && createPortal(
         <div className={styles.rightPanel} style={{ width: panelWidth }}>
           <div ref={resizeHandleRef} className={styles.rightPanelResizeHandle} />
@@ -7679,7 +7713,7 @@ function FlowNode({
             dotsMenuGroups={dotsMenuGroups}
           />
         </div>,
-        document.body,
+        document.querySelector(`.${styles.canvas}`) ?? document.body,
       )}
     </div>
   );
@@ -9395,11 +9429,14 @@ function FlowCanvas({
         <ZoomControls zoom={zoom} onZoomIn={handleZoomIn} onZoomOut={handleZoomOut} onFit={handleFit} onTidyUp={handleTidyUp} />
       </div>
 
-      {/* Type picker — rendered via portal at double-click position */}
+      {/* Type picker — rendered via portal at double-click position.
+          zIndex 200 sits below the right panel (300) so an open node
+          popover always takes visual precedence; otherwise the picker
+          would float over the panel and obscure its content. */}
       {typePickerPos && createPortal(
         <div
           className={styles.typePicker}
-          style={{ position: 'fixed', left: typePickerPos.screenX, top: typePickerPos.screenY, zIndex: 900 }}
+          style={{ position: 'fixed', left: typePickerPos.screenX, top: typePickerPos.screenY, zIndex: 200 }}
           onMouseDown={e => e.stopPropagation()}
         >
           {(['trigger', 'condition', 'action', 'delay', 'ai', 'policy'] as StepType[]).map(type => {
@@ -11000,6 +11037,11 @@ export function BuilderPage() {
   const [editNodeMode,    setEditNodeMode]    = useState(false);
   const [editingNodeIds,  setEditingNodeIds]  = useState<Set<string>>(new Set());
   const [saveState,       setSaveState]       = useState<SaveState>('idle');
+  // True after the user has edited the workflow but hasn't pressed Publish
+  // yet. Drives the Publish CTA's enabled state for `status: 'live'`
+  // workflows — the button stays disabled on a clean Live workflow and
+  // only lights up once there's something new to push out.
+  const [hasUnpublishedChanges, setHasUnpublishedChanges] = useState(false);
   const [globalAiPrompt,  setGlobalAiPrompt]  = useState('');
   const [threadEntries, setThreadEntries] = useState<ThreadEntry[]>([]);
   const [aiTyping, setAiTyping] = useState(false);
@@ -11215,12 +11257,45 @@ export function BuilderPage() {
   // chrome the top bar already renders is driven off the same effect,
   // so the visual feedback now reflects an actual write rather than a
   // metadata-only ping.
-  const isMount = useRef(true);
+  // Snapshot the last-fired dependency tuple via ref. We compare by
+  // reference equality on every effect run — `null` means "we haven't
+  // seen any state yet" (initial mount or React StrictMode's first
+  // setup pass) and we just snapshot + return without flipping save
+  // state. A plain `isMount = useRef(true)` guard is unsafe under
+  // StrictMode because the ref's `false` value persists across the
+  // synthetic cleanup → re-setup, so the second pass mis-fires a
+  // "saving" + `hasUnpublishedChanges = true` even though no real
+  // edit happened.
+  const lastSaveSig = useRef<{
+    name: string;
+    description: string;
+    status: AutomationStatus;
+    nodes: GraphNode[];
+    edges: GraphEdge[];
+    nodePositions: Record<string, { x: number; y: number }>;
+    tags: string[];
+  } | null>(null);
   useEffect(() => {
-    if (isMount.current) { isMount.current = false; return; }
+    const cur = { name, description, status, nodes, edges, nodePositions, tags };
+    if (lastSaveSig.current === null) {
+      lastSaveSig.current = cur;
+      return;
+    }
+    const prev = lastSaveSig.current;
+    if (
+      cur.name === prev.name &&
+      cur.description === prev.description &&
+      cur.status === prev.status &&
+      cur.nodes === prev.nodes &&
+      cur.edges === prev.edges &&
+      cur.nodePositions === prev.nodePositions &&
+      cur.tags === prev.tags
+    ) return;
+    lastSaveSig.current = cur;
     if (saveTimer.current)  clearTimeout(saveTimer.current);
     if (savedTimer.current) clearTimeout(savedTimer.current);
     setSaveState('saving');
+    setHasUnpublishedChanges(true);
     saveTimer.current = setTimeout(() => {
       if (id) {
         saveWorkflowGraphEntry(id, {
@@ -11801,6 +11876,12 @@ export function BuilderPage() {
   };
 
   const updateNodePosition = (id: string, x: number, y: number) => {
+    // No-op if the position hasn't actually changed — a plain click on
+    // a node fires `onMouseMove` once with the cursor still inside the
+    // node's hit area, which would otherwise re-write the same x/y and
+    // count as an edit (flipping Publish to active for a selection).
+    const cur = nodePositions[id];
+    if (cur && cur.x === x && cur.y === y) return;
     setNodePositions(prev => ({ ...prev, [id]: { x, y } }));
     touchNodesById([id]);
   };
@@ -11816,25 +11897,23 @@ export function BuilderPage() {
         onSave={handleSettingsSave}
       />
 
-      {/* When the AI panel is collapsed the LeftPanel column unmounts, so
-          we render the TopBar at the page level to keep Run test/Publish
-          accessible. When expanded the TopBar moves into the leftColumn
-          card below so it reads as the header of the chat panel. */}
-      {aiPanelCollapsed && (
-        <TopBar
-          onBack={() => navigate('/automations')}
-          onTest={() => {}}
-          onPublish={() => {}}
-          saveState={saveState}
-          name={name}
-          onNameChange={setName}
-          status={status}
-          onSettingsOpen={() => setSettingsOpen(true)}
-          isTemplate={!!routerTemplate}
-          aiPanelCollapsed={aiPanelCollapsed}
-          onToggleAiPanel={() => setAiPanelCollapsed(c => !c)}
-        />
-      )}
+      {/* Unified TopBar — always rendered at the page level so it spans
+          the full screen width above both columns, regardless of whether
+          the AI panel is expanded or collapsed. */}
+      <TopBar
+        onBack={() => navigate('/automations')}
+        onTest={() => {}}
+        onPublish={() => setHasUnpublishedChanges(false)}
+        saveState={saveState}
+        name={name}
+        onNameChange={setName}
+        status={status}
+        hasUnpublishedChanges={hasUnpublishedChanges}
+        onSettingsOpen={() => setSettingsOpen(true)}
+        isTemplate={!!routerTemplate}
+        aiPanelCollapsed={aiPanelCollapsed}
+        onToggleAiPanel={() => setAiPanelCollapsed(c => !c)}
+      />
 
       <div
         className={styles.body}
@@ -11846,19 +11925,6 @@ export function BuilderPage() {
             (see `expandAiBtn` below the top bar). */}
         {!aiPanelCollapsed && (
           <div className={styles.leftColumn}>
-            <TopBar
-              onBack={() => navigate('/automations')}
-              onTest={() => {}}
-              onPublish={() => {}}
-              saveState={saveState}
-              name={name}
-              onNameChange={setName}
-              status={status}
-              onSettingsOpen={() => setSettingsOpen(true)}
-              isTemplate={!!routerTemplate}
-              aiPanelCollapsed={aiPanelCollapsed}
-              onToggleAiPanel={() => setAiPanelCollapsed(c => !c)}
-            />
             <LeftPanel
               onLibNodeDragStart={(item) => setDraggingLibNode(item)}
               onLibNodeDragEnd={() => setDraggingLibNode(null)}

@@ -3003,12 +3003,17 @@
 /* ─── Right panel — mirrors left panel, anchored to right edge ───────────────── */
 
 .rightPanel {
-  position: fixed;
-  top: calc(48px + 16px);
-  right: 0;
-  bottom: calc(60px + var(--space-4)); /* clear zoom/tidy controls (60px tall, space-4 gap) */
+  /* Absolutely positioned inside the `.canvas` card (the FlowCanvas
+     root, which is `position: relative`). Top + right + bottom values
+     are now relative to the canvas card itself — `12px` insets on
+     every visible side give a uniform gap from the canvas edges, and
+     the bottom clears the 60px zoom/tidy controls plus 12px. */
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+  bottom: calc(60px + var(--space-3));
   width: 360px; /* overridden by inline style when resized */
-  padding: 0 var(--space-4) var(--space-4);
+  padding: 0;
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -3128,7 +3133,10 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--space-2) var(--space-3) var(--space-2) 8px;
+  /* Symmetric --space-3 on both sides so the header's leading icon +
+     title align with the body sections' leading edge (each section pads
+     with --space-3 too) instead of sitting 4px further left. */
+  padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--color-border-opaque);
   flex-shrink: 0;
   /* Lock the header height so the popover chrome doesn't jump when the
@@ -4249,7 +4257,15 @@
   flex-shrink: 0;
 }
 .delayUnitSelect {
-  flex: 1;
+  flex: 1 1 0;
+  /* Override `.psRoot { width: 100% }` — width: 100% on a flex item resolves
+     against the flex container (the duration row), which here computes
+     wider than the actual remaining slot (row width minus the fixed input
+     + gap), pushing the select past the popover's right edge. `width: auto`
+     hands sizing back to the flex algorithm, and `min-width: 0` lets the
+     select shrink when the popover is narrow. */
+  width: auto;
+  min-width: 0;
 }
 .delayCustomUnitRow {
   margin-top: var(--space-2);
@@ -5712,7 +5728,7 @@
   justify-content: space-between;
   gap: var(--space-3);
   padding: var(--space-3);
-  background: var(--color-bg-secondary);
+  background: var(--color-bg-primary);
   border-radius: var(--radius-md);
   border: 1px solid var(--color-border-opaque);
 }
@@ -7237,6 +7253,55 @@
   padding-left: var(--space-3);
   margin-left: var(--space-1);
   border-left: 2px solid var(--color-border-opaque);
+}
+
+/* Policy branch body — same card shell as `.conditionGroup` (the AND
+   group card on the condition node) so a policy IF branch reads as a
+   labelled card instead of the left-bordered indent the condition
+   branches use. Reuses the slate-tertiary surface + opaque border +
+   md radius pairing. The card is the collapsible unit (see
+   `.policyBranchHeader` below); when `data-collapsed="true"`, only the
+   header row is visible. */
+.policyBranchBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-opaque);
+  border-radius: var(--radius-md);
+}
+
+/* Internal header row — chevron toggle + IF keyword on the leading
+   edge, X remove button on the trailing edge. The clickable area
+   covers chevron + keyword (mirrors `.conditionGroupHeader`); the X
+   sits as a separate button so it doesn't trigger the toggle. */
+.policyBranchHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.policyBranchHeaderToggle {
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  padding: 2px 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--tracking-wide);
+  color: var(--color-content-tertiary);
+}
+.policyBranchHeaderToggle:hover {
+  color: var(--color-content-primary);
+}
+.policyBranchHeaderToggle:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
 }
 
 /* Standalone "+ Add ELSE IF" CTA — sits between the last conditional branch
