@@ -953,8 +953,11 @@ function EditableFolderName({
           }
           return;
         }
-        if (text === name) {
-          // No-op — name unchanged, leave DOM as-is.
+        if (text === name && !onCancel) {
+          // Rename mode (no `onCancel`) — name unchanged, leave DOM as-is.
+          // Draft mode (has `onCancel`) still falls through to onCommit so
+          // accepting the default "Folder N" without edits creates the
+          // folder; otherwise the draft never commits.
           return;
         }
         onCommit(text);
