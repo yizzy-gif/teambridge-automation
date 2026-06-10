@@ -29,6 +29,8 @@ import tbAiLightLogo from '../assets/tb-ai-light.svg';
 import tbAiDarkLogo from '../assets/tb-ai-dark.svg';
 import { CheckCircleIcon } from '@alloy/components/icons/CheckCircleIcon';
 import { Users03Icon } from '@alloy/components/icons/Users03Icon';
+import { User01Icon } from '@alloy/components/icons/User01Icon';
+import { ZapIcon } from '@alloy/components/icons/ZapIcon';
 import { File04Icon } from '@alloy/components/icons/File04Icon';
 import { Home02Icon } from '@alloy/components/icons/Home02Icon';
 import { ClockIcon } from '@alloy/components/icons/ClockIcon';
@@ -2754,11 +2756,7 @@ const AI_CARD_ICON: Record<AiAddCardOption, React.ReactNode> = {
       <path d="M4.5 7l2 2 3-3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   ),
-  'Engage': (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
-      <path d="M8 1.5L3.5 7.5H7.5L5.5 12.5L10.5 6.5H6.5L8 1.5Z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
-    </svg>
-  ),
+  'Engage': <ZapIcon size={14} />,
 };
 
 /* ─── FieldTagPicker ───────────────────────────────────────────────────────────
@@ -2906,6 +2904,7 @@ function AiSpecialistCards({
   // Resolve the record noun from the upstream trigger (falls back to "Record"
   // when no trigger is configured yet) so the card reflects whatever flows in.
   const recordNoun = getTriggerRecordType(triggerLabel).noun;
+  const triggerRowType = 'User';
 
   // Read/Write field selections — local state so users can add/remove fields
   // via the FieldTagPicker below. Seeded from the constant lists; not yet
@@ -2985,17 +2984,11 @@ function AiSpecialistCards({
           aria-expanded={!isCardCollapsed('trigger')}
         >
           <div className={styles.aiSpecDataCardHeaderIcon}>
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
-              <circle cx="7" cy="4.5" r="2.5" stroke="currentColor" strokeWidth="1.2" />
-              <path d="M1.5 13c0-2.761 2.462-4.5 5.5-4.5s5.5 1.739 5.5 4.5"
-                stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-              <path d="M10 6.5l1.5 1.5L10 9.5"
-                stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
+            <User01Icon size={14} />
           </div>
           <div className={styles.aiSpecDataCardHeaderText}>
             <div className={styles.aiSpecDataCardTitle}>Triggering record</div>
-            <div className={styles.aiSpecDataCardSubtitle}>{recordNoun} ({fieldCount} fields)</div>
+            <div className={styles.aiSpecDataCardSubtitle}>{triggerRowType} {recordNoun} ({fieldCount} fields)</div>
           </div>
           <div className={styles.aiSpecDataCardActions} onClick={e => e.stopPropagation()}>
             <span className={clsx(styles.aiSpecDataCardChevron, !isCardCollapsed('trigger') && styles.aiSpecDataCardChevronOpen)} aria-hidden>
@@ -3013,26 +3006,25 @@ function AiSpecialistCards({
         {!isCardCollapsed('trigger') && (
         <div className={styles.aiSpecDataCardBody}>
           <div className={styles.aiSpecDataFieldRow}>
-            <span className={styles.aiSpecDataFieldLabel}>User</span>
+            <span className={styles.aiSpecDataFieldLabel}>Read ({readFields.length})</span>
             <div className={styles.aiSpecDataFieldContent}>
-              <div className={styles.aiSpecFieldPillRow}>
-                <Tag variant="subtle" size="sm" color="green">Read ({readFields.length})</Tag>
-                <FieldTagPicker
-                  fields={readFields}
-                  available={AI_SPEC_AVAILABLE_FIELDS as unknown as string[]}
-                  onChange={setReadFields}
-                  placeholder="Add field…"
-                />
-              </div>
-              <div className={styles.aiSpecFieldPillRow}>
-                <Tag variant="subtle" size="sm" color="purple">Write ({writeFields.length})</Tag>
-                <FieldTagPicker
-                  fields={writeFields}
-                  available={AI_SPEC_AVAILABLE_FIELDS as unknown as string[]}
-                  onChange={setWriteFields}
-                  placeholder="Add field…"
-                />
-              </div>
+              <FieldTagPicker
+                fields={readFields}
+                available={AI_SPEC_AVAILABLE_FIELDS as unknown as string[]}
+                onChange={setReadFields}
+                placeholder="Add field…"
+              />
+            </div>
+          </div>
+          <div className={styles.aiSpecDataFieldRow}>
+            <span className={styles.aiSpecDataFieldLabel}>Write ({writeFields.length})</span>
+            <div className={styles.aiSpecDataFieldContent}>
+              <FieldTagPicker
+                fields={writeFields}
+                available={AI_SPEC_AVAILABLE_FIELDS as unknown as string[]}
+                onChange={setWriteFields}
+                placeholder="Add field…"
+              />
             </div>
           </div>
         </div>
@@ -4771,7 +4763,7 @@ function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpda
       )}
 
       {/* ── scrollable body ── */}
-      <div className={styles.popoverBody}>
+      <div className={styles.popoverBody} onWheel={e => e.stopPropagation()}>
 
       {/* Node configuration sections render flat below — name-select, action
           selector, policy sections, condition rows, configuration fields, and

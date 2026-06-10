@@ -849,7 +849,7 @@
      (timestamp is absolutely positioned, so the gap is the breathing room it
      fills when the block is hovered). */
   gap: 32px;
-  padding: var(--space-3);
+  padding: var(--space-6) var(--space-3) var(--space-3);
 }
 
 /* Pinned-loader spacing — the AILoader wrapper sits as a sibling at the
@@ -5782,7 +5782,10 @@
 /* ─── AI Specialist — Configure / Test tabs ──────────────────────────────── */
 
 .aiSpecTabsWrap {
-  position: relative;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--color-bg-primary);
   /* Tabs sit flush against the popover header. Side padding stays at 12px
      so the active-tab indicator lines up with the body content gutter. */
   padding: 0 var(--space-3);

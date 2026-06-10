@@ -397,13 +397,15 @@
   box-shadow: var(--shadow-below-md);
   transition:
     background var(--duration-fast) var(--ease-default),
-    box-shadow var(--duration-fast) var(--ease-default);
+    box-shadow var(--duration-fast) var(--ease-default),
+    transform var(--duration-fast) var(--ease-out, cubic-bezier(0, 0, 0.2, 1));
   font-family: var(--font-sans);
 }
 
 .card:hover {
   background: var(--color-bg-tertiary);
   box-shadow: var(--shadow-below-high);
+  transform: translateY(-3px);
 }
 
 /* Tactile press feedback — the card briefly dips when activated so
