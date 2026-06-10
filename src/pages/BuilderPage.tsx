@@ -4520,6 +4520,19 @@ function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpda
   const infoTriggerRef = useRef<HTMLButtonElement>(null);
   const infoCardRef = useRef<HTMLDivElement>(null);
 
+  // Stop wheel events from bubbling to the canvas's native wheel listener
+  // (which pans/zooms the canvas). React's synthetic onWheel fires too late
+  // (after the native event has already reached the canvas), so we attach a
+  // native listener directly to the scroll container.
+  const popoverBodyRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = popoverBodyRef.current;
+    if (!el) return;
+    const stop = (e: WheelEvent) => e.stopPropagation();
+    el.addEventListener('wheel', stop, { passive: true });
+    return () => el.removeEventListener('wheel', stop);
+  }, []);
+
   // Sync the mount flag with the open flag. Open mounts immediately so
   // the entry animation can run from frame 1; close waits for the
   // CSS exit duration (matches `popoverInfoCardClose` keyframes
@@ -4763,7 +4776,7 @@ function NodePopover({ step, onSelectSuggestion, onUpdateConditionConfig, onUpda
       )}
 
       {/* ── scrollable body ── */}
-      <div className={styles.popoverBody} onWheel={e => e.stopPropagation()}>
+      <div ref={popoverBodyRef} className={styles.popoverBody}>
 
       {/* Node configuration sections render flat below — name-select, action
           selector, policy sections, condition rows, configuration fields, and
